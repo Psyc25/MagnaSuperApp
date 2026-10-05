@@ -13,17 +13,46 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
  * tanpa terikat RLS sama sekali. Ambil nilainya dari Supabase Dashboard →
  * Project Settings → API → "service_role" secret.
  */
+/**
+ * Admin client yang THROW error jika tidak tersedia.
+ * Gunakan untuk fitur yang WAJIB butuh admin access.
+ */
 export function createAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !serviceRoleKey) {
     throw new Error(
-      "SUPABASE_SERVICE_ROLE_KEY belum diset di .env.local — ambil dari Supabase Dashboard > Project Settings > API."
+      "SUPABASE_SERVICE_ROLE_KEY belum diset di environment variables — ambil dari Supabase Dashboard > Project Settings > API."
     );
   }
 
   return createSupabaseClient(url, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+}
+
+/**
+ * Admin client yang return NULL jika tidak tersedia.
+ * Gunakan untuk fitur yang bisa graceful fallback.
+ */
+export function createAdminClientSafe() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceRoleKey) {
+    console.warn(
+      "[supabase/admin] SUPABASE_SERVICE_ROLE_KEY belum diset — fitur ini akan fallback."
+    );
+    return null;
+  }
+
+  return createSupabaseClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
+/** Check if admin client is available */
+export function isAdminClientAvailable(): boolean {
+  return !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
