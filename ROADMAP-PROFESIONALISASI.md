@@ -109,6 +109,16 @@ menunggu diskusi.
 - **Akuntansi**: laporan Laba-Rugi/Neraca/Arus Kas sekarang mengambil data
   per halaman. Sebelumnya angkanya bisa salah tanpa error begitu jurnal
   melewati ±1000 baris.
+- **Akuntansi (lanjutan review pra-merge)**: paging laporan memakai keyset
+  (`id > id terakhir`) supaya jurnal yang ditulis bersamaan tidak terlewat
+  atau terhitung dua kali; kategori Arus Kas untuk jurnal manual multi-baris
+  dipilih dari akun lawan bernominal terbesar (tidak lagi bergantung urutan
+  baris); baris jurnal manual tampil debit dulu.
+- **Keamanan (migrasi 0091)**: `delete_event_expense_journal` sebelumnya bisa
+  dipanggil staf divisi mana pun untuk menghapus jurnal pengeluaran yang
+  masih ada. Sekarang hanya menghapus kalau pengeluarannya sudah dihapus
+  (jalur sah), atau oleh akun akses penuh. Diuji 4 skenario di database
+  hasil rebuild, lalu diterapkan ke production.
 - **Jurnal otomatis** sekarang ditunggu (`await`) sampai selesai, bukan
   fire-and-forget yang bisa terputus di serverless.
 - **Realisasi Event**: pengeluaran yang terkait booking/proyek/event yang
@@ -130,7 +140,7 @@ production (±1.250 objek), ke dua arah:
 - **Bug urutan di file lama** diperbaiki supaya bisa dijalankan dari nol:
   0026 (UPDATE sebelum constraint lama dihapus), 0086 (revoke fungsi
   `ping_test_fn*` yang tidak pernah ada di repo, kini kondisional).
-- **Bukti**: `supabase/verify/rebuild.sh` menerapkan ke-95 file berurutan
+- **Bukti**: `supabase/verify/rebuild.sh` menerapkan seluruh file (kini 97) berurutan
   ke Postgres kosong tanpa error, dan sidik skema hasilnya
   (`schema_fingerprint.sql`) identik dengan production di semua kategori.
   Satu-satunya selisih: komentar di dalam body

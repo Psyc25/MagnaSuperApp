@@ -31,28 +31,40 @@ export { DIVISION_LABELS };
  */
 const PAGE_SIZE = 1000;
 const IN_CHUNK_SIZE = 150;
+/** Titik awal keyset pagination -- semua UUID lebih besar dari UUID nol. */
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
 
 type PageResult<T> = { data: T[] | null; error: { message: string } | null };
 type AllRowsResult<T> = { data: T[]; error: { message: string } | null };
 
-async function fetchAllPages<T>(page: (from: number, to: number) => PromiseLike<PageResult<T>>): Promise<AllRowsResult<T>> {
+/**
+ * Keyset pagination (`id > id terakhir`, urut id) -- bukan offset/range:
+ * dengan offset, jurnal yang ditulis bersamaan saat laporan sedang diambil
+ * bisa menggeser halaman sehingga ada baris terlewat atau terhitung dua kali.
+ * Setiap query WAJIB menyertakan kolom `id`.
+ */
+async function fetchAllPages<T extends { id: string }>(
+  page: (afterId: string) => PromiseLike<PageResult<T>>
+): Promise<AllRowsResult<T>> {
   const rows: T[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+  let afterId = NIL_UUID;
+  for (;;) {
+    const { data, error } = await page(afterId);
     if (error) return { data: rows, error };
     rows.push(...(data ?? []));
     if (!data || data.length < PAGE_SIZE) return { data: rows, error: null };
+    afterId = data[data.length - 1].id;
   }
 }
 
-async function fetchInChunks<T>(
+async function fetchInChunks<T extends { id: string }>(
   ids: string[],
-  page: (chunk: string[], from: number, to: number) => PromiseLike<PageResult<T>>
+  page: (chunk: string[], afterId: string) => PromiseLike<PageResult<T>>
 ): Promise<AllRowsResult<T>> {
   const rows: T[] = [];
   for (let i = 0; i < ids.length; i += IN_CHUNK_SIZE) {
     const chunk = ids.slice(i, i + IN_CHUNK_SIZE);
-    const result = await fetchAllPages<T>((from, to) => page(chunk, from, to));
+    const result = await fetchAllPages<T>((afterId) => page(chunk, afterId));
     if (result.error) return { data: rows, error: result.error };
     rows.push(...result.data);
   }
@@ -105,14 +117,15 @@ function emptyIncomeStatement(startDate: string, endDate: string): IncomeStateme
 export async function getIncomeStatement(startDate: string, endDate: string): Promise<IncomeStatement> {
   const supabase = await createClient();
 
-  const { data: entries, error: entriesError } = await fetchAllPages((from, to) =>
+  const { data: entries, error: entriesError } = await fetchAllPages((afterId) =>
     supabase
       .from("journal_entries")
       .select("id, division")
       .gte("entry_date", startDate)
       .lte("entry_date", endDate)
+      .gt("id", afterId)
       .order("id")
-      .range(from, to)
+      .limit(PAGE_SIZE)
       .returns<{ id: string; division: string | null }[]>()
   );
 
@@ -128,14 +141,15 @@ export async function getIncomeStatement(startDate: string, endDate: string): Pr
   const entryIds = entries.map((e) => e.id);
 
   const [{ data: lines, error: linesError }, { data: accounts, error: accountsError }] = await Promise.all([
-    fetchInChunks(entryIds, (chunk, from, to) =>
+    fetchInChunks(entryIds, (chunk, afterId) =>
       supabase
         .from("journal_entry_lines")
-        .select("journal_entry_id, account_id, debit, credit")
+        .select("id, journal_entry_id, account_id, debit, credit")
         .in("journal_entry_id", chunk)
+        .gt("id", afterId)
         .order("id")
-        .range(from, to)
-        .returns<{ journal_entry_id: string; account_id: string; debit: number; credit: number }[]>()
+        .limit(PAGE_SIZE)
+        .returns<{ id: string; journal_entry_id: string; account_id: string; debit: number; credit: number }[]>()
     ),
     supabase
       .from("chart_of_accounts")
@@ -269,13 +283,14 @@ function emptyBalanceSheet(asOfDate: string): BalanceSheet {
 export async function getBalanceSheet(asOfDate: string): Promise<BalanceSheet> {
   const supabase = await createClient();
 
-  const { data: entries, error: entriesError } = await fetchAllPages((from, to) =>
+  const { data: entries, error: entriesError } = await fetchAllPages((afterId) =>
     supabase
       .from("journal_entries")
       .select("id")
       .lte("entry_date", asOfDate)
+      .gt("id", afterId)
       .order("id")
-      .range(from, to)
+      .limit(PAGE_SIZE)
       .returns<{ id: string }[]>()
   );
 
@@ -290,14 +305,15 @@ export async function getBalanceSheet(asOfDate: string): Promise<BalanceSheet> {
   const entryIds = entries.map((e) => e.id);
 
   const [{ data: lines, error: linesError }, { data: accounts, error: accountsError }] = await Promise.all([
-    fetchInChunks(entryIds, (chunk, from, to) =>
+    fetchInChunks(entryIds, (chunk, afterId) =>
       supabase
         .from("journal_entry_lines")
-        .select("account_id, debit, credit")
+        .select("id, account_id, debit, credit")
         .in("journal_entry_id", chunk)
+        .gt("id", afterId)
         .order("id")
-        .range(from, to)
-        .returns<{ account_id: string; debit: number; credit: number }[]>()
+        .limit(PAGE_SIZE)
+        .returns<{ id: string; account_id: string; debit: number; credit: number }[]>()
     ),
     supabase
       .from("chart_of_accounts")
@@ -475,13 +491,14 @@ export async function getCashFlowStatement(startDate: string, endDate: string): 
   // Saldo awal: akumulasi seluruh jurnal SEBELUM startDate (sejak awal
   // berdiri) yang menyentuh akun Kas/Bank -- sama pola akumulasi kumulatif
   // seperti getBalanceSheet di atas, cuma dibatasi ke 2 akun ini saja.
-  const { data: priorEntries, error: priorEntriesError } = await fetchAllPages((from, to) =>
+  const { data: priorEntries, error: priorEntriesError } = await fetchAllPages((afterId) =>
     supabase
       .from("journal_entries")
       .select("id")
       .lt("entry_date", startDate)
+      .gt("id", afterId)
       .order("id")
-      .range(from, to)
+      .limit(PAGE_SIZE)
       .returns<{ id: string }[]>()
   );
 
@@ -497,15 +514,16 @@ export async function getCashFlowStatement(startDate: string, endDate: string): 
   if (priorEntries && priorEntries.length > 0) {
     const { data: priorLines, error: priorLinesError } = await fetchInChunks(
       priorEntries.map((e) => e.id),
-      (chunk, from, to) =>
+      (chunk, afterId) =>
         supabase
           .from("journal_entry_lines")
-          .select("debit, credit")
+          .select("id, debit, credit")
           .in("journal_entry_id", chunk)
           .in("account_id", cashAccountIds)
+          .gt("id", afterId)
           .order("id")
-          .range(from, to)
-          .returns<{ debit: number; credit: number }[]>()
+          .limit(PAGE_SIZE)
+          .returns<{ id: string; debit: number; credit: number }[]>()
     );
 
     if (priorLinesError) {
@@ -516,14 +534,15 @@ export async function getCashFlowStatement(startDate: string, endDate: string): 
   }
 
   // Mutasi dalam periode yang diminta.
-  const { data: entries, error: entriesError } = await fetchAllPages((from, to) =>
+  const { data: entries, error: entriesError } = await fetchAllPages((afterId) =>
     supabase
       .from("journal_entries")
       .select("id, entry_date, description, division, source_type")
       .gte("entry_date", startDate)
       .lte("entry_date", endDate)
+      .gt("id", afterId)
       .order("id")
-      .range(from, to)
+      .limit(PAGE_SIZE)
       .returns<
         { id: string; entry_date: string; description: string; division: string | null; source_type: string }[]
       >()
@@ -542,14 +561,15 @@ export async function getCashFlowStatement(startDate: string, endDate: string): 
 
   const [{ data: allLines, error: allLinesError }, { data: allAccounts, error: allAccountsError }] =
     await Promise.all([
-      fetchInChunks(entryIds, (chunk, from, to) =>
+      fetchInChunks(entryIds, (chunk, afterId) =>
         supabase
           .from("journal_entry_lines")
-          .select("journal_entry_id, account_id, debit, credit")
+          .select("id, journal_entry_id, account_id, debit, credit")
           .in("journal_entry_id", chunk)
+          .gt("id", afterId)
           .order("id")
-          .range(from, to)
-          .returns<{ journal_entry_id: string; account_id: string; debit: number; credit: number }[]>()
+          .limit(PAGE_SIZE)
+          .returns<{ id: string; journal_entry_id: string; account_id: string; debit: number; credit: number }[]>()
       ),
       supabase
         .from("chart_of_accounts")
@@ -601,7 +621,16 @@ export async function getCashFlowStatement(startDate: string, endDate: string): 
     if (!entry) continue;
     const cashLines = entryLines.filter((l) => cashAccountIds.includes(l.account_id));
     if (cashLines.length === 0) continue;
-    const counterLine = entryLines.find((l) => !cashAccountIds.includes(l.account_id));
+    // Akun lawan = baris non-kas dengan nominal TERBESAR (seri: kode akun
+    // terkecil) -- tidak bergantung urutan baris dari database. Untuk jurnal
+    // 2 baris (mayoritas) hasilnya sama dengan sebelumnya.
+    const counterLine = entryLines
+      .filter((l) => !cashAccountIds.includes(l.account_id))
+      .sort(
+        (a, b) =>
+          b.debit + b.credit - (a.debit + a.credit) ||
+          (accountById.get(a.account_id)?.account_code ?? "").localeCompare(accountById.get(b.account_id)?.account_code ?? "")
+      )[0];
     const category = classifyCategory(counterLine?.account_id);
     const counterAccountName = counterLine ? (accountById.get(counterLine.account_id)?.account_name ?? "-") : "-";
 
@@ -744,13 +773,14 @@ export async function getManualJournalEntries(limit = 200): Promise<JournalEntry
 
   const entryIds = entries.map((e) => e.id);
   const [{ data: lines, error: linesError }, { data: accounts, error: accountsError }] = await Promise.all([
-    fetchInChunks(entryIds, (chunk, from, to) =>
+    fetchInChunks(entryIds, (chunk, afterId) =>
       supabase
         .from("journal_entry_lines")
         .select("id, journal_entry_id, account_id, debit, credit, notes")
         .in("journal_entry_id", chunk)
+        .gt("id", afterId)
         .order("id")
-        .range(from, to)
+        .limit(PAGE_SIZE)
         .returns<
           { id: string; journal_entry_id: string; account_id: string; debit: number; credit: number; notes: string | null }[]
         >()
@@ -785,6 +815,16 @@ export async function getManualJournalEntries(limit = 200): Promise<JournalEntry
       notes: line.notes ?? undefined,
     });
     linesByEntry.set(line.journal_entry_id, bucket);
+  }
+  // Baris diambil urut id (UUID acak, demi paging stabil) -- urutkan ulang
+  // untuk tampilan: debit dulu, lalu nominal terbesar, lalu kode akun.
+  for (const bucket of linesByEntry.values()) {
+    bucket.sort(
+      (a, b) =>
+        Number(b.debit > 0) - Number(a.debit > 0) ||
+        b.debit + b.credit - (a.debit + a.credit) ||
+        a.accountCode.localeCompare(b.accountCode)
+    );
   }
 
   return entries.map((e) => ({
