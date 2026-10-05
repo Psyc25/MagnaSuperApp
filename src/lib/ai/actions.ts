@@ -140,7 +140,7 @@ async function callAIWithTools(
     if ((err as { name?: string } | null)?.name === "TimeoutError") {
       throw new Error("Asisten AI tidak merespons, coba lagi sebentar lagi.");
     }
-    throw new Error("AI tidak tersedia. Pastikan 9Router berjalan di localhost:20128 atau gunakan AI API alternatif.");
+    throw new Error("Fitur AI sedang dalam pengembangan.");
   }
 
   if (!response.ok) {
@@ -188,7 +188,7 @@ export async function sendAIMessage(
   // Check if AI is available
   if (!AI_AVAILABLE) {
     return {
-      error: "AI tidak tersedia di production. Untuk menggunakan AI, jalankan aplikasi di local dengan 9Router, atau konfigurasi AI_API_URL di environment variables."
+      error: "Fitur AI sedang dalam pengembangan. Silakan hubungi admin untuk informasi lebih lanjut."
     };
   }
 
