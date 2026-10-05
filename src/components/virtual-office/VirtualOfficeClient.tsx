@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, MapPin, MessageSquare, Users } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Billboard, Edges, Text } from "@react-three/drei";
+import { Billboard, Text } from "@react-three/drei";
 import * as THREE from "three";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/cn";
@@ -19,7 +19,6 @@ import {
   DIVISION_COLORS,
   OBSTACLES,
   OUTDOOR_MARGIN,
-  PLAYER_RADIUS,
   PLAYER_SPEED,
   PROPS,
   ROOMS,
@@ -822,8 +821,13 @@ function AgentNPC({ agent, x, y, onClick }: { agent: AIAgent; x: number; y: numb
   const currentPos = useRef({ x, y });
   const targetPos = useRef({ x, y });
   const isWalking = useRef(false);
-  const waitTimer = useRef(Math.random() * 3); // Random initial wait
+  // Jeda awal acak diisi di effect saat mount -- Math.random() tidak boleh
+  // dipanggil saat render (React Compiler: impure function).
+  const waitTimer = useRef(0);
   const walkTime = useRef(0);
+  useEffect(() => {
+    waitTimer.current = Math.random() * 3;
+  }, []);
 
   const WANDER_RADIUS = 60; // How far from home they can wander
   const WALK_SPEED = 35; // Pixels per second
