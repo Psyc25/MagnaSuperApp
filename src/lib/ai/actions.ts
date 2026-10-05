@@ -24,9 +24,9 @@ type ChatMessage = {
   tool_call_id?: string;
 };
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
-const OPENROUTER_URL = "https://openrouter.ai/api/v1";
-const LOCAL_AI_URL = process.env.AI_API_URL || "http://localhost:20128/v1";
+// 9Router lokal (OpenAI-compatible) — GRATIS, tanpa token eksternal.
+const NINEROUTER_URL = process.env.AI_API_URL || "http://localhost:20128/v1";
+const NINEROUTER_KEY = process.env.AI_API_KEY || "";
 /** Batas putaran tool per pesan — cukup untuk "cari ID dulu, lalu aksi"
  * tanpa membiarkan model berputar terus memakan kuota. */
 const MAX_TOOL_ROUNDS = 4;
@@ -75,7 +75,7 @@ export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: 
 }
 
 /**
- * Panggil AI dengan tool calling support.
+ * Panggil 9Router lokal (OpenAI-compatible API) dengan dukungan tool calling.
  */
 async function callAIWithTools(
   agent: AIAgent,
@@ -83,20 +83,11 @@ async function callAIWithTools(
   tools: ToolDefinition[],
   toolChoice: "auto" | "none" = "auto"
 ): Promise<{ content: string; toolCalls?: ToolCall[] }> {
-  const isLocal = agent.provider === "local";
-  const apiUrl = isLocal ? LOCAL_AI_URL : OPENROUTER_URL;
-
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-
-  if (!isLocal) {
-    if (!OPENROUTER_API_KEY) {
-      throw new Error("OPENROUTER_API_KEY belum diset di .env.local. Daftar gratis di openrouter.ai/keys");
-    }
-    headers["Authorization"] = `Bearer ${OPENROUTER_API_KEY}`;
-    headers["HTTP-Referer"] = "https://magnasuperapp.vercel.app";
-    headers["X-Title"] = "MagnaSuperApp";
+  if (NINEROUTER_KEY) {
+    headers["Authorization"] = `Bearer ${NINEROUTER_KEY}`;
   }
 
   const body: Record<string, unknown> = {
@@ -104,43 +95,58 @@ async function callAIWithTools(
     messages,
     temperature: tools.length > 0 ? TOOL_TEMPERATURE : agent.temperature,
     max_tokens: agent.maxTokens,
+    stream: false, // Disable streaming untuk menghindari SSE format
   };
 
-  // Tambahkan tools jika bukan local (local mungkin tidak support)
-  if (!isLocal && tools.length > 0) {
+  if (tools.length > 0) {
     body.tools = tools;
     body.tool_choice = toolChoice;
   }
 
   let response: Response;
   try {
-    response = await fetch(`${apiUrl}/chat/completions`, {
+    response = await fetch(`${NINEROUTER_URL}/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
   } catch (err) {
-    console.error("AI API fetch gagal:", err);
+    console.error("9Router fetch gagal:", err);
     throw new Error("Asisten AI tidak merespons, coba lagi sebentar lagi.");
   }
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error("AI API error:", response.status, errText);
+    console.error("9Router API error:", response.status, errText);
 
-    if (response.status === 401) throw new Error("API key tidak valid");
-    if (response.status === 402) throw new Error("Kredit habis, top up di openrouter.ai");
-    if (response.status === 429) throw new Error("Rate limit, coba lagi");
-    throw new Error(`Error ${response.status}`);
+    if (response.status === 401) throw new Error("API key tidak valid. Cek AI_API_KEY di .env.local");
+    if (response.status === 429) throw new Error("Rate limit tercapai, coba lagi nanti");
+    throw new Error(`Error ${response.status}: ${errText.slice(0, 200)}`);
   }
 
-  const data = await response.json();
+  // Parse response - handle SSE format yang mungkin append "data: [DONE]"
+  let responseText = await response.text();
+  const doneIndex = responseText.indexOf("\ndata: [DONE]");
+  if (doneIndex !== -1) {
+    responseText = responseText.slice(0, doneIndex);
+  }
+  if (responseText.startsWith("data: ")) {
+    responseText = responseText.slice(6);
+  }
+
+  let data: { choices?: { message?: { content?: string | null; tool_calls?: ToolCall[] } }[] };
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    console.error("9Router respons bukan JSON:", responseText.slice(0, 500));
+    throw new Error("Respons Asisten AI tidak bisa dibaca, coba lagi.");
+  }
   const choice = data.choices?.[0];
 
   return {
     content: choice?.message?.content || "",
-    toolCalls: choice?.message?.tool_calls as ToolCall[] | undefined,
+    toolCalls: choice?.message?.tool_calls,
   };
 }
 

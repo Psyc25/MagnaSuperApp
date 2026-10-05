@@ -540,7 +540,7 @@ function buildConfirmationResponse(toolName: string, args: Args): ToolResult {
   return {
     success: true,
     requiresConfirmation: true,
-    confirmationMessage: `${description}\n\nApakah data ini benar? Ketik 'Ya' untuk konfirmasi, atau 'Batal' untuk membatalkan.`,
+    confirmationMessage: `${description}\n\nSudah benar? Ketik 'Ya' untuk lanjut, atau 'Batal' kalau tidak jadi.`,
     pendingAction: { tool: toolName, args, description },
   };
 }
