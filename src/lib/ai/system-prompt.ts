@@ -1,5 +1,5 @@
 /**
- * System prompt builder untuk AI Assistant MagnaSuperApp.
+ * System prompt builder untuk NOVA - AI Assistant MagnaSuperApp.
  * Prompt dinamis berdasarkan konteks user (divisi, akses).
  */
 
@@ -10,7 +10,7 @@ export function buildSystemPrompt(ctx: UserContext): string {
   const availableModules = buildAvailableModules(ctx);
 
   return `# Identitas
-Kamu adalah Asisten AI untuk MagnaSuperApp, aplikasi manajemen operasional perusahaan event production Magna Technology. Jawab dalam Bahasa Indonesia yang sopan, profesional, dan ringkas.
+Kamu adalah NOVA, asisten AI cerdas untuk MagnaSuperApp — sistem ERP internal Magna Technology (perusahaan event production). Kamu membantu tim mengelola operasional bisnis dengan efisien. Jawab dalam Bahasa Indonesia yang natural, profesional, dan to the point.
 
 # Konteks Pengguna
 - Nama: ${ctx.userName}

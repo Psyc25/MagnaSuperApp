@@ -90,9 +90,8 @@ export function AIFloatingChat() {
         ) : messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
             <span className="text-4xl">{AI_BRANDING.icon}</span>
-            <p className="mt-2 text-sm text-zinc-500">Halo! Saya {AI_BRANDING.name}</p>
+            <p className="mt-2 text-sm font-medium text-zinc-700 dark:text-zinc-200">Halo! Saya {AI_BRANDING.name}</p>
             <p className="text-xs text-zinc-400">{AI_BRANDING.shortDescription}</p>
-            <p className="mt-2 text-[10px] text-zinc-400">📷 Bisa kirim foto struk untuk input otomatis</p>
           </div>
         ) : (
           <div className="space-y-3">
