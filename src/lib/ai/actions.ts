@@ -104,6 +104,7 @@ async function call9RouterAPI(
     messages,
     temperature: agent.temperature,
     max_tokens: agent.maxTokens,
+    stream: false, // Disable streaming untuk menghindari SSE format
   };
 
   // Tambahkan tools jika ada
@@ -127,7 +128,19 @@ async function call9RouterAPI(
     throw new Error(`Error ${response.status}: ${errText.slice(0, 200)}`);
   }
 
-  const data = await response.json();
+  // Parse response - handle SSE format yang mungkin append "data: [DONE]"
+  let responseText = await response.text();
+  // Strip SSE suffix jika ada
+  const doneIndex = responseText.indexOf("\ndata: [DONE]");
+  if (doneIndex !== -1) {
+    responseText = responseText.slice(0, doneIndex);
+  }
+  // Strip jika dimulai dengan "data: " (SSE format)
+  if (responseText.startsWith("data: ")) {
+    responseText = responseText.slice(6);
+  }
+
+  const data = JSON.parse(responseText);
   const choice = data.choices?.[0];
 
   return {
