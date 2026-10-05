@@ -60,6 +60,7 @@ import {
   type PicOption,
 } from "@/lib/events/types";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { prepareUploadFiles } from "@/lib/shared/image";
 
 const STATUS_BADGE: Record<string, string> = {
   Berjalan: "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300",
@@ -473,12 +474,17 @@ function ReviewPhaseCard({
 
   function submit() {
     if (!file) return;
-    const fd = new FormData();
-    fd.set("itemId", item.id);
-    fd.set("eventId", eventId);
-    fd.set("phase", phase);
-    fd.set("file", file);
     startTransition(async () => {
+      const prepared = await prepareUploadFiles([file]);
+      if (!prepared.ok) {
+        showToast(prepared.error, "error");
+        return;
+      }
+      const fd = new FormData();
+      fd.set("itemId", item.id);
+      fd.set("eventId", eventId);
+      fd.set("phase", phase);
+      fd.set("file", prepared.files[0]);
       const result = await submitChecklistPhaseReview(fd);
       if (!result.ok) {
         showToast(result.error, "error");
@@ -641,13 +647,20 @@ function ProductionCard({
   const [confirmDone, setConfirmDone] = useState(false);
 
   function saveDraft() {
-    const fd = new FormData();
-    fd.set("itemId", item.id);
-    fd.set("eventId", eventId);
-    fd.set("qty", qty);
-    fd.set("notes", notes);
-    if (file) fd.set("file", file);
     startTransition(async () => {
+      const fd = new FormData();
+      fd.set("itemId", item.id);
+      fd.set("eventId", eventId);
+      fd.set("qty", qty);
+      fd.set("notes", notes);
+      if (file) {
+        const prepared = await prepareUploadFiles([file]);
+        if (!prepared.ok) {
+          showToast(prepared.error, "error");
+          return;
+        }
+        fd.set("file", prepared.files[0]);
+      }
       const result = await updateChecklistProduction(fd);
       if (!result.ok) {
         showToast(result.error, "error");

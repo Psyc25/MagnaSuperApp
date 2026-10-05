@@ -74,9 +74,11 @@ export type PreparedUpload = { ok: true; files: File[] } | { ok: false; error: s
 /**
  * Kompres semua foto lalu pastikan TOTAL ukurannya muat dalam satu
  * Server Action. Pakai ini sebelum memasukkan file ke FormData.
+ * `compress: false` untuk file hasil karya (aset desain, file pipeline,
+ * dokumen) yang tidak boleh diubah kualitasnya -- hanya dicek ukurannya.
  */
-export async function prepareUploadFiles(files: File[]): Promise<PreparedUpload> {
-  const prepared = await Promise.all(files.map((f) => compressImageFile(f)));
+export async function prepareUploadFiles(files: File[], { compress = true } = {}): Promise<PreparedUpload> {
+  const prepared = compress ? await Promise.all(files.map((f) => compressImageFile(f))) : files;
   const total = prepared.reduce((sum, f) => sum + f.size, 0);
   if (total > MAX_UPLOAD_BYTES) {
     const tooBig = prepared.find((f) => f.size > MAX_UPLOAD_BYTES);

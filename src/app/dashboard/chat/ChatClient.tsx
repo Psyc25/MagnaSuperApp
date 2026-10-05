@@ -37,6 +37,7 @@ import { DIVISION_BADGE_CLASSES, DIVISION_LABELS, type Division } from "@/lib/su
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_INPUT, GLASS_PILL, GLASS_SURFACE, GLASS_SURFACE_STRONG } from "@/lib/glass";
+import { prepareUploadFiles } from "@/lib/shared/image";
 import { formatBytes, formatTimeID, getAvatarColor, getInitials } from "@/lib/shared/utils";
 
 const POLL_MS = 4000;
@@ -466,8 +467,14 @@ export function ChatClient({
 
     let fileFormData: FormData | undefined;
     if (selectedFile) {
+      const prepared = await prepareUploadFiles([selectedFile]);
+      if (!prepared.ok) {
+        setSending(false);
+        setError(prepared.error);
+        return;
+      }
       fileFormData = new FormData();
-      fileFormData.set("file", selectedFile);
+      fileFormData.set("file", prepared.files[0]);
     }
 
     const result = await sendChatMessage(activeRoom, text, fileFormData, replyTarget?.id ?? null);

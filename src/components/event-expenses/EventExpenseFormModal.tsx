@@ -3,6 +3,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { Plus, Receipt, Trash2, Upload, X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
+import { prepareUploadFiles } from "@/lib/shared/image";
 import { todayISO } from "@/lib/shared/utils";
 import { addEventExpense, addExpenseProof, deleteExpenseProof, updateEventExpense } from "@/lib/event-expenses/actions";
 import {
@@ -190,6 +191,13 @@ export function EventExpenseFormModal({
     const expense = result.expense;
     const failedFiles: string[] = [];
     for (let i = 0; i < files.length; i++) {
+      // Foto dikompres dulu & ukurannya dicek -- body Server Action maksimal
+      // 4MB (lihat src/lib/shared/image.ts).
+      const prepared = await prepareUploadFiles([files[i]]);
+      if (!prepared.ok) {
+        failedFiles.push(files[i].name);
+        continue;
+      }
       const fd = new FormData();
       fd.set("expenseId", expense.id);
       fd.set("picName", form.picName);
@@ -197,10 +205,10 @@ export function EventExpenseFormModal({
       fd.set("amount", String(amount));
       fd.set("note", form.notes || form.category);
       fd.set("index", String(existingProofs.length + i + 1));
-      fd.set("file", files[i]);
+      fd.set("file", prepared.files[0]);
 
-      const proofResult = await addExpenseProof(fd);
-      if (proofResult.ok) {
+      const proofResult = await addExpenseProof(fd).catch(() => null);
+      if (proofResult?.ok) {
         expense.proofs.push(proofResult.proof);
       } else {
         failedFiles.push(files[i].name);

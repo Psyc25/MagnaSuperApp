@@ -19,6 +19,7 @@ import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/ToastProvider";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { TrendBarChart } from "@/components/ui/TrendBarChart";
+import { prepareUploadFiles } from "@/lib/shared/image";
 import { formatDateID, formatRupiah } from "@/lib/shared/utils";
 import { cn } from "@/lib/cn";
 import type { CapitalRequest, CapitalRequestStatus } from "@/lib/capital-requests/types";
@@ -125,8 +126,14 @@ export function CapitalRequestInbox({ requests }: { requests: CapitalRequest[] }
     setSubmitting(true);
     let proofFormData: FormData | undefined;
     if (decisionTarget.status === "Disetujui" && proofFile) {
+      const prepared = await prepareUploadFiles([proofFile]);
+      if (!prepared.ok) {
+        setSubmitting(false);
+        showToast(prepared.error, "error");
+        return;
+      }
       proofFormData = new FormData();
-      proofFormData.set("proof", proofFile);
+      proofFormData.set("proof", prepared.files[0]);
     }
     const result = await decideCapitalRequest(decisionTarget.request.id, decisionTarget.status, note, proofFormData);
     setSubmitting(false);
@@ -334,8 +341,15 @@ function RequestCard({
     const file = e.target.files?.[0];
     if (!file) return;
     setProofBusy(true);
+    const prepared = await prepareUploadFiles([file]);
+    if (!prepared.ok) {
+      setProofBusy(false);
+      if (inlineProofInputRef.current) inlineProofInputRef.current.value = "";
+      showToast(prepared.error, "error");
+      return;
+    }
     const formData = new FormData();
-    formData.set("proof", file);
+    formData.set("proof", prepared.files[0]);
     const result = await uploadCapitalRequestProof(req.id, formData);
     setProofBusy(false);
     if (inlineProofInputRef.current) inlineProofInputRef.current.value = "";

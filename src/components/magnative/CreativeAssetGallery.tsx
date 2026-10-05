@@ -11,6 +11,7 @@ import { AssetCommentModal } from "./AssetCommentModal";
 import { cn } from "@/lib/cn";
 import type { CreativeAsset, CreativeAssetCategory } from "@/lib/magnative/types";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { prepareUploadFiles } from "@/lib/shared/image";
 
 const GRADIENT = "linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)";
 const ALL_CATEGORIES: CreativeAssetCategory[] = ["Template", "Foto Mentah", "Video", "Desain Grafis", "Lainnya"];
@@ -83,6 +84,12 @@ export function CreativeAssetGallery({ assets }: { assets: CreativeAsset[] }) {
       return;
     }
 
+    // Aset desain tidak dikompres (kualitas karya harus utuh), cuma dicek ukurannya.
+    const prepared = await prepareUploadFiles([file], { compress: false });
+    if (!prepared.ok) {
+      setError(prepared.error);
+      return;
+    }
     const formData = new FormData();
     formData.set("file", file);
     formData.set("title", title.trim());

@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/ToastProvider";
 import { formatDateID } from "@/lib/shared/utils";
+import { prepareUploadFiles } from "@/lib/shared/image";
 import { PIPELINE_STAGES, type PipelineFile, type PipelineStage, type Project } from "@/lib/magnative/types";
 
 const GRADIENT = "linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)";
@@ -78,6 +79,12 @@ export function ProjectPipelineModal({ project, onClose }: { project: Project; o
       return;
     }
 
+    // File pipeline (draft/final karya) tidak dikompres, cuma dicek ukurannya.
+    const prepared = await prepareUploadFiles([file], { compress: false });
+    if (!prepared.ok) {
+      setError(prepared.error);
+      return;
+    }
     const formData = new FormData();
     formData.set("file", file);
     formData.set("projectId", project.id);

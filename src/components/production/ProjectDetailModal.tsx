@@ -48,6 +48,7 @@ import {
 import { formatDateID, formatRupiah, todayISO } from "@/lib/shared/utils";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { prepareUploadFiles } from "@/lib/shared/image";
 import { useSyncedState, useResetOnChange } from "@/lib/shared/use-synced-state";
 
 const STAGE_LABEL: Record<CheckStage, string> = { instalasi: "Saat Instalasi", bongkar: "Saat Bongkar" };
@@ -90,12 +91,15 @@ function CheckStagePanel({
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSave() {
-    const formData = new FormData();
-    const files = fileInputRef.current?.files;
-    if (files) {
-      for (const file of Array.from(files)) formData.append("photos", file);
-    }
     setSubmitting(true);
+    const prepared = await prepareUploadFiles(Array.from(fileInputRef.current?.files ?? []));
+    if (!prepared.ok) {
+      setSubmitting(false);
+      showToast(prepared.error, "error");
+      return;
+    }
+    const formData = new FormData();
+    for (const file of prepared.files) formData.append("photos", file);
     const result = await saveProjectCheck(projectId, stage, catatan, formData);
     setSubmitting(false);
     if (!result.ok) {
@@ -862,6 +866,12 @@ function ProjectDocumentsSection({ projectId }: { projectId: string }) {
   async function handleUpload() {
     const file = fileInputRef.current?.files?.[0];
     if (!file) return;
+    // Dokumen proyek (gambar kerja, PDF) tidak dikompres, cuma dicek ukurannya.
+    const prepared = await prepareUploadFiles([file], { compress: false });
+    if (!prepared.ok) {
+      showToast(prepared.error, "error");
+      return;
+    }
     const formData = new FormData();
     formData.set("projectId", projectId);
     formData.set("file", file);
