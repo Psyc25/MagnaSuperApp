@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Boxes, CheckCircle2, ChevronDown, Clock, FileText, Loader2, Paperclip, Share2, Trash2, Upload, Users } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { PortalShareModal } from "@/components/portal/PortalShareModal";
 import { useToast } from "@/components/ui/ToastProvider";
 import { useProductionData } from "./ProductionDataProvider";
@@ -53,20 +54,22 @@ import { useSyncedState, useResetOnChange } from "@/lib/shared/use-synced-state"
 
 const STAGE_LABEL: Record<CheckStage, string> = { instalasi: "Saat Instalasi", bongkar: "Saat Bongkar" };
 const EMPTY_CREW_FORM = { nama: "", peran: "Tukang/Instalatur" as CrewRole, kontak: "", catatan: "" };
-const EMPTY_TIMELOG_FORM = { tanggal: todayISO(), jam: "1", catatan: "" };
+// Fungsi (bukan konstanta): tanggal default dihitung saat form dibuka, bukan
+// sekali saat modul dimuat -- tab yang terbuka sejak kemarin dulu mengisi tanggal kemarin.
+const emptyTimelogForm = () => ({ tanggal: todayISO(), jam: "1", catatan: "" });
 const EMPTY_PIECE_FORM = { deskripsiPekerjaan: "", jumlahUnit: "1", ratePerUnit: "", catatan: "" };
 const PIECE_STATUS_STYLE: Record<PiecePaymentStatus, string> = {
   "Belum Dibayar": "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
   Dibayar: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
 };
-const EMPTY_SUBCONTRACT_FORM = {
+const emptySubcontractForm = () => ({
   vendorId: "",
   deskripsiPekerjaan: "",
   tanggalKirim: todayISO(),
   estimasiTerima: "",
   biayaJasa: "",
   catatan: "",
-};
+});
 const SUBCONTRACT_STATUS_STYLE: Record<SubcontractStatus, string> = {
   Dikirim: "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300",
   Diproses: "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
@@ -192,7 +195,7 @@ function CheckStagePanel({
 function CrewTimelogPanel({ crewId, crewName }: { crewId: string; crewName: string }) {
   const { showToast } = useToast();
   const [logs, setLogs] = useState<CrewTimelog[] | null>(null);
-  const [form, setForm] = useState(EMPTY_TIMELOG_FORM);
+  const [form, setForm] = useState(emptyTimelogForm);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -227,7 +230,7 @@ function CrewTimelogPanel({ crewId, crewName }: { crewId: string; crewName: stri
       setError(result.error);
       return;
     }
-    setForm(EMPTY_TIMELOG_FORM);
+    setForm(emptyTimelogForm());
     reload();
     showToast(`Jam kerja ${crewName} berhasil dicatat.`);
   }
@@ -526,7 +529,7 @@ function SubcontractPanel({ projectId }: { projectId: string }) {
 
   const [orders, setOrders] = useState<SubcontractOrder[] | null>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [form, setForm] = useState(EMPTY_SUBCONTRACT_FORM);
+  const [form, setForm] = useState(emptySubcontractForm);
   const [pickMaterialId, setPickMaterialId] = useState("");
   const [pickQty, setPickQty] = useState("1");
   const [selectedMaterials, setSelectedMaterials] = useState<SubcontractMaterialItem[]>([]);
@@ -593,7 +596,7 @@ function SubcontractPanel({ projectId }: { projectId: string }) {
       return;
     }
     showToast(`Subkontrak "${form.deskripsiPekerjaan}" berhasil dicatat.`);
-    setForm(EMPTY_SUBCONTRACT_FORM);
+    setForm(emptySubcontractForm());
     setSelectedMaterials([]);
     reload();
   }
@@ -986,6 +989,7 @@ export function ProjectDetailModal({
   const [crewError, setCrewError] = useState<string | null>(null);
   const [addingCrew, setAddingCrew] = useState(false);
   const [removingCrewId, setRemovingCrewId] = useState<string | null>(null);
+  const [crewDeleteTarget, setCrewDeleteTarget] = useState<{ id: string; nama: string } | null>(null);
   const [expandedCrewId, setExpandedCrewId] = useState<string | null>(null);
   const [portalShareOpen, setPortalShareOpen] = useState(false);
 
@@ -1122,7 +1126,7 @@ export function ProjectDetailModal({
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleRemoveCrew(c.id, c.nama)}
+                        onClick={() => setCrewDeleteTarget({ id: c.id, nama: c.nama })}
                         disabled={removingCrewId === c.id}
                         aria-label={`Hapus kru ${c.nama}`}
                         className="rounded-full p-1.5 text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 dark:hover:bg-rose-500/10 dark:hover:text-rose-300"
@@ -1217,6 +1221,21 @@ export function ProjectDetailModal({
           onClose={() => setPortalShareOpen(false)}
         />
       )}
+
+      <ConfirmDialog
+        open={crewDeleteTarget !== null}
+        onClose={() => setCrewDeleteTarget(null)}
+        onConfirm={async () => {
+          if (crewDeleteTarget) await handleRemoveCrew(crewDeleteTarget.id, crewDeleteTarget.nama);
+          setCrewDeleteTarget(null);
+        }}
+        title="Hapus Kru dari Proyek"
+        description={
+          crewDeleteTarget
+            ? `Hapus "${crewDeleteTarget.nama}" dari proyek? Catatan jam kerja dan upah borongannya (termasuk yang belum dibayar) ikut terhapus permanen. Tindakan ini tidak bisa dibatalkan.`
+            : undefined
+        }
+      />
     </Modal>
   );
 }

@@ -13,6 +13,7 @@ import type {
   ExpenseSourceType,
   ReimbursementStatus,
 } from "./types";
+import { exceedsDbAmount, MAX_DB_AMOUNT_MESSAGE } from "@/lib/shared/utils";
 
 const MODULE_PATH = "/dashboard/realisasi-event";
 const GENERIC_ERROR = "Terjadi kesalahan, coba lagi.";
@@ -54,6 +55,7 @@ function validateExpenseInput(input: AddEventExpenseInput): string | null {
   if (!input.picName?.trim()) return "PIC yang mengeluarkan dana wajib diisi.";
   if (!input.paymentMethod?.trim()) return "Metode pembayaran wajib diisi.";
   if (!Number.isFinite(input.amount) || input.amount <= 0) return "Nominal harus lebih dari 0.";
+  if (exceedsDbAmount(input.amount)) return MAX_DB_AMOUNT_MESSAGE;
   if (input.sourceType !== "umum" && !input.sourceId) {
     return 'Pilih event/proyek terkait, atau pilih "Finance/Umum" kalau tidak terikat event.';
   }

@@ -15,7 +15,8 @@ import {
 import type { EquipmentUsage } from "@/lib/production/extras-types";
 import { useResetOnChange } from "@/lib/shared/use-synced-state";
 
-const EMPTY_FORM = { projectId: "", digunakanOleh: "", tanggalPinjam: todayISO(), catatan: "" };
+// Fungsi: tanggal pinjam default = hari ini saat form dibuka (bukan saat modul dimuat).
+const emptyForm = () => ({ projectId: "", digunakanOleh: "", tanggalPinjam: todayISO(), catatan: "" });
 
 /**
  * Riwayat pemakaian per alat berat/perkakas (Tahap 28c) — dibuka dari
@@ -38,14 +39,14 @@ export function EquipmentUsageModal({
   const { projects } = useProductionData();
   const { showToast } = useToast();
   const [logs, setLogs] = useState<EquipmentUsage[] | null>(null);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   useResetOnChange(open ? equipmentId : null, (key) => {
     if (key === null) return;
-    setForm(EMPTY_FORM);
+    setForm(emptyForm());
     setError(null);
   });
 
@@ -82,7 +83,7 @@ export function EquipmentUsageModal({
       setError(result.error);
       return;
     }
-    setForm(EMPTY_FORM);
+    setForm(emptyForm());
     reload();
     showToast("Pemakaian alat berhasil dicatat.");
   }

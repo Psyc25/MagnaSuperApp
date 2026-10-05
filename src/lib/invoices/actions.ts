@@ -8,6 +8,7 @@ import { renderInvoicePdf } from "./pdf";
 import { triggerInvoiceWhatsAppWebhook } from "./whatsapp";
 import { postInvoiceLunasJournal, deleteInvoiceJournal } from "@/lib/accounting/actions";
 import type { Invoice, InvoiceDivision, InvoiceSourceType, InvoiceStatus } from "./types";
+import { exceedsDbAmount, MAX_DB_AMOUNT_MESSAGE } from "@/lib/shared/utils";
 
 const MODULE_PATH = "/dashboard/admin/faktur";
 const GENERIC_ERROR = "Terjadi kesalahan, coba lagi.";
@@ -125,6 +126,7 @@ export async function createInvoice(input: InvoiceFormInput): Promise<CreateResu
   // depositAmount SENGAJA tidak ditambahkan ke sini — lihat komentar
   // sanitizeMoneyInput di atas.
   const total = built.subtotal + shippingCost;
+  if (exceedsDbAmount(total, depositAmount)) return { ok: false, error: MAX_DB_AMOUNT_MESSAGE };
 
   const supabase = await createClient();
   const {
@@ -187,6 +189,7 @@ export async function updateInvoice(id: string, input: InvoiceFormInput): Promis
   const shippingCost = sanitizeMoneyInput(input.shippingCost);
   const depositAmount = sanitizeMoneyInput(input.depositAmount);
   const total = built.subtotal + shippingCost;
+  if (exceedsDbAmount(total, depositAmount)) return { ok: false, error: MAX_DB_AMOUNT_MESSAGE };
 
   const supabase = await createClient();
   const { data: updated, error } = await supabase

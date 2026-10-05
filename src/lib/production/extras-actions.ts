@@ -110,8 +110,14 @@ export async function saveProjectCheck(
   const photoPaths: string[] = existing?.photo_storage_paths ?? [];
 
   const files = formData.getAll("photos").filter((f): f is File => f instanceof File && f.size > 0);
+  // Foto yang gagal diunggah dilaporkan (dulu dilewati diam-diam lalu
+  // "berhasil disimpan" -- padahal foto kondisi adalah bukti klaim kerusakan).
+  const failedFiles: string[] = [];
   for (const file of files) {
-    if (!file.type.startsWith("image/")) continue;
+    if (!file.type.startsWith("image/")) {
+      failedFiles.push(file.name);
+      continue;
+    }
     const ext = file.name.includes(".") ? file.name.split(".").pop()!.toLowerCase() : "jpg";
     const storagePath = `${projectId}/${stage}/${crypto.randomUUID()}.${ext}`;
     const { error: uploadError } = await supabase.storage
@@ -119,6 +125,7 @@ export async function saveProjectCheck(
       .upload(storagePath, file, { contentType: file.type || undefined });
     if (uploadError) {
       console.error("[production] Upload foto checklist gagal:", uploadError.message);
+      failedFiles.push(file.name);
       continue;
     }
     const {
@@ -151,6 +158,12 @@ export async function saveProjectCheck(
   }
 
   revalidatePath(PROYEK_PATH);
+  if (failedFiles.length > 0) {
+    return {
+      ok: false,
+      error: `Catatan tersimpan, tapi ${failedFiles.length} foto gagal diunggah (${failedFiles.join(", ")}). Pastikan file berupa foto lalu unggah ulang.`,
+    };
+  }
   return { ok: true };
 }
 

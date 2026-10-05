@@ -6,6 +6,7 @@ import { useMagnativeData } from "./MagnativeDataProvider";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/ToastProvider";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { formatDateID, formatRupiah, todayISO } from "@/lib/shared/utils";
 import type { Project } from "@/lib/magnative/types";
 import { EXPENSE_CATEGORIES, PAYMENT_METHOD_SUGGESTIONS } from "@/lib/event-expenses/types";
@@ -41,6 +42,7 @@ export function ProjectCostModal({ project, onClose }: { project: Project; onClo
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
   const costs = getCostsForProject(project.id);
   const totalBiaya = useMemo(() => costs.reduce((sum, c) => sum + c.amount, 0), [costs]);
@@ -267,7 +269,7 @@ export function ProjectCostModal({ project, onClose }: { project: Project; onClo
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleDelete(c.id)}
+                      onClick={() => setDeleteTargetId(c.id)}
                       disabled={deletingId === c.id}
                       title="Hapus biaya"
                       aria-label="Hapus biaya"
@@ -282,6 +284,22 @@ export function ProjectCostModal({ project, onClose }: { project: Project; onClo
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={deleteTargetId !== null}
+        onClose={() => setDeleteTargetId(null)}
+        onConfirm={async () => {
+          if (deleteTargetId) await handleDelete(deleteTargetId);
+          setDeleteTargetId(null);
+        }}
+        title="Hapus Biaya"
+        description={(() => {
+          const target = costs.find((c) => c.id === deleteTargetId);
+          return target
+            ? `Hapus biaya "${target.category}" sebesar ${formatRupiah(target.amount)}? Jurnal akuntansi dan bukti transaksi yang sudah diunggah (dari Realisasi Event) ikut terhapus. Tindakan ini tidak bisa dibatalkan.`
+            : undefined;
+        })()}
+      />
     </Modal>
   );
 }

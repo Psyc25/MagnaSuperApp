@@ -8,6 +8,7 @@ import { getAvailableUnitsInRange, getOverlappingBookings } from "./availability
 import { rowToBooking, rowToInventory, type BookingRow, type InventoryRow } from "./mappers";
 import type { Booking, BookingStatus, InventoryItem, PaymentStatus } from "./types";
 import { canTransitionBooking } from "./booking-status";
+import { exceedsDbAmount, MAX_DB_AMOUNT_MESSAGE } from "@/lib/shared/utils";
 
 const MODULE_PATH = "/dashboard/magnarent";
 const GENERIC_ERROR = "Terjadi kesalahan, coba lagi.";
@@ -250,6 +251,7 @@ function validateBookingInput(input: BookingInput): string | null {
   if (input.dpAmount !== undefined && (!Number.isFinite(input.dpAmount) || input.dpAmount < 0)) {
     return "Nominal DP tidak valid.";
   }
+  if (exceedsDbAmount(input.dpAmount)) return MAX_DB_AMOUNT_MESSAGE;
   return null;
 }
 

@@ -5,6 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Trash2, Users } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/ToastProvider";
 import { formatDateID, formatTimeID, isoDateInJakarta } from "@/lib/shared/utils";
 import {
@@ -30,6 +31,7 @@ export function CheckinModal({ project, onClose }: { project: Project; onClose: 
   const [label, setLabel] = useState("");
   const [creating, setCreating] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<CheckinLink | null>(null);
 
   async function reload() {
     const [linkRows, statRows] = await Promise.all([listCheckinLinks(project.id), getCheckinStats(project.id)]);
@@ -122,7 +124,7 @@ export function CheckinModal({ project, onClose }: { project: Project; onClose: 
                 </p>
                 <button
                   type="button"
-                  onClick={() => handleDelete(l.id)}
+                  onClick={() => setDeleteTarget(l)}
                   disabled={busyId === l.id}
                   className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-rose-500 hover:underline disabled:opacity-50"
                 >
@@ -154,6 +156,21 @@ export function CheckinModal({ project, onClose }: { project: Project; onClose: 
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (deleteTarget) await handleDelete(deleteTarget.id);
+          setDeleteTarget(null);
+        }}
+        title="Hapus QR Check-in"
+        description={
+          deleteTarget
+            ? `Hapus QR "${deleteTarget.label || "Tanpa label"}"? SEMUA data check-in tamu yang masuk lewat QR ini ikut terhapus permanen (bukti kehadiran untuk laporan klien). Tindakan ini tidak bisa dibatalkan.`
+            : undefined
+        }
+      />
     </Modal>
   );
 }

@@ -78,6 +78,19 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Kolom nominal di database masih `integer` (maks Rp 2.147.483.647) --
+ * nilai di atasnya ditolak Postgres dengan error yang tidak jelas bagi
+ * staf, jadi dicek lebih dulu di server action.
+ */
+export const MAX_DB_AMOUNT = 2_147_483_647;
+
+export function exceedsDbAmount(...amounts: (number | undefined)[]): boolean {
+  return amounts.some((a) => a !== undefined && a > MAX_DB_AMOUNT);
+}
+
+export const MAX_DB_AMOUNT_MESSAGE = "Nominal maksimal Rp 2.147.483.647 per isian (batas sistem saat ini).";
+
 export function formatRupiah(amount: number): string {
   return new Intl.NumberFormat("id-ID", {
     style: "currency",

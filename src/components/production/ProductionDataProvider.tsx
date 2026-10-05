@@ -23,7 +23,7 @@ type ProductionDataContextValue = {
   addProject: (input: NewBoothProjectInput) => Promise<SaveBoothProjectResult>;
   updateProject: (id: string, input: NewBoothProjectInput) => Promise<SaveBoothProjectResult>;
   deleteProject: (id: string) => Promise<MutationResult>;
-  updateProjectStatus: (id: string, status: BoothStatus) => Promise<MutationResult>;
+  updateProjectStatus: (id: string, status: BoothStatus, fromStatus?: BoothStatus) => Promise<MutationResult>;
 
   addPurchaseOrder: (input: Omit<PurchaseOrder, "id" | "status" | "receivedDate">) => Promise<MutationResult>;
   receivePurchaseOrder: (id: string) => Promise<MutationResult>;
@@ -70,7 +70,7 @@ export function ProductionDataProvider({
   );
   const deleteProject = useCallback((id: string) => actions.deleteProject(id), []);
   const updateProjectStatus = useCallback(
-    (id: string, status: BoothStatus) => actions.updateProjectStatus(id, status),
+    (id: string, status: BoothStatus, fromStatus?: BoothStatus) => actions.updateProjectStatus(id, status, fromStatus),
     []
   );
 

@@ -34,6 +34,7 @@ import {
   type CheckinLinkRow,
   type CheckinRow,
 } from "./mappers";
+import { exceedsDbAmount, MAX_DB_AMOUNT_MESSAGE } from "@/lib/shared/utils";
 
 const MODULE_PATH = "/dashboard/magnative";
 const GENERIC_ERROR = "Terjadi kesalahan, coba lagi.";
@@ -135,6 +136,24 @@ export async function deleteClient(id: string): Promise<MutationResult> {
     return { ok: false, error: "Klien masih punya proyek aktif, tidak bisa dihapus." };
   }
 
+  // Permintaan konten terhapus otomatis lewat FK ON DELETE CASCADE -- jangan
+  // sampai permintaan yang masih dikerjakan ikut hilang tanpa peringatan.
+  const { count: openRequestCount, error: requestError } = await supabase
+    .from("magnative_content_requests")
+    .select("id", { count: "exact", head: true })
+    .eq("client_id", id)
+    .in("status", ["Baru", "Diproses"]);
+  if (requestError) {
+    console.error("[magnative] Cek permintaan konten sebelum hapus klien gagal:", requestError.message);
+    return { ok: false, error: GENERIC_ERROR };
+  }
+  if ((openRequestCount ?? 0) > 0) {
+    return {
+      ok: false,
+      error: `Klien masih punya ${openRequestCount} permintaan konten yang belum selesai. Selesaikan atau tolak dulu sebelum menghapus klien.`,
+    };
+  }
+
   const { data: clientRow } = await supabase.from("magnative_clients").select("name").eq("id", id).maybeSingle();
 
   const { error } = await supabase.from("magnative_clients").delete().eq("id", id);
@@ -159,6 +178,7 @@ function validateMagnativeProjectInput(input: Omit<Project, "id">): string | nul
   if (input.dpAmount !== undefined && (!Number.isFinite(input.dpAmount) || input.dpAmount < 0)) {
     return "Nominal DP tidak valid.";
   }
+  if (exceedsDbAmount(input.budget, input.dpAmount)) return MAX_DB_AMOUNT_MESSAGE;
   // Rekomendasi 1 laporan gap-event vs SOP (migrasi 0063) -- Owner minta
   // alasan kalah/batal WAJIB diisi begitu status proyek diubah ke
   // "Dibatalkan", ditegakkan di sini (bukan CHECK constraint DB) supaya
@@ -260,10 +280,46 @@ export async function deleteProject(id: string): Promise<MutationResult> {
   const supabase = await createClient();
   const { data: projectRow } = await supabase.from("magnative_projects").select("name").eq("id", id).maybeSingle();
 
+  // Biaya (event_expenses, sudah masuk jurnal) & invoice proyek tidak punya
+  // FK ke proyek -- kalau proyeknya dihapus, keduanya jadi yatim: hilang dari
+  // Arus Kas Proyek padahal tetap di Laba-Rugi, dan tampil "—" di Realisasi
+  // Event. Proyek yang sudah punya catatan keuangan cukup dibatalkan.
+  const [expenses, invoices] = await Promise.all([
+    supabase
+      .from("event_expenses")
+      .select("id", { count: "exact", head: true })
+      .eq("source_type", "magnative_project")
+      .eq("source_id", id),
+    supabase
+      .from("invoices")
+      .select("id", { count: "exact", head: true })
+      .eq("source_type", "magnative_project")
+      .eq("source_id", id),
+  ]);
+  if (expenses.error || invoices.error) {
+    console.error("[magnative] deleteProject: gagal cek catatan keuangan:", expenses.error?.message, invoices.error?.message);
+    return { ok: false, error: GENERIC_ERROR };
+  }
+  if ((expenses.count ?? 0) > 0 || (invoices.count ?? 0) > 0) {
+    return {
+      ok: false,
+      error:
+        'Proyek ini sudah punya biaya atau invoice tercatat (sudah masuk laporan keuangan). Tidak bisa dihapus -- ubah statusnya ke "Dibatalkan" saja supaya riwayatnya tetap ada.',
+    };
+  }
+
+  // File pipeline ikut terhapus barisnya lewat cascade, tapi objek di
+  // Storage tidak -- dikumpulkan dulu supaya bisa dibersihkan.
+  const { data: pipelineRows } = await supabase.from("magnative_pipeline_files").select("storage_path").eq("project_id", id);
+
   const { error } = await supabase.from("magnative_projects").delete().eq("id", id);
   if (error) {
     console.error("[magnative] deleteProject gagal:", error.message);
     return { ok: false, error: GENERIC_ERROR };
+  }
+  const pipelinePaths = (pipelineRows ?? []).map((r) => r.storage_path).filter(Boolean);
+  if (pipelinePaths.length > 0) {
+    await supabase.storage.from(PIPELINE_FILES_BUCKET).remove(pipelinePaths);
   }
   revalidatePath(MODULE_PATH);
   void logActivity({ module: "magnative", action: "delete", entityType: "proyek", entityLabel: projectRow?.name });
@@ -289,6 +345,7 @@ export async function deleteProject(id: string): Promise<MutationResult> {
 function validateProjectCostInput(input: Omit<ProjectCost, "id">): string | null {
   if (!input.description?.trim()) return "Deskripsi biaya wajib diisi.";
   if (!Number.isFinite(input.amount) || input.amount <= 0) return "Nominal biaya harus lebih dari 0.";
+  if (exceedsDbAmount(input.amount)) return MAX_DB_AMOUNT_MESSAGE;
   if (!input.category?.trim()) return "Kategori biaya wajib dipilih.";
   if (!input.paymentMethod?.trim()) return "Metode pembayaran wajib diisi.";
   return null;
