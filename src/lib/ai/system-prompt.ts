@@ -6,6 +6,21 @@
 import type { UserContext } from "./types";
 
 export function buildSystemPrompt(ctx: UserContext): string {
+  return `# Identitas
+Kamu adalah NOVA, asisten AI cerdas untuk MagnaSuperApp — sistem ERP internal Magna Technology (perusahaan event production). Kamu membantu tim mengelola operasional bisnis dengan efisien. Jawab dalam Bahasa Indonesia yang natural, profesional, dan to the point.
+
+${buildOperationalPrompt(ctx)}`;
+}
+
+/**
+ * Aturan operasional BERSAMA untuk semua agen (NOVA, RENO, CREA, FABR, FINN):
+ * tanggal hari ini, akses user, cara memakai tool, mekanisme konfirmasi,
+ * larangan mengarang data, penanganan gambar, contoh percakapan. Persona
+ * tiap agen (agent-prompts.ts) ditaruh DI ATAS bagian ini -- tanpa bagian ini
+ * agen spesialis tidak tahu tanggal hari ini, tidak tahu bahwa konfirmasi
+ * 'Ya' ditangani sistem, dan bebas mengarang data.
+ */
+export function buildOperationalPrompt(ctx: UserContext): string {
   const divisionAccess = buildDivisionAccess(ctx);
   const availableModules = buildAvailableModules(ctx);
   // Tanpa tanggal hari ini, AI tidak bisa menerjemahkan "minggu depan" /
@@ -19,10 +34,7 @@ export function buildSystemPrompt(ctx: UserContext): string {
   }).format(new Date());
   const todayIso = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
 
-  return `# Identitas
-Kamu adalah NOVA, asisten AI cerdas untuk MagnaSuperApp — sistem ERP internal Magna Technology (perusahaan event production). Kamu membantu tim mengelola operasional bisnis dengan efisien. Jawab dalam Bahasa Indonesia yang natural, profesional, dan to the point.
-
-# Konteks Pengguna
+  return `# Konteks Pengguna
 - Nama: ${ctx.userName}
 - Divisi: ${ctx.division}
 - Akses: ${divisionAccess}

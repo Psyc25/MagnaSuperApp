@@ -1,9 +1,10 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { getDefaultAgent, type AIAgent } from "./agents";
-import { buildSystemPrompt, buildUserContext } from "./system-prompt";
-import { getToolsForUser } from "./tools";
+import { getAgentById, getDefaultAgent, type AIAgent } from "./agents";
+import { getAgentPromptBuilder } from "./agent-prompts";
+import { buildOperationalPrompt, buildSystemPrompt, buildUserContext } from "./system-prompt";
+import { getToolsForAgent, getToolsForUser } from "./tools";
 import { executeToolCall } from "./tool-handlers";
 import type { AIAttachment, ImageContent, MessageContent, PendingAction, TextContent, ToolCall, ToolDefinition } from "./types";
 
@@ -153,9 +154,8 @@ async function callAIWithTools(
 
 export async function sendAIMessage(
   userMessage: string,
-  // Dipertahankan untuk kompatibilitas pemanggil lama (UI dulu punya model
-  // picker); model sekarang selalu dari getDefaultAgent().
-  _agentId?: string,
+  /** Agen yang dipilih user (nova/reno/crea/fabr/finn); default NOVA. */
+  agentId?: string,
   /** Gambar (struk/nota/screenshot) sebagai data URL base64 yang sudah
    * dikompres di klien (maks 1024px, lihat utils/image.ts). */
   imageBase64?: string
@@ -183,7 +183,7 @@ export async function sendAIMessage(
   if (!profile) return { error: "Profile tidak ditemukan" };
 
   const userContext = buildUserContext(profile);
-  const agent = getDefaultAgent();
+  const agent = (agentId && getAgentById(agentId)) || getDefaultAgent();
 
   const reply = normalizeReply(text);
   // Pesan yang membawa gambar selalu diproses sebagai pesan baru, bukan
@@ -300,7 +300,11 @@ export async function sendAIMessage(
     .limit(10);
 
   // Build messages dengan system prompt
-  const systemPrompt = buildSystemPrompt(userContext);
+  // Persona agen (agent-prompts.ts, dari main) + aturan operasional bersama.
+  const personaBuilder = getAgentPromptBuilder(agent.id);
+  const systemPrompt = personaBuilder
+    ? `${personaBuilder(userContext)}\n\n${buildOperationalPrompt(userContext)}`
+    : buildSystemPrompt(userContext);
   // Histori TANPA pesan terbaru (baris yang baru disimpan di atas) -- pesan
   // terbaru ditambahkan terpisah supaya bisa membawa gambar (multimodal).
   const messages: ChatMessage[] = [
@@ -322,7 +326,9 @@ export async function sendAIMessage(
     messages.push({ role: "user", content: text });
   }
 
-  const tools = getToolsForUser(userContext);
+  // Dua lapis: tool harus sesuai spesialisasi agen DAN akses divisi user.
+  const agentToolNames = new Set(getToolsForAgent(agent.id).map((t) => t.function.name));
+  const tools = getToolsForUser(userContext).filter((t) => agentToolNames.has(t.function.name));
   let finalContent = "";
   let pendingActionToSave: PendingAction | undefined;
 

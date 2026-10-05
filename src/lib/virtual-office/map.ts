@@ -321,3 +321,27 @@ export function getRoomAt(x: number, y: number): OfficeRoom | null {
     ) ?? null
   );
 }
+
+/**
+ * AI Agent NPC positions — setiap agent duduk di ruangan sesuai spesialisasinya.
+ * Koordinat adalah posisi di peta 2D (sama seperti SPAWN, PROPS, dll).
+ */
+export type AgentNPCPosition = {
+  agentId: string;
+  x: number;
+  y: number;
+  roomId: string;
+};
+
+export const AGENT_NPC_POSITIONS: AgentNPCPosition[] = [
+  // NOVA: di koridor pusat (general assistant, accessible to all)
+  { agentId: "nova", x: 450, y: 260, roomId: "corridor" },
+  // RENO: di Meja Magnarent (rental specialist)
+  { agentId: "reno", x: COL1_X + 200, y: ROW1_Y + 60, roomId: "magnarent-desk" },
+  // CREA: di Meja Magnativ (creative partner)
+  { agentId: "crea", x: COL2_X + 200, y: ROW1_Y + 60, roomId: "magnativ-desk" },
+  // FABR: di Meja Production (production expert)
+  { agentId: "fabr", x: COL3_X + 200, y: ROW1_Y + 60, roomId: "production-desk" },
+  // FINN: di Ruang Owner/Admin (finance analyst)
+  { agentId: "finn", x: COL3_X + 200, y: ROW2_Y + 180, roomId: "owner-room" },
+];

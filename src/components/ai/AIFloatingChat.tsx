@@ -2,7 +2,7 @@
 
 import { Loader2, Send, X, ImagePlus } from "lucide-react";
 import { useAIChat, formatFileSize } from "@/lib/ai/hooks/useAIChat";
-import { AI_BRANDING } from "@/lib/ai/constants";
+import { AgentSelector } from "./AgentSelector";
 import { cn } from "@/lib/cn";
 import { useEffect, useState } from "react";
 
@@ -17,12 +17,14 @@ export function AIFloatingChat() {
     error,
     selectedImage,
     imagePreviewUrl,
+    selectedAgent,
     setInput,
     send,
     clear,
     loadMessages,
     selectImage,
     removeImage,
+    selectAgent,
     inputRef,
     endRef,
     fileInputRef,
@@ -49,26 +51,26 @@ export function AIFloatingChat() {
         onClick={() => setOpen(true)}
         className={cn(
           "fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-transform hover:scale-110 active:scale-95",
-          `bg-gradient-to-br ${AI_BRANDING.color} text-white`
+          `bg-gradient-to-br ${selectedAgent.color} text-white`
         )}
-        title={`Buka ${AI_BRANDING.name}`}
+        title={`Buka ${selectedAgent.name}`}
       >
-        <span className="text-2xl">{AI_BRANDING.icon}</span>
+        <span className="text-2xl">{selectedAgent.icon}</span>
       </button>
     );
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-50 flex h-[480px] w-[360px] max-w-[90vw] flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900">
+    <div className="fixed bottom-5 right-5 z-50 flex h-[520px] w-[380px] max-w-[90vw] flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
         <div className="flex items-center gap-2 px-2 py-1">
-          <span className={cn("flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br text-white", AI_BRANDING.color)}>
-            {AI_BRANDING.icon}
+          <span className={cn("flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br text-lg text-white", selectedAgent.color)}>
+            {selectedAgent.icon}
           </span>
           <div className="text-left">
-            <p className="text-sm font-semibold text-zinc-900 dark:text-white">{AI_BRANDING.name}</p>
-            <p className="text-[10px] text-emerald-600">● Online</p>
+            <p className="text-sm font-semibold text-zinc-900 dark:text-white">{selectedAgent.name}</p>
+            <p className="text-[10px] text-zinc-500">{selectedAgent.description}</p>
           </div>
         </div>
         <div className="flex gap-1">
@@ -81,6 +83,11 @@ export function AIFloatingChat() {
         </div>
       </div>
 
+      {/* Agent Selector */}
+      <div className="border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+        <AgentSelector selectedId={selectedAgent.id} onSelect={selectAgent} compact />
+      </div>
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-3">
         {loading ? (
@@ -89,43 +96,40 @@ export function AIFloatingChat() {
           </div>
         ) : messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
-            <span className="text-4xl">{AI_BRANDING.icon}</span>
-            <p className="mt-2 text-sm font-medium text-zinc-700 dark:text-zinc-200">Halo! Saya {AI_BRANDING.name}</p>
-            <p className="text-xs text-zinc-400">{AI_BRANDING.shortDescription}</p>
+            <span className="text-4xl">{selectedAgent.icon}</span>
+            <p className="mt-2 text-sm font-medium text-zinc-700 dark:text-zinc-200">Halo! Saya {selectedAgent.name}</p>
+            <p className="text-xs text-zinc-400">{selectedAgent.description}</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {messages.map((m) => (
-              <div key={m.id} className={cn("flex gap-2", m.role === "user" && "flex-row-reverse")}>
-                <div className={cn(
-                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs text-white",
-                  m.role === "user" ? "bg-indigo-500" : `bg-gradient-to-br ${AI_BRANDING.color}`
-                )}>
-                  {m.role === "user" ? "👤" : AI_BRANDING.icon}
+            {messages.map((m) => {
+              return (
+                <div key={m.id} className={cn("flex gap-2", m.role === "user" && "flex-row-reverse")}>
+                  <div className={cn(
+                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs text-white",
+                    m.role === "user" ? "bg-indigo-500" : `bg-gradient-to-br ${selectedAgent.color}`
+                  )}>
+                    {m.role === "user" ? "👤" : selectedAgent.icon}
+                  </div>
+                  <div className={cn(
+                    "max-w-[75%] rounded-xl px-3 py-2 text-xs",
+                    m.role === "user"
+                      ? "bg-indigo-500 text-white"
+                      : "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"
+                  )}>
+                    {m.attachment?.type === "image" && (
+                      // eslint-disable-next-line @next/next/no-img-element -- data URL base64/blob lokal, bukan aset yang bisa dioptimasi next/image
+                      <img src={m.attachment.url} alt={m.attachment.name || "Gambar"} className="mb-1 max-h-32 rounded-lg object-contain" />
+                    )}
+                    <div className="whitespace-pre-wrap">{m.content}</div>
+                  </div>
                 </div>
-                <div className={cn(
-                  "max-w-[75%] rounded-xl px-3 py-2 text-xs",
-                  m.role === "user"
-                    ? "bg-indigo-500 text-white"
-                    : "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"
-                )}>
-                  {/* Show image attachment if present */}
-                  {m.attachment?.type === "image" && (
-                    // eslint-disable-next-line @next/next/no-img-element -- data URL base64/blob lokal, bukan aset yang bisa dioptimasi next/image
-                    <img
-                      src={m.attachment.url}
-                      alt={m.attachment.name || "Gambar"}
-                      className="mb-1 max-h-32 rounded-lg object-contain"
-                    />
-                  )}
-                  <div className="whitespace-pre-wrap">{m.content}</div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
             {sending && (
               <div className="flex gap-2">
-                <div className={cn("flex h-6 w-6 items-center justify-center rounded-full text-xs text-white bg-gradient-to-br", AI_BRANDING.color)}>
-                  {AI_BRANDING.icon}
+                <div className={cn("flex h-6 w-6 items-center justify-center rounded-full text-xs text-white bg-gradient-to-br", selectedAgent.color)}>
+                  {selectedAgent.icon}
                 </div>
                 <div className="rounded-xl bg-zinc-100 px-3 py-2 dark:bg-zinc-800">
                   <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
@@ -160,7 +164,6 @@ export function AIFloatingChat() {
       {/* Input */}
       <div className="border-t border-zinc-100 p-2 dark:border-zinc-800">
         <div className="flex gap-2">
-          {/* Hidden file input */}
           <input
             ref={fileInputRef}
             type="file"
@@ -168,8 +171,6 @@ export function AIFloatingChat() {
             onChange={handleFileChange}
             className="hidden"
           />
-
-          {/* Image button */}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -179,13 +180,12 @@ export function AIFloatingChat() {
           >
             <ImagePlus className="h-4 w-4" />
           </button>
-
           <textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder={selectedImage ? "Tambah keterangan..." : `Tanya ${AI_BRANDING.name}...`}
+            placeholder={selectedImage ? "Tambah keterangan..." : `Tanya ${selectedAgent.name}...`}
             rows={1}
             disabled={sending}
             className="flex-1 resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-xs outline-none focus:border-violet-400 disabled:opacity-50 dark:border-zinc-700"
@@ -195,7 +195,7 @@ export function AIFloatingChat() {
             disabled={(!input.trim() && !selectedImage) || sending}
             className={cn(
               "flex h-9 w-9 items-center justify-center rounded-lg text-white transition disabled:opacity-50",
-              `bg-gradient-to-br ${AI_BRANDING.color}`
+              `bg-gradient-to-br ${selectedAgent.color}`
             )}
           >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
