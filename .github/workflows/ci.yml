@@ -30,6 +30,14 @@ jobs:
       - name: Cek tipe TypeScript
         run: npx tsc --noEmit
 
+      # Lint sudah 0 masalah (QC 5 Okt 2026) -- dijaga tetap 0, termasuk
+      # aturan React Compiler (setState di effect, Math.random saat render).
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      - name: Unit test
+        run: npm test
+
       - name: Build Next.js
         run: npm run build
         env:
@@ -39,3 +47,33 @@ jobs:
           # ditulis langsung di sini, bukan rahasia yang perlu disembunyikan.
           NEXT_PUBLIC_SUPABASE_URL: https://xbynsiafccsfgeayakma.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_octaifrIhulBfnbsHnlQ_w_eAjFz-I0
+
+  # Semua file supabase/migrations harus bisa diterapkan berurutan ke
+  # database KOSONG. Audit 5 Okt 2026 menemukan migrasi yang hanya pernah
+  # dijalankan langsung di production dan file yang urutannya rusak --
+  # job ini mencegah hal yang sama terulang tanpa ketahuan.
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - name: Checkout kode
+        uses: actions/checkout@v4
+
+      - name: Rebuild semua migrasi dari database kosong
+        run: bash supabase/verify/rebuild.sh

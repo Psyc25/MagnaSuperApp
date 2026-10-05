@@ -6,6 +6,7 @@ import { getAgentPromptBuilder } from "./agent-prompts";
 import { buildOperationalPrompt, buildSystemPrompt, buildUserContext } from "./system-prompt";
 import { getToolsForAgent, getToolsForUser } from "./tools";
 import { executeToolCall } from "./tool-handlers";
+import { classifyReply } from "./reply-classifier";
 import type { AIAttachment, ImageContent, MessageContent, PendingAction, TextContent, ToolCall, ToolDefinition } from "./types";
 
 export type AIMessage = {
@@ -35,30 +36,6 @@ const MAX_TOOL_ROUNDS = 4;
 const AI_TIMEOUT_MS = 45_000;
 /** Suhu rendah untuk tool calling — jawaban data harus konsisten, bukan kreatif. */
 const TOOL_TEMPERATURE = 0.3;
-
-const CONFIRM_WORDS = new Set([
-  "ya", "iya", "yes", "y", "ok", "oke", "okay", "okey", "lanjut", "lanjutkan", "konfirmasi", "setuju", "benar",
-  "betul", "simpan", "boleh", "silakan", "siap", "sip", "gas", "yup", "yap",
-]);
-const CANCEL_WORDS = new Set(["batal", "batalkan", "tidak", "gak", "nggak", "enggak", "no", "cancel", "jangan"]);
-/** Kata pelengkap yang boleh menyertai jawaban ya/batal ("ya simpan saja",
- * "tidak jadi", "oke deh"). */
-const FILLER_WORDS = new Set(["saja", "aja", "usah", "dong", "deh", "kok", "jadi", "sudah", "udah", "kak", "min", "please", "tolong"]);
-
-/**
- * "ya lanjut" / "oke simpan aja" = konfirmasi; "tidak jadi" = batal. Dulu cuma
- * satu kata persis yang dikenali, jadi "Ya, lanjut" diam-diam MEMBUANG aksi
- * yang sedang menunggu konfirmasi. Kalimat yang mengandung hal lain (mis.
- * "ya tapi tanggalnya ganti") tetap diteruskan ke AI.
- */
-function classifyReply(text: string): "confirm" | "cancel" | null {
-  const words = text.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
-  if (words.length === 0 || words.length > 5) return null;
-  const onlyFrom = (set: Set<string>) => words.every((w) => set.has(w) || FILLER_WORDS.has(w));
-  if (words.some((w) => CANCEL_WORDS.has(w)) && onlyFrom(CANCEL_WORDS)) return "cancel";
-  if (words.some((w) => CONFIRM_WORDS.has(w)) && onlyFrom(CONFIRM_WORDS)) return "confirm";
-  return null;
-}
 
 // Check if AI is available (localhost won't work in production)
 const isLocalhost = NINEROUTER_URL.includes("localhost") || NINEROUTER_URL.includes("127.0.0.1");

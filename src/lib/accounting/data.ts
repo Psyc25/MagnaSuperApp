@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { classifyCashFlowCategory, pickCounterLine, type CashFlowCategory } from "./cash-flow-category";
 import { ACCOUNT_CODE, DIVISION_LABELS } from "./types";
 import type { Account, AccountType, JournalEntry, JournalLine, JournalSourceType, NormalBalance } from "./types";
 
@@ -417,7 +418,7 @@ export async function getBalanceSheet(asOfDate: string): Promise<BalanceSheet> {
  * - selain itu (Pendapatan, Beban, Piutang, Hutang jangka pendek) ->
  *   Operasional, karena semuanya berasal dari aktivitas usaha sehari-hari
  */
-export type CashFlowCategory = "Operasional" | "Investasi" | "Pendanaan" | "Lainnya";
+export type { CashFlowCategory };
 
 export type CashFlowLine = {
   entryId: string;
@@ -599,39 +600,17 @@ export async function getCashFlowStatement(startDate: string, endDate: string): 
     linesByEntry.set(line.journal_entry_id, bucket);
   }
 
-  function classifyCategory(counterAccountId: string | undefined): CashFlowCategory {
-    if (!counterAccountId) return "Lainnya";
-    const counter = accountById.get(counterAccountId);
-    if (!counter) return "Lainnya";
-    if (cashAccountIds.includes(counter.id)) return "Lainnya"; // transfer internal Kas <-> Bank
-    if (counter.account_subtype === "Aset Tetap") return "Investasi";
-    if (counter.account_type === "Modal") return "Pendanaan";
-    // Dana investor (migrasi 0084) dibukukan sebagai utang (akun 2-1300),
-    // bukan Modal -- tapi secara arus kas ini tetap aktivitas Pendanaan,
-    // bukan Operasional. Dicek per kode akun (bukan account_type "Kewajiban"
-    // secara umum) supaya utang operasional biasa (Hutang Usaha/
-    // Reimbursement/Pajak) tetap benar masuk Operasional seperti sebelumnya.
-    if (counter.account_code === "2-1300") return "Pendanaan";
-    return "Operasional";
-  }
-
   const lines: CashFlowLine[] = [];
   for (const [entryId, entryLines] of linesByEntry) {
     const entry = entryById.get(entryId);
     if (!entry) continue;
     const cashLines = entryLines.filter((l) => cashAccountIds.includes(l.account_id));
     if (cashLines.length === 0) continue;
-    // Akun lawan = baris non-kas dengan nominal TERBESAR (seri: kode akun
-    // terkecil) -- tidak bergantung urutan baris dari database. Untuk jurnal
-    // 2 baris (mayoritas) hasilnya sama dengan sebelumnya.
-    const counterLine = entryLines
-      .filter((l) => !cashAccountIds.includes(l.account_id))
-      .sort(
-        (a, b) =>
-          b.debit + b.credit - (a.debit + a.credit) ||
-          (accountById.get(a.account_id)?.account_code ?? "").localeCompare(accountById.get(b.account_id)?.account_code ?? "")
-      )[0];
-    const category = classifyCategory(counterLine?.account_id);
+    const counterLine = pickCounterLine(entryLines, cashAccountIds, accountById);
+    const category = classifyCashFlowCategory(
+      counterLine ? accountById.get(counterLine.account_id) : undefined,
+      cashAccountIds
+    );
     const counterAccountName = counterLine ? (accountById.get(counterLine.account_id)?.account_name ?? "-") : "-";
 
     for (const line of cashLines) {
