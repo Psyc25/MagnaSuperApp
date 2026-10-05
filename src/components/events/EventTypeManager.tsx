@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   Ban,
@@ -31,6 +31,8 @@ import {
 import { parseChecklistSheet } from "@/lib/events/importParser";
 import type { EventType, EventTypeTemplateItem, TemplateImportRow } from "@/lib/events/types";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { loadXlsx } from "@/lib/shared/xlsx";
+import { useSyncedState } from "@/lib/shared/use-synced-state";
 
 function emptyEventTypeForm() {
   return { name: "", description: "" };
@@ -62,10 +64,8 @@ export function EventTypeManager({
   const router = useRouter();
   const { showToast } = useToast();
 
-  const [eventTypes, setEventTypes] = useState(initialEventTypes);
-  useEffect(() => setEventTypes(initialEventTypes), [initialEventTypes]);
-  const [templateItems, setTemplateItems] = useState(initialTemplateItems);
-  useEffect(() => setTemplateItems(initialTemplateItems), [initialTemplateItems]);
+  const [eventTypes, setEventTypes] = useSyncedState(initialEventTypes);
+  const [templateItems, setTemplateItems] = useSyncedState(initialTemplateItems);
 
   const [selectedTypeId, setSelectedTypeId] = useState<string | null>(initialEventTypes[0]?.id ?? null);
   const selectedType = useMemo(
@@ -271,11 +271,8 @@ export function EventTypeManager({
     setImportParsing(true);
     setImportFileName(file.name);
     try {
-      // Import dinamis + typing `any` dengan sengaja -- lihat komentar
-      // panjang di ProductManager.tsx soal alasan `xlsx` (paket CJS)
-      // ditangani begini.
-      const xlsxModule: any = await import("xlsx");
-      const XLSX = xlsxModule.default ?? xlsxModule;
+      // Import dinamis -- lihat komentar di src/lib/shared/xlsx.ts.
+      const XLSX = await loadXlsx();
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(new Uint8Array(buffer), { type: "array" });
       const firstSheetName = workbook.SheetNames[0];
@@ -672,8 +669,8 @@ export function EventTypeManager({
               className="w-full rounded-xl border border-zinc-300 bg-transparent px-3.5 py-2.5 text-sm outline-none file:mr-3 file:rounded-full file:border-0 file:bg-violet-50 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-violet-700 dark:border-zinc-700 dark:file:bg-violet-500/10 dark:file:text-violet-300"
             />
             <p className="mt-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
-              Mendukung file yang punya kolom "Kategori" eksplisit, ATAU checklist dengan baris judul kategori
-              tersendiri (mis. "A. VENUE") diikuti baris-baris item -- persis seperti contoh checklist Owner. Kolom
+              Mendukung file yang punya kolom &ldquo;Kategori&rdquo; eksplisit, ATAU checklist dengan baris judul kategori
+              tersendiri (mis. &ldquo;A. VENUE&rdquo;) diikuti baris-baris item -- persis seperti contoh checklist Owner. Kolom
               yang dikenali: No, Item, Detail, Qty/Durasi, Keterangan (kolom Status/PIC di file sumber dilewati --
               itu urusan checklist AKTUAL per event, bukan template).
             </p>

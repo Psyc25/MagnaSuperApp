@@ -21,6 +21,7 @@ import {
   type CheckStage,
   type DepositJenis,
 } from "@/lib/magnarent/extras-types";
+import { useSyncedState } from "@/lib/shared/use-synced-state";
 
 const STAGE_LABEL: Record<CheckStage, string> = { keluar: "Saat Keluar", kembali: "Saat Kembali" };
 
@@ -37,12 +38,8 @@ function CheckStagePanel({
 }) {
   const { showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [catatan, setCatatan] = useState(check?.catatan ?? "");
+  const [catatan, setCatatan] = useSyncedState(check?.catatan ?? "");
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    setCatatan(check?.catatan ?? "");
-  }, [check?.catatan]);
 
   async function handleSave() {
     const formData = new FormData();

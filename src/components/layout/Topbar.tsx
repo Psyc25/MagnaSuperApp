@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { ChevronDown, User as UserIcon } from "lucide-react";
 import { signOut } from "@/lib/supabase/actions";
@@ -26,18 +26,16 @@ function greetingForHour(hour: number): string {
   return "Selamat malam";
 }
 
+const subscribeNothing = () => () => {};
+const browserGreeting = () => greetingForHour(new Date().getHours());
+
 export function Topbar({ user }: { user: (Profile & { email: string }) | null }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const t = useT();
-  // Mulai dari sapaan netral (sama di server & klien) supaya tidak ada
-  // hydration mismatch akibat jam server vs jam browser — begitu mount,
-  // langsung disesuaikan ke jam sungguhan si pengguna.
-  const [greeting, setGreeting] = useState("Halo");
-
-  useEffect(() => {
-    setGreeting(greetingForHour(new Date().getHours()));
-  }, []);
+  // Sapaan netral di server (jam server ≠ jam browser) supaya tidak ada
+  // hydration mismatch; di browser langsung mengikuti jam si pengguna.
+  const greeting = useSyncExternalStore(subscribeNothing, browserGreeting, () => "Halo");
 
   useEffect(() => {
     if (!open) return;

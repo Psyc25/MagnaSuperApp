@@ -79,13 +79,6 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, sending]);
 
-  // Load messages on mount if requested
-  useEffect(() => {
-    if (loadOnMount && !loaded) {
-      loadMessages();
-    }
-  }, [loadOnMount, loaded]);
-
   const loadMessages = useCallback(async () => {
     if (loaded) return;
     setLoading(true);
@@ -103,6 +96,30 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
       setLoaded(true);
     }
   }, [loaded]);
+
+  // Muat riwayat saat mount kalau diminta -- fetch langsung + penanda batal
+  // (bukan memanggil loadMessages, yang men-set state secara sinkron di
+  // dalam effect). Status "memuat" untuk muatan awal ini diturunkan dari
+  // loadOnMount && !loaded, lihat `loading` di return.
+  useEffect(() => {
+    if (!loadOnMount || loaded) return;
+    let cancelled = false;
+    getAIMessages()
+      .then(({ messages: m, error: e }) => {
+        if (cancelled) return;
+        if (e) setError(e);
+        else setMessages(m);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Gagal memuat riwayat");
+      })
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadOnMount, loaded]);
 
   const selectImage = useCallback((file: File | null) => {
     if (imagePreviewUrl) {
@@ -216,7 +233,7 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
     messages,
     input,
     sending,
-    loading,
+    loading: loading || (loadOnMount && !loaded),
     error,
     selectedImage,
     imagePreviewUrl,

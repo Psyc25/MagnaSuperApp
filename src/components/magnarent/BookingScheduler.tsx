@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   AlertTriangle,
   BadgeCheck,
@@ -16,7 +16,6 @@ import {
   Trash2,
   Truck,
   Users,
-  X as XIcon,
 } from "lucide-react";
 import { useMagnarentData, type BookingConflict } from "./MagnarentDataProvider";
 import { BookingConditionModal } from "./BookingConditionModal";
@@ -132,7 +131,7 @@ export function BookingScheduler() {
   const [subrentTarget, setSubrentTarget] = useState<Booking | null>(null);
   const [portalTarget, setPortalTarget] = useState<Booking | null>(null);
 
-  const itemName = (id: string) => inventory.find((i) => i.id === id)?.name ?? "—";
+  const itemName = useCallback((id: string) => inventory.find((i) => i.id === id)?.name ?? "—", [inventory]);
   const clientById = (id?: string) => (id ? clients.find((c) => c.id === id) : undefined);
 
   /** Pilih klien terdaftar → auto-isi nama/telepon (bisa tetap diedit manual sesudahnya). */
@@ -159,7 +158,7 @@ export function BookingScheduler() {
       const matchesStatus = statusFilter === ALL_FILTER || b.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
-  }, [sortedBookings, searchTerm, statusFilter, inventory]);
+  }, [sortedBookings, searchTerm, statusFilter, itemName]);
 
   const liveAvailable = useMemo(() => {
     if (!form.itemId || !form.tanggalMulai || !form.tanggalSelesai) return null;
@@ -715,7 +714,7 @@ export function BookingScheduler() {
 
           {seasonalHint && liveTotal !== null && (
             <div className="rounded-xl bg-amber-50 px-3.5 py-2.5 text-xs text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
-              <span className="font-semibold">Musim "{seasonalHint.label}"</span> berlaku di tanggal ini (
+              <span className="font-semibold">Musim &ldquo;{seasonalHint.label}&rdquo;</span> berlaku di tanggal ini (
               {seasonalHint.multiplierPct > 0 ? "+" : ""}
               {seasonalHint.multiplierPct}%) — saran harga:{" "}
               <span className="font-semibold">

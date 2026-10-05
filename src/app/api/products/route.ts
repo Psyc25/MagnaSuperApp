@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { ProductDivision } from "@/lib/products/types";
 
 const VALID_DIVISIONS: ProductDivision[] = ["magnarent", "magnativ", "production", "umum"];
+const MAX_PRODUCTS_PER_REQUEST = 500;
 
 /**
  * API eksternal untuk Katalog Produk — dipakai automation DI LUAR aplikasi
@@ -80,6 +81,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: 'Body harus berupa { "products": [ { "name": "...", ... }, ... ] }.' },
       { status: 400 }
+    );
+  }
+
+  // Diproses satu per satu (cek SKU + upsert), jadi batch raksasa bisa
+  // melewati batas waktu fungsi serverless di tengah jalan -- separuh data
+  // masuk, separuh tidak. Automation diminta memecah kiriman.
+  if (products.length > MAX_PRODUCTS_PER_REQUEST) {
+    return NextResponse.json(
+      { error: `Maksimal ${MAX_PRODUCTS_PER_REQUEST} produk per request — pecah kiriman jadi beberapa batch.` },
+      { status: 413 }
     );
   }
 

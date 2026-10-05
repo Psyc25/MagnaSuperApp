@@ -45,9 +45,34 @@ export const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   "Lain-lain",
 ];
 
-export type ReimbursementStatus = "Tidak Perlu" | "Belum Diganti" | "Sudah Diganti";
+/**
+ * Siapa yang membayar & apakah perlu diganti -- menentukan akun kredit jurnal
+ * otomatis (post_event_expense_journal, migrasi 0058a/0090):
+ * - "Dibayar Perusahaan": langsung dari kas/rekening perusahaan -> Kas Kecil
+ *   (metode cash) atau Bank Operasional. DEFAULT sejak migrasi 0090.
+ * - "Belum Diganti": PIC menalangi, perusahaan masih berutang -> Hutang
+ *   Reimbursement.
+ * - "Sudah Diganti": PIC menalangi lalu sudah diganti perusahaan -> Kas/Bank.
+ * - "Tidak Perlu": PIC bayar pribadi & tidak mengklaim -> Modal Pemilik.
+ */
+export type ReimbursementStatus = "Dibayar Perusahaan" | "Tidak Perlu" | "Belum Diganti" | "Sudah Diganti";
 
-export const REIMBURSEMENT_STATUSES: ReimbursementStatus[] = ["Tidak Perlu", "Belum Diganti", "Sudah Diganti"];
+export const REIMBURSEMENT_STATUSES: ReimbursementStatus[] = [
+  "Dibayar Perusahaan",
+  "Belum Diganti",
+  "Sudah Diganti",
+  "Tidak Perlu",
+];
+
+/** Penjelasan singkat di form -- dulu tidak ada, sehingga "Tidak Perlu"
+ * (default lama) dipilih juga untuk pengeluaran yang dibayar perusahaan dan
+ * jurnalnya masuk ke Modal Pemilik, bukan mengurangi Kas/Bank. */
+export const REIMBURSEMENT_STATUS_HINTS: Record<ReimbursementStatus, string> = {
+  "Dibayar Perusahaan": "Dibayar langsung dari kas/rekening perusahaan.",
+  "Belum Diganti": "PIC menalangi dulu, perusahaan belum mengganti.",
+  "Sudah Diganti": "PIC menalangi dulu, sudah diganti perusahaan.",
+  "Tidak Perlu": "PIC bayar pribadi dan tidak mengklaim penggantian.",
+};
 
 /** Saran tampil di UI (datalist) — bukan daftar tertutup, staf boleh ketik
  * metode/rekening lain sendiri (lihat komentar migrasi 0049). */
@@ -91,4 +116,8 @@ export type ExpenseSourceOption = {
   sourceId: string | null;
   division: ExpenseDivision;
   label: string;
+  /** Sumbernya sudah "Dibatalkan" -- tetap dikirim supaya label pengeluaran
+   * lama tidak jadi "—", tapi form tidak menawarkannya untuk pilihan baru
+   * (kecuali sumber yang sedang dipakai pengeluaran yang diedit). */
+  cancelled?: boolean;
 };

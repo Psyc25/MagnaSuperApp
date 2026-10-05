@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Ban, CheckCircle2, Landmark, Loader2, Plus, Trash2 } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
@@ -11,6 +11,7 @@ import { createAccount, deleteAccount, setAccountActive } from "@/lib/accounting
 import type { Account, AccountType, NormalBalance } from "@/lib/accounting/types";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { useSyncedState } from "@/lib/shared/use-synced-state";
 
 const ACCOUNT_TYPES: AccountType[] = ["Aset", "Kewajiban", "Modal", "Pendapatan", "Beban"];
 const NORMAL_BALANCES: NormalBalance[] = ["Debit", "Kredit"];
@@ -42,8 +43,7 @@ function emptyForm() {
 export function ChartOfAccountsManager({ initialAccounts }: { initialAccounts: Account[] }) {
   const router = useRouter();
   const { showToast } = useToast();
-  const [accounts, setAccounts] = useState(initialAccounts);
-  useEffect(() => setAccounts(initialAccounts), [initialAccounts]);
+  const [accounts, setAccounts] = useSyncedState(initialAccounts);
 
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);

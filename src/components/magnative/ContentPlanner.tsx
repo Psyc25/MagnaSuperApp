@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type FormEvent } from "react";
 import {
   CalendarDays,
   CheckCircle2,
@@ -132,7 +132,10 @@ export function ContentPlanner() {
     return { year: now.getFullYear(), month: now.getMonth() };
   });
 
-  const clientName = (id?: string) => (id ? clients.find((c) => c.id === id)?.name ?? "—" : "Internal");
+  const clientName = useCallback(
+    (id?: string) => (id ? clients.find((c) => c.id === id)?.name ?? "—" : "Internal"),
+    [clients]
+  );
 
   const sortedPosts = useMemo(
     () => [...contentPosts].sort((a, b) => a.tanggalPosting.localeCompare(b.tanggalPosting)),
@@ -147,7 +150,7 @@ export function ContentPlanner() {
       const matchesPlatform = platformFilter === ALL_FILTER || p.platform === platformFilter;
       return matchesSearch && matchesStatus && matchesPlatform;
     });
-  }, [sortedPosts, searchTerm, statusFilter, platformFilter, clients]);
+  }, [sortedPosts, searchTerm, statusFilter, platformFilter, clientName]);
 
   const postsByDate = useMemo(() => {
     const map = new Map<string, ContentPost[]>();

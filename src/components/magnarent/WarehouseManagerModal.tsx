@@ -30,7 +30,13 @@ export function WarehouseManagerModal({ onClose }: { onClose: () => void }) {
   }
 
   useEffect(() => {
-    reload();
+    let cancelled = false;
+    getWarehouses().then((rows) => {
+      if (!cancelled) setWarehouses(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function handleSubmit(e: FormEvent) {
@@ -131,7 +137,7 @@ export function WarehouseManagerModal({ onClose }: { onClose: () => void }) {
           deleteTarget && (
             <>
               Yakin hapus gudang <strong>{deleteTarget.nama}</strong>? Unit alat yang ditempatkan di gudang ini akan
-              jadi "belum ditempatkan", tindakan ini tidak bisa dibatalkan.
+              jadi &ldquo;belum ditempatkan&rdquo;, tindakan ini tidak bisa dibatalkan.
             </>
           )
         }

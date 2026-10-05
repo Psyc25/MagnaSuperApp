@@ -36,8 +36,11 @@ const MOBILE_BREAKPOINT = 768;
 export function PullToRefresh({ children }: { children: ReactNode }) {
   const [pullDistance, setPullDistance] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  // State (bukan cuma ref) karena ikut menentukan gaya transisi saat render.
+  const [isPulling, setIsPulling] = useState(false);
   const startYRef = useRef<number | null>(null);
   const pullingRef = useRef(false);
+  const pullDistanceRef = useRef(0);
 
   useEffect(() => {
     function isMobileWidth() {
@@ -48,16 +51,23 @@ export function PullToRefresh({ children }: { children: ReactNode }) {
       if (refreshing || !isMobileWidth() || window.scrollY > 0) return;
       startYRef.current = e.touches[0].clientY;
       pullingRef.current = true;
+      setIsPulling(true);
+    }
+
+    function updatePull(distance: number) {
+      pullDistanceRef.current = distance;
+      setPullDistance(distance);
     }
 
     function handleTouchMove(e: TouchEvent) {
       if (!pullingRef.current || startYRef.current === null) return;
       const delta = e.touches[0].clientY - startYRef.current;
       if (delta > 0 && window.scrollY <= 0) {
-        setPullDistance(Math.min(delta / 1.6, MAX_PULL));
+        updatePull(Math.min(delta / 1.6, MAX_PULL));
       } else {
         pullingRef.current = false;
-        setPullDistance(0);
+        setIsPulling(false);
+        updatePull(0);
       }
     }
 
@@ -65,13 +75,16 @@ export function PullToRefresh({ children }: { children: ReactNode }) {
       if (!pullingRef.current) return;
       pullingRef.current = false;
       startYRef.current = null;
-      setPullDistance((current) => {
-        if (current >= PULL_THRESHOLD) {
-          setRefreshing(true);
-          window.location.reload();
-        }
-        return 0;
-      });
+      setIsPulling(false);
+      // Dibaca dari ref, bukan di dalam updater setPullDistance -- updater
+      // harus murni (React bisa memanggilnya dua kali), sedangkan reload()
+      // adalah efek samping.
+      const shouldRefresh = pullDistanceRef.current >= PULL_THRESHOLD;
+      updatePull(0);
+      if (shouldRefresh) {
+        setRefreshing(true);
+        window.location.reload();
+      }
     }
 
     window.addEventListener("touchstart", handleTouchStart, { passive: true });
@@ -91,7 +104,7 @@ export function PullToRefresh({ children }: { children: ReactNode }) {
         className="flex items-center justify-center overflow-hidden md:hidden"
         style={{
           height: refreshing ? 44 : pullDistance,
-          transition: pullingRef.current ? "none" : "height 200ms ease-out",
+          transition: isPulling ? "none" : "height 200ms ease-out",
         }}
       >
         <RefreshCw

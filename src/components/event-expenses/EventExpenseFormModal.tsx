@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { Plus, Receipt, Trash2, Upload, X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { todayISO } from "@/lib/shared/utils";
@@ -10,10 +10,12 @@ import {
   EXPENSE_DIVISION_LABELS,
   PAYMENT_METHOD_SUGGESTIONS,
   REIMBURSEMENT_STATUSES,
+  REIMBURSEMENT_STATUS_HINTS,
   type EventExpense,
   type ExpenseProof,
   type ExpenseSourceOption,
 } from "@/lib/event-expenses/types";
+import { useResetOnChange } from "@/lib/shared/use-synced-state";
 
 const GRADIENT = "linear-gradient(135deg, #4C1D95 0%, #7C3AED 100%)";
 
@@ -89,15 +91,14 @@ export function EventExpenseFormModal({
 
   // Prefill/reset form setiap kali modal dibuka — baik mode tambah (form
   // kosong) maupun mode edit (form terisi dari `editing`).
-  useEffect(() => {
-    if (!open) return;
+  useResetOnChange(open ? (editing?.id ?? "new") : null, (key) => {
+    if (key === null) return;
     setForm(editing ? formFromExpense(editing) : emptyForm());
     setExistingProofs(editing?.proofs ?? []);
     setFiles([]);
     setError(null);
     setUploadWarning(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, editing?.id]);
+  });
 
   const sourceByKey = useMemo(() => {
     const map = new Map<string, ExpenseSourceOption>();
@@ -107,14 +108,16 @@ export function EventExpenseFormModal({
 
   const grouped = useMemo(() => {
     const byDivision = new Map<string, ExpenseSourceOption[]>();
+    const editingKey = editing ? `${editing.sourceType}::${editing.sourceId ?? "umum"}` : null;
     for (const opt of sourceOptions) {
       if (opt.sourceType === "umum") continue;
+      if (opt.cancelled && sourceKeyOf(opt) !== editingKey) continue;
       const list = byDivision.get(opt.division) ?? [];
       list.push(opt);
       byDivision.set(opt.division, list);
     }
     return byDivision;
-  }, [sourceOptions]);
+  }, [sourceOptions, editing]);
 
   const umumOption = sourceOptions.find((o) => o.sourceType === "umum");
 
@@ -348,6 +351,9 @@ export function EventExpenseFormModal({
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+              {REIMBURSEMENT_STATUS_HINTS[form.reimbursementStatus]}
+            </p>
           </div>
         </div>
 

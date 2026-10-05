@@ -8,7 +8,6 @@ import { formatDateID } from "@/lib/magnarent/date";
 import { StatCard } from "@/components/ui/StatCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { cn } from "@/lib/cn";
-import type { BoothProject } from "@/lib/production/types";
 import { BOOTH_STATUS_STYLES as STATUS_BADGE } from "@/lib/status-styles";
 import { GLASS_BORDER, GLASS_INPUT, GLASS_SURFACE } from "@/lib/glass";
 

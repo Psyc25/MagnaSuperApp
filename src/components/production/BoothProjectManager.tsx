@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type FormEvent } from "react";
 import { AlertTriangle, BadgeCheck, FolderOpen, Hammer, MapPin, Pencil, Plus, Search, Trash2, X as XIcon } from "lucide-react";
 import { useProductionData } from "./ProductionDataProvider";
 import { Modal } from "@/components/ui/Modal";
@@ -167,9 +167,10 @@ export function BoothProjectManager({ templates = [] }: { templates?: BomTemplat
     });
   }, [sortedProjects, searchTerm, statusFilter]);
 
-  function materialCost(materialId: string): number {
-    return materials.find((m) => m.id === materialId)?.pricePerUnit ?? 0;
-  }
+  const materialCost = useCallback(
+    (materialId: string): number => materials.find((m) => m.id === materialId)?.pricePerUnit ?? 0,
+    [materials]
+  );
 
   const estimasiBiayaMaterial = useMemo(
     () =>
@@ -178,7 +179,7 @@ export function BoothProjectManager({ templates = [] }: { templates?: BomTemplat
         if (!row.materialId || !Number.isFinite(qty)) return sum;
         return sum + qty * materialCost(row.materialId);
       }, 0),
-    [materialRows, materials]
+    [materialRows, materialCost]
   );
 
   function openAddModal() {

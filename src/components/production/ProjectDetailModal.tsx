@@ -48,6 +48,7 @@ import {
 import { formatDateID, formatRupiah, todayISO } from "@/lib/shared/utils";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { useSyncedState, useResetOnChange } from "@/lib/shared/use-synced-state";
 
 const STAGE_LABEL: Record<CheckStage, string> = { instalasi: "Saat Instalasi", bongkar: "Saat Bongkar" };
 const EMPTY_CREW_FORM = { nama: "", peran: "Tukang/Instalatur" as CrewRole, kontak: "", catatan: "" };
@@ -85,12 +86,8 @@ function CheckStagePanel({
 }) {
   const { showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [catatan, setCatatan] = useState(check?.catatan ?? "");
+  const [catatan, setCatatan] = useSyncedState(check?.catatan ?? "");
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    setCatatan(check?.catatan ?? "");
-  }, [check?.catatan]);
 
   async function handleSave() {
     const formData = new FormData();
@@ -990,12 +987,16 @@ export function ProjectDetailModal({
     getProjectCrew(projectId).then(setCrew);
   }
 
+  useResetOnChange(open ? projectId : null, (key) => {
+    if (key === null) return;
+    setCrewForm(EMPTY_CREW_FORM);
+    setCrewError(null);
+  });
+
   useEffect(() => {
     if (!open) return;
     reloadChecks();
     reloadCrew();
-    setCrewForm(EMPTY_CREW_FORM);
-    setCrewError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, projectId]);
 

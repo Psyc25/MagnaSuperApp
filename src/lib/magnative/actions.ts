@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { notifyDivision } from "@/lib/push/notify";
 import { logActivity } from "@/lib/activity/log";
 import { addEventExpense, deleteEventExpense, updateEventExpense } from "@/lib/event-expenses/actions";
-import type { ExpenseCategory } from "@/lib/event-expenses/types";
+import type { ExpenseCategory, ReimbursementStatus } from "@/lib/event-expenses/types";
 import type {
   AssetComment,
   CheckinLink,
@@ -320,7 +320,9 @@ export async function addProjectCost(input: Omit<ProjectCost, "id">): Promise<Mu
     amount: input.amount,
     picName,
     paymentMethod: input.paymentMethod,
-    reimbursementStatus: "Tidak Perlu",
+    // Biaya proyek dicatat dari modal Biaya Proyek = biaya perusahaan (migrasi
+    // 0090). Dulu "Tidak Perlu", yang dijurnal ke Modal Pemilik.
+    reimbursementStatus: "Dibayar Perusahaan",
     notes: input.description,
   });
 
@@ -348,7 +350,7 @@ export async function updateProjectCost(id: string, input: Omit<ProjectCost, "id
     .from("event_expenses")
     .select("pic_name, reimbursement_status")
     .eq("id", id)
-    .maybeSingle<{ pic_name: string; reimbursement_status: "Tidak Perlu" | "Belum Diganti" | "Sudah Diganti" }>();
+    .maybeSingle<{ pic_name: string; reimbursement_status: ReimbursementStatus }>();
 
   if (!existing) {
     return { ok: false, error: GENERIC_ERROR };

@@ -5,6 +5,7 @@ import { Check, Globe, X } from "lucide-react";
 import { useT } from "@/lib/i18n/LocaleProvider";
 import { cn } from "@/lib/cn";
 import type { LanguagePreference } from "@/lib/supabase/types";
+import { useResetOnChange } from "@/lib/shared/use-synced-state";
 
 /** Selector elemen yang bisa menerima fokus keyboard — dipakai untuk cari
  * elemen pertama/terakhir waktu laci dibuka & untuk jebak Tab di dalamnya.
@@ -76,11 +77,14 @@ export function LanguageDrawer({
   }, [open]);
 
   const [entered, setEntered] = useState(false);
+  // Ditutup -> kembali ke "belum masuk" saat render itu juga, supaya saat
+  // dibuka lagi animasinya mulai dari awal (bukan lewat effect yang memicu
+  // render berantai).
+  useResetOnChange(open, (isOpen) => {
+    if (!isOpen) setEntered(false);
+  });
   useEffect(() => {
-    if (!open) {
-      setEntered(false);
-      return;
-    }
+    if (!open) return;
     const id = requestAnimationFrame(() => setEntered(true));
     return () => cancelAnimationFrame(id);
   }, [open]);

@@ -14,7 +14,6 @@ import { BRAND_GRADIENT } from "@/lib/navigation";
  */
 export default function DashboardError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
-    // eslint-disable-next-line no-console
     console.error("[DashboardError]", error);
   }, [error]);
 

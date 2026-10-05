@@ -50,8 +50,8 @@ export default async function ProdukPage() {
           <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
             Data produk terpusat — Magnarent, Magnativ, dan Production dalam satu tempat, bisa diisi manual, import
             Excel, atau otomatis lewat API/WhatsApp Catalog/website. Setiap produk bisa punya beberapa foto (klik ikon
-            mata untuk lihat slider-nya) — semua staf yang login juga bisa tambah/edit di sini lewat menu "Katalog
-            Produk" masing-masing divisi.
+            mata untuk lihat slider-nya) — semua staf yang login juga bisa tambah/edit di sini lewat menu &ldquo;Katalog
+            Produk&rdquo; masing-masing divisi.
           </p>
         </div>
       </div>

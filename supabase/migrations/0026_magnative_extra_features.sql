@@ -13,11 +13,16 @@
 alter table public.magnative_content_posts
   add column if not exists feedback_revisi text;
 
+-- Urutan: constraint lama dihapus DULU, baru data dipetakan, baru
+-- constraint baru dipasang (perbaikan audit migrasi 5 Okt 2026 -- urutan
+-- semula UPDATE-dulu gagal kalau ada baris 'Review'/'Terjadwal', karena
+-- 'Revisi'/'Disetujui' belum diizinkan constraint lama). Hasil akhir sama.
+alter table public.magnative_content_posts
+  drop constraint if exists magnative_content_posts_status_check;
+
 update public.magnative_content_posts set status = 'Revisi' where status = 'Review';
 update public.magnative_content_posts set status = 'Disetujui' where status = 'Terjadwal';
 
-alter table public.magnative_content_posts
-  drop constraint if exists magnative_content_posts_status_check;
 alter table public.magnative_content_posts
   add constraint magnative_content_posts_status_check
   check (status in ('Draft', 'Revisi', 'Disetujui', 'Tayang'));

@@ -229,9 +229,10 @@ export async function decideCapitalRequest(
           // dilampirkan), bukan saat status cuma berubah "Disetujui" (lihat
           // komentar fungsi ini di atas). Best-effort, sama seperti
           // post_event_expense_journal di event-expenses/actions.ts.
-          void supabase.rpc("post_capital_request_journal", { p_request_id: id }).then(({ error: rpcError }) => {
-            if (rpcError) console.error("[capital-requests] post_capital_request_journal gagal:", rpcError.message);
-          });
+          // Di-await (bukan fire-and-forget): di serverless, promise yang tidak
+          // ditunggu bisa terputus begitu respons dikirim -> jurnal tidak terposting.
+          const { error: rpcError } = await supabase.rpc("post_capital_request_journal", { p_request_id: id });
+          if (rpcError) console.error("[capital-requests] post_capital_request_journal gagal:", rpcError.message);
           revalidatePath(ADMIN_PATH);
           revalidatePath(INVESTOR_PATH);
         }
@@ -309,9 +310,10 @@ export async function uploadCapitalRequestProof(id: string, formData: FormData):
   // Posting jurnal otomatis (migrasi 0084) — lihat komentar di
   // decideCapitalRequest; fungsi ini idempotent (hapus jurnal lama dulu
   // sebelum buat yang baru), jadi aman dipanggil lagi kalau bukti diganti.
-  void supabase.rpc("post_capital_request_journal", { p_request_id: id }).then(({ error: rpcError }) => {
-    if (rpcError) console.error("[capital-requests] post_capital_request_journal gagal:", rpcError.message);
-  });
+  // Di-await (bukan fire-and-forget): di serverless, promise yang tidak
+  // ditunggu bisa terputus begitu respons dikirim -> jurnal tidak terposting.
+  const { error: rpcError } = await supabase.rpc("post_capital_request_journal", { p_request_id: id });
+  if (rpcError) console.error("[capital-requests] post_capital_request_journal gagal:", rpcError.message);
 
   revalidatePath(ADMIN_PATH);
   revalidatePath(INVESTOR_PATH);
@@ -355,9 +357,10 @@ export async function removeCapitalRequestProof(id: string): Promise<MutationRes
 
   // Bukti dilepas = dana dianggap belum/tidak terbukti diterima, jadi
   // jurnal yang sudah terposting (migrasi 0084) harus ikut dibalik.
-  void supabase.rpc("delete_capital_request_journal", { p_request_id: id }).then(({ error: rpcError }) => {
-    if (rpcError) console.error("[capital-requests] delete_capital_request_journal gagal:", rpcError.message);
-  });
+  // Di-await (bukan fire-and-forget): di serverless, promise yang tidak
+  // ditunggu bisa terputus begitu respons dikirim -> jurnal tidak terposting.
+  const { error: rpcError } = await supabase.rpc("delete_capital_request_journal", { p_request_id: id });
+  if (rpcError) console.error("[capital-requests] delete_capital_request_journal gagal:", rpcError.message);
 
   await supabase.storage.from(PROOF_BUCKET).remove([existing.payment_proof_storage_path]);
   revalidatePath(ADMIN_PATH);

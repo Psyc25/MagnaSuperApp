@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { useResetOnChange } from "@/lib/shared/use-synced-state";
 
 /** Selector elemen yang bisa menerima fokus keyboard — dipakai untuk cari
  * elemen pertama/terakhir waktu modal dibuka & untuk jebak Tab di dalamnya. */
@@ -80,11 +81,14 @@ export function Modal({
   // Transisi masuk (fade + scale) tanpa dependency tambahan — mulai dari
   // state "belum masuk" lalu pindah ke "masuk" sesaat setelah mount.
   const [entered, setEntered] = useState(false);
+  // Ditutup -> kembali ke "belum masuk" saat render itu juga, supaya saat
+  // dibuka lagi animasinya mulai dari awal (bukan lewat effect yang memicu
+  // render berantai).
+  useResetOnChange(open, (isOpen) => {
+    if (!isOpen) setEntered(false);
+  });
   useEffect(() => {
-    if (!open) {
-      setEntered(false);
-      return;
-    }
+    if (!open) return;
     const id = requestAnimationFrame(() => setEntered(true));
     return () => cancelAnimationFrame(id);
   }, [open]);

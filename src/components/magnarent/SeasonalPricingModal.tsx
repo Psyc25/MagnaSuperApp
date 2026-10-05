@@ -38,7 +38,13 @@ export function SeasonalPricingModal({ inventory, onClose }: { inventory: Invent
   }
 
   useEffect(() => {
-    reload();
+    let cancelled = false;
+    listSeasonalPricingRules().then((rows) => {
+      if (!cancelled) setRules(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function handleSubmit(e: FormEvent) {

@@ -93,6 +93,7 @@ export function AIAssistantClient({
                     : "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"
                 )}>
                   {m.attachment?.type === "image" && (
+                    // eslint-disable-next-line @next/next/no-img-element -- data URL base64/blob lokal, bukan aset yang bisa dioptimasi next/image
                     <img src={m.attachment.url} alt={m.attachment.name || "Gambar"} className="mb-2 max-h-48 rounded-lg object-contain" />
                   )}
                   <div className="whitespace-pre-wrap">{m.content}</div>
@@ -121,6 +122,7 @@ export function AIAssistantClient({
       {selectedImage && imagePreviewUrl && (
         <div className="border-t border-zinc-100 px-4 py-3 dark:border-zinc-800">
           <div className="flex items-center gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-700">
+            {/* eslint-disable-next-line @next/next/no-img-element -- data URL base64/blob lokal, bukan aset yang bisa dioptimasi next/image */}
             <img src={imagePreviewUrl} alt="" className="h-14 w-14 rounded-lg object-cover" />
             <div className="flex-1 min-w-0">
               <p className="truncate text-sm font-medium">{selectedImage.name}</p>

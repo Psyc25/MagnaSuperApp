@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Loader2, Pencil, Plus, Receipt, Search, Trash2 } from "lucide-react";
 import { EventExpenseFormModal } from "./EventExpenseFormModal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -16,6 +16,7 @@ import { GLASS_BORDER, GLASS_INPUT, GLASS_SURFACE } from "@/lib/glass";
 const GRADIENT = "linear-gradient(135deg, #4C1D95 0%, #7C3AED 100%)";
 
 const REIMBURSE_BADGE: Record<string, string> = {
+  "Dibayar Perusahaan": "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300",
   "Tidak Perlu": "bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-zinc-300",
   "Belum Diganti": "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
   "Sudah Diganti": "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
@@ -84,9 +85,10 @@ export function EventExpenseManager({
     return map;
   }, [sourceOptions]);
 
-  function labelFor(expense: EventExpense) {
-    return sourceLabelByKey.get(`${expense.sourceType}::${expense.sourceId ?? "umum"}`) ?? "—";
-  }
+  const labelFor = useCallback(
+    (expense: EventExpense) => sourceLabelByKey.get(`${expense.sourceType}::${expense.sourceId ?? "umum"}`) ?? "—",
+    [sourceLabelByKey]
+  );
 
   const filtered = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -100,7 +102,7 @@ export function EventExpenseManager({
         labelFor(e).toLowerCase().includes(term)
       );
     });
-  }, [expenses, divisionFilter, categoryFilter, searchTerm]);
+  }, [expenses, divisionFilter, categoryFilter, searchTerm, labelFor]);
 
   const total = useMemo(() => filtered.reduce((sum, e) => sum + e.amount, 0), [filtered]);
 
@@ -118,9 +120,12 @@ export function EventExpenseManager({
    */
   const exportSheets = useMemo<ExportSheet[]>(() => {
     const sorted = [...filtered].sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
-    let running = 0;
+    // Total berjalan dihitung dulu sebagai array (bukan `let` yang diubah
+    // di dalam callback .map) -- aturan React Compiler `immutability`.
+    const runningTotals: number[] = [];
+    for (const e of sorted) runningTotals.push((runningTotals.at(-1) ?? 0) + e.amount);
     const detailRows = sorted.map((e, i) => {
-      running += e.amount;
+      const running = runningTotals[i];
       return {
         "No.": i + 1,
         Tanggal: formatDateID(e.expenseDate),
@@ -169,7 +174,7 @@ export function EventExpenseManager({
         })),
       },
     ];
-  }, [filtered]);
+  }, [filtered, labelFor]);
 
   async function confirmDelete() {
     if (!deleteTarget) return;
@@ -373,7 +378,10 @@ export function EventExpenseManager({
             return exists ? prev.map((item) => (item.id === expense.id ? expense : item)) : [expense, ...prev];
           });
           showToast(editTarget ? "Pengeluaran berhasil diperbarui." : "Pengeluaran berhasil dicatat.");
-          setEditTarget(null);
+          // editTarget TIDAK dikosongkan di sini: kalau ada bukti yang gagal
+          // diunggah, modal tetap terbuka menampilkan peringatan -- mengosongkan
+          // editTarget saat itu mengubah form jadi form tambah kosong dan
+          // peringatannya hilang. onClose yang mengosongkannya.
         }}
       />
 

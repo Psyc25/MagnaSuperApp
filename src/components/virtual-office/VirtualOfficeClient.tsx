@@ -6,13 +6,11 @@ import {
   Bell,
   Building2,
   ChevronRight,
-  Coffee,
   Home,
   LayoutGrid,
   MessageSquare,
   Monitor,
   Search,
-  Settings,
   Users,
   X,
   Zap,
@@ -21,7 +19,7 @@ import {
   TrendingUp
 } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { OrthographicCamera, Text } from "@react-three/drei";
 import * as THREE from "three";
 import { createClient } from "@/lib/supabase/client";
@@ -58,8 +56,15 @@ type RemotePresence = { id: string; status: "online" | "busy" | "away"; activity
 const CHANNEL_NAME = "kantor-virtual-v2";
 
 // Isometric camera settings
-const ISO_ANGLE = Math.PI / 6; // 30 degrees
 const CAMERA_ZOOM = 0.8;
+
+/** Angka mock yang stabil per id (pengganti Math.random() saat render, yang
+ * dilarang React Compiler dan berubah tiap roster berubah). */
+function stableMockCount(id: string, max: number): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h % max;
+}
 
 // Room data with activities
 type RoomData = {
@@ -76,19 +81,17 @@ export function VirtualOfficeClient({
   currentUser: CurrentUser;
   roster: OfficeRosterEntry[];
 }) {
-  const rosterById = useMemo(() => new Map(roster.map((r) => [r.id, r])), [roster]);
-
   // UI State
   const [selectedRoom, setSelectedRoom] = useState<OfficeRoom | null>(null);
   const [selectedPerson, setSelectedPerson] = useState<OfficeRosterEntry | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<AIAgent | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [notifications, setNotifications] = useState(3); // Mock notifications
+  const [notifications] = useState(3); // Mock notifications
 
   // Realtime presence
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
-  const [presenceMap, setPresenceMap] = useState<Map<string, RemotePresence>>(new Map());
+  const [, setPresenceMap] = useState<Map<string, RemotePresence>>(new Map());
   const channelRef = useRef<RealtimeChannel | null>(null);
 
   // Camera state for zoom
@@ -149,7 +152,7 @@ export function VirtualOfficeClient({
       return {
         room,
         occupants: occupants.slice(0, 5),
-        activities: Math.floor(Math.random() * 5),
+        activities: stableMockCount(room.id, 5),
         notifications: room.id === "magnarent-desk" ? 2 : room.id === "meeting-room" ? 1 : 0,
       };
     });
@@ -607,11 +610,11 @@ function IsometricScene({
   onAgentClick: (agent: AIAgent) => void;
   selectedRoom: OfficeRoom | null;
 }) {
-  const { camera } = useThree();
   const targetRef = useRef(new THREE.Vector3());
 
-  // Smooth camera movement
-  useFrame(() => {
+  // Smooth camera movement -- kamera diambil dari argumen useFrame (bukan
+  // nilai kembalian useThree) supaya boleh dimutasi (aturan React Compiler).
+  useFrame(({ camera }) => {
     const targetX = cameraTarget.x - WORLD_W / 2;
     const targetZ = cameraTarget.y - WORLD_H / 2;
     targetRef.current.set(targetX, 0, targetZ);
@@ -725,7 +728,6 @@ function BuildingBase() {
 
 function Room({
   room,
-  occupants,
   notifications,
   isSelected,
   onClick,

@@ -29,7 +29,7 @@ seperti Tahap 1-11 sebelumnya — bukan sekaligus dalam satu commit raksasa.
 
 ---
 
-## Tahap 12 — Jaring pengaman & rapikan yang berulang (SEDANG DIKERJAKAN)
+## Tahap 12 — Jaring pengaman & rapikan yang berulang (SELESAI)
 
 Risiko paling rendah, dampak paling terasa. Semua item ini murah untuk
 saya kerjakan dan tidak mengubah cara kerja fitur yang sudah ada:
@@ -51,7 +51,7 @@ saya kerjakan dan tidak mengubah cara kerja fitur yang sudah ada:
   terpisah — kalau nambah menu baru dan lupa update salah satu, tampilan
   HP & laptop bisa beda sendiri. Disatukan jadi satu sumber.
 
-## Tahap 13 — Rapikan kode yang berulang (belum dikerjakan)
+## Tahap 13 — Rapikan kode yang berulang (SELESAI)
 
 - Satukan warna badge status (Menunggu/Disetujui/Lunas/dst) yang saat ini
   ditulis ulang di 14 file berbeda jadi satu file bersama — supaya kalau
@@ -60,7 +60,7 @@ saya kerjakan dan tidak mengubah cara kerja fitur yang sudah ada:
   (`window.confirm`, tampilannya polos & beda dari kotak konfirmasi
   aplikasi) ke komponen konfirmasi yang sudah dipakai di 13 tempat lain.
 
-## Tahap 14 — Batasi query yang bisa membengkak (belum dikerjakan)
+## Tahap 14 — Batasi query yang bisa membengkak (SELESAI)
 
 - Tambah batas jumlah data yang diambil sekaligus untuk tabel yang
   paling berpotensi tumbuh besar (booking, invoice, log aktivitas) —
@@ -86,6 +86,73 @@ waktu lebih lama:
 
 ---
 
-Saya mulai dari **Tahap 12** sekarang. Setiap tahap tetap saya verifikasi
-lewat log server Vercel + saya coba langsung sebelum lapor selesai, sama
-seperti proses sebelumnya.
+Status (5 Oktober 2026): Tahap 12–14 sudah selesai. Tahap 15+ masih
+menunggu diskusi.
+
+## QC Menyeluruh — 5 Oktober 2026
+
+- **Asisten AI**: hampir semua tool memakai nama kolom yang tidak ada di
+  database (mis. `nama`/`kategori`, padahal `name`/`category`), jadi setiap
+  pertanyaan data gagal. Ditulis ulang mengikuti skema asli. Aksi
+  (buat booking, ubah status, catat pengeluaran) sekarang lewat Server
+  Action yang sama dengan form: cek bentrok jadwal, jurnal otomatis, dan
+  log aktivitas ikut berlaku. Tool dipilih sesuai divisi user, bisa
+  beberapa langkah dalam satu pesan, ada tanggal hari ini, dan bisa
+  dibatalkan dengan "Batal".
+- **Konfirmasi "Ya" ganda** (migrasi 0085): tabel pesan AI tidak punya izin
+  UPDATE, jadi aksi yang sudah dikonfirmasi bisa jalan dua kali.
+- **Keamanan** (migrasi 0086): fungsi jurnal bisa dipanggil tanpa login
+  memakai anon key publik (termasuk hapus jurnal dana investor). Hak
+  aksesnya dicabut dari pengguna anonim. Fungsi sisa uji coba
+  `ping_test_fn*` dinonaktifkan; migrasi 0087 (hapus total) perlu
+  dijalankan manual di SQL Editor.
+- **Akuntansi**: laporan Laba-Rugi/Neraca/Arus Kas sekarang mengambil data
+  per halaman. Sebelumnya angkanya bisa salah tanpa error begitu jurnal
+  melewati ±1000 baris.
+- **Akuntansi (lanjutan review pra-merge)**: paging laporan memakai keyset
+  (`id > id terakhir`) supaya jurnal yang ditulis bersamaan tidak terlewat
+  atau terhitung dua kali; kategori Arus Kas untuk jurnal manual multi-baris
+  dipilih dari akun lawan bernominal terbesar (tidak lagi bergantung urutan
+  baris); baris jurnal manual tampil debit dulu.
+- **Keamanan (migrasi 0091)**: `delete_event_expense_journal` sebelumnya bisa
+  dipanggil staf divisi mana pun untuk menghapus jurnal pengeluaran yang
+  masih ada. Sekarang hanya menghapus kalau pengeluarannya sudah dihapus
+  (jalur sah), atau oleh akun akses penuh. Diuji 4 skenario di database
+  hasil rebuild, lalu diterapkan ke production.
+- **Jurnal otomatis** sekarang ditunggu (`await`) sampai selesai, bukan
+  fire-and-forget yang bisa terputus di serverless.
+- **Realisasi Event**: pengeluaran yang terkait booking/proyek/event yang
+  kemudian dibatalkan tidak lagi tampil "—" atau kehilangan kaitannya.
+
+## Audit Migrasi Database — 5 Oktober 2026
+
+Seluruh 88 file migrasi dicocokkan objek demi objek dengan database
+production (±1.250 objek), ke dua arah:
+
+- **Production kurang dari repo** → sudah diterapkan: 0021 (19 CHECK
+  constraint integritas data yang tidak pernah terpasang) dan komentar
+  kolom 0081.
+- **Repo kurang dari production** → 6 migrasi yang dulu diterapkan langsung
+  di production tanpa file kini dipulihkan VERBATIM dari
+  `supabase_migrations.schema_migrations` (diverifikasi md5):
+  0044a, 0058a–0058d, 0077a. Ditambah 0089 yang mencatat perubahan
+  `handle_new_user` + trigger `on_auth_user_created` (dulu lewat SQL Editor).
+- **Bug urutan di file lama** diperbaiki supaya bisa dijalankan dari nol:
+  0026 (UPDATE sebelum constraint lama dihapus), 0086 (revoke fungsi
+  `ping_test_fn*` yang tidak pernah ada di repo, kini kondisional).
+- **Bukti**: `supabase/verify/rebuild.sh` menerapkan seluruh file (kini 97) berurutan
+  ke Postgres kosong tanpa error, dan sidik skema hasilnya
+  (`schema_fingerprint.sql`) identik dengan production di semua kategori.
+  Satu-satunya selisih: komentar di dalam body
+  `post_capital_request_journal` (logika sama).
+
+**Masih menunggu**:
+- Migrasi 0087 (hapus `ping_test_fn*`) dijalankan manual di SQL Editor.
+  Tool migrasi menolak DROP; fungsinya sudah tidak bisa dipanggil siapa pun.
+- ~~Keputusan Owner (akuntansi) soal "Tidak Perlu"~~ → **selesai (migrasi
+  0090)**: status baru "Dibayar Perusahaan" (dijurnal ke Kas Kecil/Bank
+  Operasional sesuai metode bayar) jadi default form, biaya proyek Magnativ,
+  dan Asisten AI. "Tidak Perlu" tetap berarti PIC bayar pribadi & tidak
+  mengklaim (Modal Pemilik). Form kini menampilkan penjelasan tiap status.
+  Diuji di database hasil rebuild: Transfer BCA → Bank Operasional,
+  Cash → Kas Kecil, Tidak Perlu → Modal Pemilik.

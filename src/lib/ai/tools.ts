@@ -3,7 +3,7 @@
  * Format sesuai OpenRouter/OpenAI function calling spec.
  */
 
-import type { ToolDefinition } from "./types";
+import type { ToolDefinition, UserContext } from "./types";
 
 /**
  * Query Tools - Read-only, aman dijalankan tanpa konfirmasi.
@@ -76,9 +76,9 @@ export const QUERY_TOOLS: ToolDefinition[] = [
             type: "string",
             description: "Filter lokasi gudang",
           },
-          lowStock: {
-            type: "boolean",
-            description: "Jika true, hanya tampilkan alat dengan stok menipis",
+          searchName: {
+            type: "string",
+            description: "Cari berdasarkan nama alat",
           },
           limit: {
             type: "number",
@@ -132,7 +132,8 @@ export const QUERY_TOOLS: ToolDefinition[] = [
           },
           status: {
             type: "string",
-            description: "Filter status proyek",
+            description:
+              "Filter status proyek. Magnative: Pitching, Perencanaan, Berjalan, Selesai, Dibatalkan. Production: Desain, Produksi, Finishing, Instalasi, Selesai, Dibatalkan.",
           },
           clientName: {
             type: "string",
@@ -158,6 +159,10 @@ export const QUERY_TOOLS: ToolDefinition[] = [
             type: "string",
             enum: ["Berjalan", "Selesai", "Dibatalkan"],
             description: "Filter status event",
+          },
+          searchName: {
+            type: "string",
+            description: "Cari berdasarkan nama event",
           },
           dateFrom: {
             type: "string",
@@ -186,6 +191,10 @@ export const QUERY_TOOLS: ToolDefinition[] = [
           category: {
             type: "string",
             description: "Filter kategori material",
+          },
+          searchName: {
+            type: "string",
+            description: "Cari berdasarkan nama material",
           },
           lowStock: {
             type: "boolean",
@@ -244,7 +253,11 @@ export const ACTION_TOOLS: ToolDefinition[] = [
         properties: {
           itemId: {
             type: "string",
-            description: "ID alat yang akan dibooking",
+            description: "ID alat yang akan dibooking (dari get_inventory/search_global)",
+          },
+          itemName: {
+            type: "string",
+            description: "Nama alat (untuk ringkasan konfirmasi)",
           },
           namaKlien: {
             type: "string",
@@ -294,7 +307,11 @@ export const ACTION_TOOLS: ToolDefinition[] = [
         properties: {
           bookingId: {
             type: "string",
-            description: "ID booking yang akan diubah",
+            description: "ID booking yang akan diubah (dari get_bookings)",
+          },
+          namaKlien: {
+            type: "string",
+            description: "Nama klien booking (untuk ringkasan konfirmasi)",
           },
           status: {
             type: "string",
@@ -310,28 +327,11 @@ export const ACTION_TOOLS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "create_event_expense",
-      description: "Catat pengeluaran event/proyek baru. HARUS konfirmasi dengan user sebelum mencatat.",
+      description:
+        "Catat pengeluaran (Realisasi Event) — untuk event, booking, proyek, booth, atau operasional umum. Cukup kategori & jumlah; tanggal, PIC, dan metode bayar punya default. Sistem otomatis meminta konfirmasi user sebelum menyimpan.",
       parameters: {
         type: "object",
         properties: {
-          sourceType: {
-            type: "string",
-            enum: ["magnarent_booking", "magnative_project", "production_booth", "umum"],
-            description: "Tipe sumber pengeluaran. 'umum' untuk pengeluaran operasional tanpa event/proyek terkait",
-          },
-          sourceId: {
-            type: "string",
-            description: "ID booking/proyek terkait (wajib jika sourceType bukan 'umum')",
-          },
-          division: {
-            type: "string",
-            enum: ["magnarent", "magnative", "production", "finance"],
-            description: "Divisi yang 'punya' pengeluaran ini",
-          },
-          expenseDate: {
-            type: "string",
-            description: "Tanggal pengeluaran (format: YYYY-MM-DD)",
-          },
           category: {
             type: "string",
             enum: ["Sewa Venue", "Dekorasi & Material", "Transportasi", "Konsumsi", "Talent / Vendor", "Percetakan", "Operasional Kantor", "Lain-lain"],
@@ -341,13 +341,42 @@ export const ACTION_TOOLS: ToolDefinition[] = [
             type: "number",
             description: "Jumlah pengeluaran (Rupiah)",
           },
+          sourceType: {
+            type: "string",
+            enum: ["event_tracking", "magnarent_booking", "magnative_project", "production_booth", "umum"],
+            description:
+              "Terkait apa: event (event_tracking), booking Magnarent, proyek Magnativ, booth Production, atau 'umum' (operasional tanpa event/proyek). Default: umum",
+          },
+          sourceId: {
+            type: "string",
+            description: "ID event/booking/proyek terkait (wajib kalau sourceType bukan 'umum'; cari dulu lewat query tool)",
+          },
+          sourceName: {
+            type: "string",
+            description: "Nama event/booking/proyek terkait (untuk ringkasan konfirmasi)",
+          },
+          division: {
+            type: "string",
+            enum: ["magnarent", "magnative", "production", "finance"],
+            description: "Divisi pemilik pengeluaran 'umum' (default: divisi user, atau finance)",
+          },
+          expenseDate: {
+            type: "string",
+            description: "Tanggal pengeluaran (YYYY-MM-DD, default: hari ini)",
+          },
           picName: {
             type: "string",
-            description: "Nama PIC yang mengeluarkan dana",
+            description: "Nama PIC yang mengeluarkan dana (default: user yang sedang chat)",
           },
           paymentMethod: {
             type: "string",
-            description: "Metode pembayaran (Cash, Transfer BCA, QRIS, dll)",
+            description: "Metode pembayaran, mis. Cash, Transfer BCA, Qris (default: Cash)",
+          },
+          reimbursementStatus: {
+            type: "string",
+            enum: ["Dibayar Perusahaan", "Belum Diganti", "Sudah Diganti", "Tidak Perlu"],
+            description:
+              "Siapa yang membayar. Dibayar Perusahaan = langsung dari kas/rekening perusahaan (default); Belum Diganti = PIC menalangi & belum diganti; Sudah Diganti = PIC menalangi & sudah diganti; Tidak Perlu = PIC bayar pribadi & tidak mengklaim. Tanyakan kalau user menyebut 'pakai uang pribadi' / 'nalangin'.",
           },
           notes: {
             type: "string",
@@ -358,46 +387,33 @@ export const ACTION_TOOLS: ToolDefinition[] = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "update_checklist_progress",
-      description: "Update progress item checklist event. HARUS konfirmasi dengan user sebelum mengubah.",
-      parameters: {
-        type: "object",
-        properties: {
-          checklistItemId: {
-            type: "string",
-            description: "ID item checklist",
-          },
-          eventId: {
-            type: "string",
-            description: "ID event terkait",
-          },
-          status: {
-            type: "string",
-            enum: ["Belum Mulai", "Sample", "Approval", "Preparation", "Production", "Finish"],
-            description: "Status baru",
-          },
-          pic: {
-            type: "string",
-            description: "ID user PIC yang bertanggung jawab (opsional)",
-          },
-          notes: {
-            type: "string",
-            description: "Catatan tambahan (opsional)",
-          },
-        },
-        required: ["checklistItemId", "eventId", "status"],
-      },
-    },
-  },
 ];
 
 /**
  * Semua tools yang tersedia untuk AI.
  */
 export const AI_TOOLS: ToolDefinition[] = [...QUERY_TOOLS, ...ACTION_TOOLS];
+
+/**
+ * Tool yang boleh ditawarkan ke AI untuk user ini — tool di luar akses
+ * divisinya tidak dikirim sama sekali, supaya AI tidak mencoba memanggilnya.
+ */
+export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
+  const allowed: Record<string, boolean> = {
+    search_global: true,
+    get_bookings: ctx.canAccessMagnarent,
+    get_inventory: ctx.canAccessMagnarent,
+    check_availability: ctx.canAccessMagnarent,
+    create_booking: ctx.canAccessMagnarent,
+    update_booking_status: ctx.canAccessMagnarent,
+    get_clients: ctx.canAccessMagnative,
+    get_projects: ctx.canAccessMagnative || ctx.canAccessProduction,
+    get_materials: ctx.canAccessProduction,
+    get_events: ctx.canAccessEvents,
+    create_event_expense: ctx.canAccessExpenses,
+  };
+  return AI_TOOLS.filter((t) => allowed[t.function.name]);
+}
 
 /**
  * Cek apakah tool adalah action (butuh konfirmasi).

@@ -1,7 +1,23 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getCurrentProfile } from "@/lib/supabase/server";
+
+/**
+ * Route ini memakai service role (melewati RLS), jadi WAJIB dibatasi ke akun
+ * akses penuh -- tanpa pengecekan ini siapa pun di internet bisa memanggilnya
+ * dan membaca pesan error database mentah.
+ */
+async function requireFullAccess(): Promise<NextResponse | null> {
+  const profile = await getCurrentProfile();
+  if (!profile || profile.division !== "all") {
+    return NextResponse.json({ error: "Tidak diizinkan." }, { status: 403 });
+  }
+  return null;
+}
 
 export async function POST() {
+  const denied = await requireFullAccess();
+  if (denied) return denied;
   try {
     const supabase = createAdminClient();
 
@@ -86,6 +102,8 @@ CREATE POLICY ai_assistant_messages_delete ON ai_assistant_messages
 }
 
 export async function GET() {
+  const denied = await requireFullAccess();
+  if (denied) return denied;
   try {
     const supabase = createAdminClient();
 

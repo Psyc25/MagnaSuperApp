@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type FormEvent } from "react";
 import { CheckCircle2, PackagePlus, Plus, Search, Trash2, XCircle } from "lucide-react";
 import { useProductionData } from "./ProductionDataProvider";
 import { Modal } from "@/components/ui/Modal";
@@ -56,7 +56,10 @@ export function PurchaseOrderManager({ vendors = [] }: { vendors?: Vendor[] }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>(ALL_FILTER);
 
-  const materialName = (id?: string) => (id ? materials.find((m) => m.id === id)?.name ?? "—" : "—");
+  const materialName = useCallback(
+    (id?: string) => (id ? materials.find((m) => m.id === id)?.name ?? "—" : "—"),
+    [materials]
+  );
 
   /** Pilih vendor terdaftar (Tahap 44 — gap #5 analisis-gap-production.md) → auto-isi nama supplier (tetap bisa diedit manual sesudahnya, mis. kalau beli dari cabang/kontak lain vendor yang sama). */
   function handlePickVendor(vendorId: string) {
@@ -79,7 +82,7 @@ export function PurchaseOrderManager({ vendors = [] }: { vendors?: Vendor[] }) {
       const matchesStatus = statusFilter === ALL_FILTER || po.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
-  }, [sorted, searchTerm, statusFilter, materials]);
+  }, [sorted, searchTerm, statusFilter, materialName]);
 
   function openAddModal() {
     setForm(emptyForm());

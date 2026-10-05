@@ -2,7 +2,7 @@
 
 import { Loader2, Send, X, ImagePlus } from "lucide-react";
 import { useAIChat, formatFileSize } from "@/lib/ai/hooks/useAIChat";
-import { AgentSelector, AgentBadge } from "./AgentSelector";
+import { AgentSelector } from "./AgentSelector";
 import { cn } from "@/lib/cn";
 import { useEffect, useState } from "react";
 
@@ -103,7 +103,6 @@ export function AIFloatingChat() {
         ) : (
           <div className="space-y-3">
             {messages.map((m) => {
-              const msgAgent = m.agentId ? (m.role === "assistant" ? selectedAgent : null) : null;
               return (
                 <div key={m.id} className={cn("flex gap-2", m.role === "user" && "flex-row-reverse")}>
                   <div className={cn(
@@ -119,6 +118,7 @@ export function AIFloatingChat() {
                       : "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"
                   )}>
                     {m.attachment?.type === "image" && (
+                      // eslint-disable-next-line @next/next/no-img-element -- data URL base64/blob lokal, bukan aset yang bisa dioptimasi next/image
                       <img src={m.attachment.url} alt={m.attachment.name || "Gambar"} className="mb-1 max-h-32 rounded-lg object-contain" />
                     )}
                     <div className="whitespace-pre-wrap">{m.content}</div>
@@ -148,6 +148,7 @@ export function AIFloatingChat() {
       {selectedImage && imagePreviewUrl && (
         <div className="border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
           <div className="flex items-center gap-2 rounded-lg border border-zinc-200 p-2 dark:border-zinc-700">
+            {/* eslint-disable-next-line @next/next/no-img-element -- data URL base64/blob lokal, bukan aset yang bisa dioptimasi next/image */}
             <img src={imagePreviewUrl} alt="" className="h-10 w-10 rounded object-cover" />
             <div className="flex-1 min-w-0">
               <p className="truncate text-xs font-medium">{selectedImage.name}</p>

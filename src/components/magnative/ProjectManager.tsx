@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type FormEvent } from "react";
 import { Briefcase, Building2, ListChecks, Pencil, Plus, QrCode, Search, Share2, Trash2, Wallet2, Workflow } from "lucide-react";
 import { useMagnativeData } from "./MagnativeDataProvider";
 import { ProjectCostModal } from "./ProjectCostModal";
@@ -86,7 +86,7 @@ export function ProjectManager() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>(ALL_FILTER);
 
-  const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? "—";
+  const clientName = useCallback((id: string) => clients.find((c) => c.id === id)?.name ?? "—", [clients]);
 
   const sortedProjects = useMemo(
     () => [...projects].sort((a, b) => b.tanggalMulai.localeCompare(a.tanggalMulai)),
@@ -101,7 +101,7 @@ export function ProjectManager() {
       const matchesStatus = statusFilter === ALL_FILTER || p.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
-  }, [sortedProjects, searchTerm, statusFilter, clients]);
+  }, [sortedProjects, searchTerm, statusFilter, clientName]);
 
   function openAddModal() {
     setEditingId(null);

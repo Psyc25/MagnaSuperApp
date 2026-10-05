@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
-import { CheckCircle2, ListChecks, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ListChecks, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useMagnativeData } from "./MagnativeDataProvider";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/ToastProvider";
@@ -12,7 +12,6 @@ import type { Project, ProjectTaskStatus } from "@/lib/magnative/types";
 
 const GRADIENT = "linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)";
 
-const ALL_STATUSES: ProjectTaskStatus[] = ["Belum Mulai", "Berjalan", "Selesai"];
 
 const STATUS_STYLE: Record<ProjectTaskStatus, string> = {
   "Belum Mulai": "bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-zinc-300",

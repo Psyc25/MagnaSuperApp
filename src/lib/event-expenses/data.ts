@@ -17,6 +17,10 @@ import type { EventExpense, ExpenseSourceOption } from "./types";
  * dependensi tipe modul lain yang tidak dipakai. */
 type EventRow = { id: string; name: string; client_name: string | null; status: string };
 
+function withCancelled(label: string, status: string): string {
+  return status === "Dibatalkan" ? `${label} (Dibatalkan)` : label;
+}
+
 /**
  * Data untuk halaman "Realisasi Event" — dipanggil dari page.tsx (Server
  * Component). Dibatasi 500 baris terbaru (Tahap 14 — batasi query yang bisa
@@ -54,11 +58,7 @@ export async function getEventExpensesPageData(): Promise<{
     // Progress Event, migrasi 0053) ikut jadi opsi "Event/Proyek Terkait"
     // supaya pengeluaran seperti bon/nota untuk event ini bisa dikaitkan
     // langsung, bukan cuma lewat booking/proyek per-divisi.
-    supabase
-      .from("events")
-      .select("id, name, client_name, status")
-      .neq("status", "Dibatalkan")
-      .returns<EventRow[]>(),
+    supabase.from("events").select("id, name, client_name, status").returns<EventRow[]>(),
   ]);
 
   const proofsByExpense = new Map<string, EventExpenseProofRow[]>();
@@ -82,36 +82,41 @@ export async function getEventExpensesPageData(): Promise<{
   const boothProjects = (boothRes.data ?? []).map(rowToBoothProject);
   const events = eventsRes.data ?? [];
 
+  // Sumber yang "Dibatalkan" SENGAJA tetap disertakan (ditandai
+  // `cancelled`) -- sebelumnya dibuang di sini, akibatnya pengeluaran yang
+  // terlanjur dikaitkan sebelum booking/proyek/event dibatalkan tampil "—"
+  // di tabel & ekspor, dan kaitannya hilang saat diedit. Form yang
+  // menyembunyikannya dari pilihan baru (EventExpenseFormModal).
   const sourceOptions: ExpenseSourceOption[] = [
     { sourceType: "umum", sourceId: null, division: "finance", label: "Finance / Umum (tidak terikat event)" },
     ...bookings
-      .filter((b) => b.status !== "Dibatalkan")
       .map(
         (b): ExpenseSourceOption => ({
           sourceType: "magnarent_booking",
           sourceId: b.id,
           division: "magnarent",
-          label: `${b.namaKlien} — ${b.tanggalMulai} s/d ${b.tanggalSelesai}`,
+          label: withCancelled(`${b.namaKlien} — ${b.tanggalMulai} s/d ${b.tanggalSelesai}`, b.status),
+          cancelled: b.status === "Dibatalkan",
         })
       ),
     ...projects
-      .filter((p) => p.status !== "Dibatalkan")
       .map(
         (p): ExpenseSourceOption => ({
           sourceType: "magnative_project",
           sourceId: p.id,
           division: "magnative",
-          label: p.name,
+          label: withCancelled(p.name, p.status),
+          cancelled: p.status === "Dibatalkan",
         })
       ),
     ...boothProjects
-      .filter((p) => p.status !== "Dibatalkan")
       .map(
         (p): ExpenseSourceOption => ({
           sourceType: "production_booth",
           sourceId: p.id,
           division: "production",
-          label: p.name,
+          label: withCancelled(p.name, p.status),
+          cancelled: p.status === "Dibatalkan",
         })
       ),
     ...events.map(
@@ -119,7 +124,8 @@ export async function getEventExpensesPageData(): Promise<{
         sourceType: "event_tracking",
         sourceId: e.id,
         division: "event",
-        label: e.client_name ? `${e.name} — ${e.client_name}` : e.name,
+        label: withCancelled(e.client_name ? `${e.name} — ${e.client_name}` : e.name, e.status),
+        cancelled: e.status === "Dibatalkan",
       })
     ),
   ];

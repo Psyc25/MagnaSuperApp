@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Download, Share, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
@@ -33,6 +33,24 @@ function isIosSafari(): boolean {
   return isIos && !isOtherBrowser;
 }
 
+function isDismissed(): boolean {
+  try {
+    return localStorage.getItem(DISMISS_KEY) === "1";
+  } catch {
+    // localStorage bisa saja diblokir (mode privat dsb) — kalau begitu
+    // banner tetap boleh tampil, cuma tidak akan "ingat" kalau ditutup.
+    return false;
+  }
+}
+
+/** iOS tidak pernah mengirim `beforeinstallprompt` — kelayakan banner
+ * instruksi manual cukup dibaca dari kondisi browser saat ini. */
+function isIosInstallEligible(): boolean {
+  return !isStandaloneDisplay() && !isDismissed() && isIosSafari();
+}
+
+const subscribeNothing = () => () => {};
+
 /**
  * Banner kecil "Install Aplikasi".
  *
@@ -60,8 +78,10 @@ function isIosSafari(): boolean {
  */
 export function PwaInstallPrompt() {
   const [promptEvent, setPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
-  const [showIosInstructions, setShowIosInstructions] = useState(false);
-  const [visible, setVisible] = useState(false);
+  const [hidden, setHidden] = useState(false);
+  // Dibaca lewat useSyncExternalStore (server: false) -- nilai khusus
+  // browser tanpa hydration mismatch dan tanpa setState di dalam effect.
+  const showIosInstructions = useSyncExternalStore(subscribeNothing, isIosInstallEligible, () => false);
 
   useEffect(() => {
     // Daftarkan Service Worker SEDINI mungkin begitu halaman apa pun dibuka —
@@ -78,24 +98,12 @@ export function PwaInstallPrompt() {
     }
 
     if (isStandaloneDisplay()) return; // Sudah terinstall — tidak perlu tawari lagi.
-
-    try {
-      if (localStorage.getItem(DISMISS_KEY) === "1") return;
-    } catch {
-      // localStorage bisa saja diblokir (mode privat dsb) — kalau begitu
-      // banner tetap boleh tampil, cuma tidak akan "ingat" kalau ditutup.
-    }
-
-    if (isIosSafari()) {
-      setShowIosInstructions(true);
-      setVisible(true);
-      return; // iOS tidak pernah mengirim `beforeinstallprompt` — cukup sampai sini.
-    }
+    if (isDismissed()) return;
+    if (isIosSafari()) return; // iOS: banner instruksi manual (showIosInstructions), tanpa event.
 
     function handleBeforeInstallPrompt(e: Event) {
       e.preventDefault();
       setPromptEvent(e as BeforeInstallPromptEvent);
-      setVisible(true);
     }
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
@@ -108,11 +116,11 @@ export function PwaInstallPrompt() {
     await promptEvent.userChoice;
     // Apa pun pilihannya (accepted/dismissed), event ini cuma bisa dipakai
     // sekali — sembunyikan banner supaya tidak menekan tombol yang sudah mati.
-    setVisible(false);
+    setHidden(true);
   }
 
   function handleDismiss() {
-    setVisible(false);
+    setHidden(true);
     try {
       localStorage.setItem(DISMISS_KEY, "1");
     } catch {
@@ -120,7 +128,7 @@ export function PwaInstallPrompt() {
     }
   }
 
-  if (!visible || (!promptEvent && !showIosInstructions)) return null;
+  if (hidden || (!promptEvent && !showIosInstructions)) return null;
 
   return (
     <div className={cn("animate-fade-up fixed inset-x-4 bottom-4 z-50 mx-auto flex max-w-sm items-center gap-3 rounded-2xl border px-4 py-3 shadow-xl shadow-black/10 sm:inset-x-auto sm:right-4", GLASS_SURFACE, GLASS_BORDER)}>
