@@ -70,50 +70,50 @@ const ROOM_H = 270;
 export const ROOMS: OfficeRoom[] = [
   {
     id: "magnarent-desk",
-    label: "Meja Magnarent",
+    label: "Magnarent Office",
     rect: { x: COL1_X, y: ROW1_Y, w: ROOM_W, h: ROOM_H },
-    floorColor: "#0ea5e91a",
-    accentColor: DIVISION_COLORS.magnarent,
+    floorColor: "#e0f2fe60", // Light blue corporate
+    accentColor: "#0284c7",
     division: "magnarent",
   },
   {
     id: "magnativ-desk",
-    label: "Meja Magnativ",
+    label: "Magnative Studio",
     rect: { x: COL2_X, y: ROW1_Y, w: ROOM_W, h: ROOM_H },
-    floorColor: "#d946ef1a",
-    accentColor: DIVISION_COLORS.magnative,
+    floorColor: "#fae8ff60", // Light purple corporate
+    accentColor: "#a855f7",
     division: "magnative",
   },
   {
     id: "production-desk",
-    label: "Meja Production",
+    label: "Production Workshop",
     rect: { x: COL3_X, y: ROW1_Y, w: ROOM_W, h: ROOM_H },
-    floorColor: "#10b9811a",
-    accentColor: DIVISION_COLORS.production,
+    floorColor: "#dcfce760", // Light green corporate
+    accentColor: "#16a34a",
     division: "production",
   },
   {
     id: "meeting-room",
-    label: "Ruang Meeting",
+    label: "Conference Room",
     rect: { x: COL1_X, y: ROW2_Y, w: ROOM_W, h: ROOM_H },
-    floorColor: "#0891b21a",
-    accentColor: "#0891b2",
+    floorColor: "#f1f5f960", // Light gray corporate
+    accentColor: "#475569",
     division: null,
   },
   {
     id: "pantry",
-    label: "Pantry",
+    label: "Lounge & Pantry",
     rect: { x: COL2_X, y: ROW2_Y, w: ROOM_W, h: ROOM_H },
-    floorColor: "#f973161a",
-    accentColor: "#f97316",
+    floorColor: "#fef3c760", // Warm cream
+    accentColor: "#d97706",
     division: null,
   },
   {
     id: "owner-room",
-    label: "Ruang Owner/Admin",
+    label: "Executive Suite",
     rect: { x: COL3_X, y: ROW2_Y, w: ROOM_W, h: ROOM_H },
-    floorColor: "#8b5cf61a",
-    accentColor: DIVISION_COLORS.all,
+    floorColor: "#ede9fe60", // Soft violet corporate
+    accentColor: "#7c3aed",
     division: "all",
   },
 ];

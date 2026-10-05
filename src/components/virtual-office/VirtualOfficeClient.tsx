@@ -232,10 +232,29 @@ export function VirtualOfficeClient({
           gl={{ antialias: true }}
           camera={{ fov: 42, near: 1, far: 3000 }}
         >
-          <color attach="background" args={["#dbeafe"]} />
-          <ambientLight intensity={0.75} />
-          <directionalLight position={[250, 400, 150]} intensity={1} />
-          <hemisphereLight args={["#bae6fd", "#3f6212", 0.4]} />
+          {/* Sky gradient - corporate blue */}
+          <color attach="background" args={["#e0f2fe"]} />
+
+          {/* Soft ambient for corporate feel */}
+          <ambientLight intensity={0.6} />
+
+          {/* Main sun light with soft shadows */}
+          <directionalLight
+            position={[300, 500, 200]}
+            intensity={1.2}
+            color="#fff5eb"
+            castShadow
+          />
+
+          {/* Fill light from opposite side */}
+          <directionalLight
+            position={[-200, 300, -100]}
+            intensity={0.4}
+            color="#e0f2fe"
+          />
+
+          {/* Sky/ground color blend */}
+          <hemisphereLight args={["#bfdbfe", "#86efac", 0.5]} />
 
           <GardenGround />
           <BuildingFloor />
@@ -357,26 +376,46 @@ function DpadButton({ icon: Icon, onPress }: { icon: typeof ChevronUp; onPress: 
 }
 
 /* ------------------------------------------------------------------ */
-/* Scene 3D -- semua yang di bawah ini dirender DI DALAM <Canvas>.     */
+/* Scene 3D -- Corporate Modern Style dengan detail realistis         */
 /* ------------------------------------------------------------------ */
 
 function GardenGround() {
   const [x, , z] = toScene(WORLD_W / 2, WORLD_H / 2);
   return (
-    <mesh position={[x, -1, z]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[WORLD_W + OUTDOOR_MARGIN * 2, WORLD_H + OUTDOOR_MARGIN * 2]} />
-      <meshStandardMaterial color="#65a30d" side={THREE.DoubleSide} />
-    </mesh>
+    <group>
+      {/* Main grass */}
+      <mesh position={[x, -1, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[WORLD_W + OUTDOOR_MARGIN * 2, WORLD_H + OUTDOOR_MARGIN * 2]} />
+        <meshStandardMaterial color="#22c55e" side={THREE.DoubleSide} />
+      </mesh>
+      {/* Pathway/sidewalk around building */}
+      <mesh position={[x, -0.5, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[WORLD_W + 40, WORLD_H + 40]} />
+        <meshStandardMaterial color="#d1d5db" side={THREE.DoubleSide} />
+      </mesh>
+    </group>
   );
 }
 
 function BuildingFloor() {
   const [x, , z] = toScene(WORLD_W / 2, WORLD_H / 2);
   return (
-    <mesh position={[x, 0, z]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[WORLD_W, WORLD_H]} />
-      <meshStandardMaterial color="#e4e7eb" side={THREE.DoubleSide} />
-    </mesh>
+    <group>
+      {/* Main floor - polished concrete look */}
+      <mesh position={[x, 0, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[WORLD_W, WORLD_H]} />
+        <meshStandardMaterial color="#f8fafc" side={THREE.DoubleSide} metalness={0.1} roughness={0.8} />
+      </mesh>
+      {/* Corridor stripe */}
+      <mesh position={[x, 0.2, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[40, WORLD_H]} />
+        <meshStandardMaterial color="#e2e8f0" side={THREE.DoubleSide} />
+      </mesh>
+      <mesh position={[x, 0.2, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[WORLD_W, 40]} />
+        <meshStandardMaterial color="#e2e8f0" side={THREE.DoubleSide} />
+      </mesh>
+    </group>
   );
 }
 
@@ -384,21 +423,57 @@ function RoomFloor({ room }: { room: OfficeRoom }) {
   const [x, , z] = toScene(room.rect.x + room.rect.w / 2, room.rect.y + room.rect.h / 2);
   const { color, opacity } = hex8ToRgbAlpha(room.floorColor);
   return (
-    <mesh position={[x, 0.5, z]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[room.rect.w, room.rect.h]} />
-      <meshStandardMaterial color={color} transparent opacity={Math.max(opacity, 0.35)} side={THREE.DoubleSide} />
-      <Edges color={room.accentColor} />
-    </mesh>
+    <group>
+      {/* Carpet/floor */}
+      <mesh position={[x, 0.5, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[room.rect.w - 8, room.rect.h - 8]} />
+        <meshStandardMaterial color={color} transparent opacity={Math.max(opacity, 0.6)} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Glass partition walls (low) */}
+      <mesh position={[x - room.rect.w / 2 + 2, 25, z]}>
+        <boxGeometry args={[4, 50, room.rect.h]} />
+        <meshStandardMaterial color="#94a3b8" transparent opacity={0.3} metalness={0.9} roughness={0.1} />
+      </mesh>
+      <mesh position={[x, 25, z - room.rect.h / 2 + 2]}>
+        <boxGeometry args={[room.rect.w, 50, 4]} />
+        <meshStandardMaterial color="#94a3b8" transparent opacity={0.3} metalness={0.9} roughness={0.1} />
+      </mesh>
+      {/* Accent strip on floor */}
+      <mesh position={[x - room.rect.w / 2 + 6, 0.8, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[4, room.rect.h - 16]} />
+        <meshStandardMaterial color={room.accentColor} />
+      </mesh>
+    </group>
   );
 }
 
 function Desk({ rect }: { rect: Rect }) {
   const [x, , z] = toScene(rect.x + rect.w / 2, rect.y + rect.h / 2);
   return (
-    <mesh position={[x, 20, z]}>
-      <boxGeometry args={[rect.w, 40, rect.h]} />
-      <meshStandardMaterial color="#b45309" />
-    </mesh>
+    <group>
+      {/* Modern white desk top */}
+      <mesh position={[x, 28, z]}>
+        <boxGeometry args={[rect.w, 4, rect.h]} />
+        <meshStandardMaterial color="#ffffff" metalness={0.1} roughness={0.3} />
+      </mesh>
+      {/* Metal legs */}
+      <mesh position={[x - rect.w / 2 + 6, 14, z - rect.h / 2 + 6]}>
+        <boxGeometry args={[4, 28, 4]} />
+        <meshStandardMaterial color="#71717a" metalness={0.8} roughness={0.2} />
+      </mesh>
+      <mesh position={[x + rect.w / 2 - 6, 14, z - rect.h / 2 + 6]}>
+        <boxGeometry args={[4, 28, 4]} />
+        <meshStandardMaterial color="#71717a" metalness={0.8} roughness={0.2} />
+      </mesh>
+      <mesh position={[x - rect.w / 2 + 6, 14, z + rect.h / 2 - 6]}>
+        <boxGeometry args={[4, 28, 4]} />
+        <meshStandardMaterial color="#71717a" metalness={0.8} roughness={0.2} />
+      </mesh>
+      <mesh position={[x + rect.w / 2 - 6, 14, z + rect.h / 2 - 6]}>
+        <boxGeometry args={[4, 28, 4]} />
+        <meshStandardMaterial color="#71717a" metalness={0.8} roughness={0.2} />
+      </mesh>
+    </group>
   );
 }
 
@@ -736,16 +811,85 @@ function PropMesh({ prop }: { prop: Prop }) {
   }
 }
 
-/** AI Agent NPC — robot-style avatar with glow effect and agent colors */
+/** AI Agent NPC — robot-style avatar with wandering behavior */
 function AgentNPC({ agent, x, y, onClick }: { agent: AIAgent; x: number; y: number; onClick: () => void }) {
-  const groupRef = useRef<THREE.Group | null>(null);
+  const mainGroupRef = useRef<THREE.Group | null>(null);
+  const bodyRef = useRef<THREE.Group | null>(null);
   const [hovered, setHovered] = useState(false);
-  const [sx, , sz] = toScene(x, y);
+
+  // Wandering state
+  const homePos = useRef({ x, y });
+  const currentPos = useRef({ x, y });
+  const targetPos = useRef({ x, y });
+  const isWalking = useRef(false);
+  const waitTimer = useRef(Math.random() * 3); // Random initial wait
+  const walkTime = useRef(0);
+
+  const WANDER_RADIUS = 60; // How far from home they can wander
+  const WALK_SPEED = 35; // Pixels per second
+  const WAIT_MIN = 2; // Min seconds to wait
+  const WAIT_MAX = 5; // Max seconds to wait
+
+  // Pick a new random target within wander radius
+  const pickNewTarget = () => {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = Math.random() * WANDER_RADIUS;
+    targetPos.current = {
+      x: homePos.current.x + Math.cos(angle) * dist,
+      y: homePos.current.y + Math.sin(angle) * dist,
+    };
+  };
 
   useFrame((_, delta) => {
-    const g = groupRef.current;
-    if (!g) return;
-    g.rotation.y += delta * 0.5;
+    const mainGroup = mainGroupRef.current;
+    const body = bodyRef.current;
+    if (!mainGroup || !body) return;
+
+    const dt = Math.min(delta, 0.05);
+
+    if (isWalking.current) {
+      // Move toward target
+      const dx = targetPos.current.x - currentPos.current.x;
+      const dy = targetPos.current.y - currentPos.current.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < 3) {
+        // Reached target, start waiting
+        isWalking.current = false;
+        waitTimer.current = WAIT_MIN + Math.random() * (WAIT_MAX - WAIT_MIN);
+      } else {
+        // Move toward target
+        const moveSpeed = WALK_SPEED * dt;
+        currentPos.current.x += (dx / dist) * moveSpeed;
+        currentPos.current.y += (dy / dist) * moveSpeed;
+
+        // Face movement direction
+        body.rotation.y = Math.atan2(dx, dy);
+
+        // Walking animation (bobbing)
+        walkTime.current += dt * 8;
+      }
+    } else {
+      // Waiting/idle
+      waitTimer.current -= dt;
+      if (waitTimer.current <= 0) {
+        pickNewTarget();
+        isWalking.current = true;
+        walkTime.current = 0;
+      }
+
+      // Idle animation - slow look around
+      body.rotation.y += dt * 0.3;
+    }
+
+    // Update position
+    const [sx, , sz] = toScene(currentPos.current.x, currentPos.current.y);
+    mainGroup.position.x = sx;
+    mainGroup.position.z = sz;
+
+    // Bobbing animation when walking
+    const bobHeight = isWalking.current ? Math.sin(walkTime.current) * 3 : 0;
+    body.position.y = bobHeight;
   });
 
   const gradientColors: Record<string, string> = {
@@ -757,53 +901,89 @@ function AgentNPC({ agent, x, y, onClick }: { agent: AIAgent; x: number; y: numb
   };
   const color = gradientColors[agent.id] ?? "#8b5cf6";
 
+  const [sx, , sz] = toScene(x, y);
+
   return (
     <group
+      ref={mainGroupRef}
       position={[sx, 0, sz]}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       onPointerOver={() => setHovered(true)}
       onPointerOut={() => setHovered(false)}
     >
-      {/* Base platform with glow */}
-      <mesh position={[0, 2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[18, 24, 24]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 0.8 : 0.4} transparent opacity={0.7} />
+      {/* Shadow with glow */}
+      <mesh position={[0, 0.5, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[12, 24]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 0.8 : 0.4} transparent opacity={0.3} />
       </mesh>
 
-      {/* Robot body */}
-      <group ref={groupRef}>
-        {/* Torso */}
-        <mesh position={[0, 22, 0]}>
-          <boxGeometry args={[20, 24, 14]} />
-          <meshStandardMaterial color={color} metalness={0.4} roughness={0.3} />
+      {/* Chibi Robot body */}
+      <group ref={bodyRef}>
+        {/* Small body */}
+        <mesh position={[0, 12, 0]}>
+          <capsuleGeometry args={[8, 8, 8, 12]} />
+          <meshStandardMaterial color={color} metalness={0.3} roughness={0.4} />
         </mesh>
-        {/* Head */}
-        <mesh position={[0, 42, 0]}>
-          <boxGeometry args={[16, 14, 12]} />
-          <meshStandardMaterial color="#1f2937" metalness={0.5} roughness={0.2} />
+
+        {/* Arms */}
+        <mesh position={[-12, 14, 0]}>
+          <capsuleGeometry args={[3, 5, 4, 8]} />
+          <meshStandardMaterial color={color} metalness={0.3} roughness={0.4} />
         </mesh>
-        {/* Visor/Eyes */}
-        <mesh position={[0, 43, 6.5]}>
-          <boxGeometry args={[12, 5, 1]} />
+        <mesh position={[12, 14, 0]}>
+          <capsuleGeometry args={[3, 5, 4, 8]} />
+          <meshStandardMaterial color={color} metalness={0.3} roughness={0.4} />
+        </mesh>
+
+        {/* Big robot head */}
+        <mesh position={[0, 36, 0]}>
+          <boxGeometry args={[22, 18, 16]} />
+          <meshStandardMaterial color="#374151" metalness={0.5} roughness={0.3} />
+        </mesh>
+
+        {/* Face screen */}
+        <mesh position={[0, 36, 8.5]}>
+          <boxGeometry args={[18, 12, 1]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 0.8 : 0.4} />
+        </mesh>
+
+        {/* Robot eyes on screen */}
+        <mesh position={[-5, 37, 9]}>
+          <boxGeometry args={[4, 4, 0.5]} />
+          <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.3} />
+        </mesh>
+        <mesh position={[5, 37, 9]}>
+          <boxGeometry args={[4, 4, 0.5]} />
+          <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.3} />
+        </mesh>
+
+        {/* Antenna */}
+        <mesh position={[0, 48, 0]}>
+          <cylinderGeometry args={[1.5, 1.5, 6, 8]} />
+          <meshStandardMaterial color="#71717a" metalness={0.6} roughness={0.3} />
+        </mesh>
+        <mesh position={[0, 52, 0]}>
+          <sphereGeometry args={[3, 12, 12]} />
           <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 1.2 : 0.6} />
         </mesh>
-        {/* Antenna */}
-        <mesh position={[0, 52, 0]}>
-          <cylinderGeometry args={[1.5, 1.5, 6, 8]} />
-          <meshStandardMaterial color="#374151" />
+
+        {/* Ear pieces */}
+        <mesh position={[-12, 36, 0]}>
+          <boxGeometry args={[3, 8, 8]} />
+          <meshStandardMaterial color="#52525b" metalness={0.5} roughness={0.3} />
         </mesh>
-        <mesh position={[0, 56, 0]}>
-          <sphereGeometry args={[3, 8, 8]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 1.5 : 0.8} />
+        <mesh position={[12, 36, 0]}>
+          <boxGeometry args={[3, 8, 8]} />
+          <meshStandardMaterial color="#52525b" metalness={0.5} roughness={0.3} />
         </mesh>
       </group>
 
       {/* Agent name label */}
-      <Billboard position={[0, 68, 0]}>
+      <Billboard position={[0, 62, 0]}>
         <Text
-          fontSize={11}
+          fontSize={9}
           color="#ffffff"
-          outlineWidth={0.8}
+          outlineWidth={0.6}
           outlineColor={color}
           anchorX="center"
           anchorY="middle"
@@ -815,30 +995,96 @@ function AgentNPC({ agent, x, y, onClick }: { agent: AIAgent; x: number; y: numb
   );
 }
 
+/** Chibi-style avatar - big head, small cute body */
 const AvatarMesh = forwardRef<THREE.Group, { color: string; label: string; isSelf: boolean }>(function AvatarMesh(
   { color, label, isSelf },
   ref
 ) {
   return (
     <group ref={ref}>
-      <mesh position={[0, 16, 0]}>
-        <cylinderGeometry args={[PLAYER_RADIUS - 3, PLAYER_RADIUS, 32, 12]} />
+      {/* Shadow */}
+      <mesh position={[0, 0.5, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[10, 16]} />
+        <meshStandardMaterial color="#000000" transparent opacity={0.2} />
+      </mesh>
+
+      {/* Small chibi body */}
+      <mesh position={[0, 12, 0]}>
+        <capsuleGeometry args={[7, 10, 8, 12]} />
         <meshStandardMaterial color={color} />
       </mesh>
-      <mesh position={[0, 40, 0]}>
-        <sphereGeometry args={[10, 16, 16]} />
-        <meshStandardMaterial color="#fde68a" />
+
+      {/* Arms */}
+      <mesh position={[-10, 14, 0]}>
+        <capsuleGeometry args={[3, 6, 4, 8]} />
+        <meshStandardMaterial color={color} />
       </mesh>
-      <mesh position={[0, 16, 13]}>
-        <boxGeometry args={[6, 6, 6]} />
+      <mesh position={[10, 14, 0]}>
+        <capsuleGeometry args={[3, 6, 4, 8]} />
+        <meshStandardMaterial color={color} />
+      </mesh>
+
+      {/* Big chibi head */}
+      <mesh position={[0, 34, 0]}>
+        <sphereGeometry args={[14, 20, 20]} />
+        <meshStandardMaterial color="#fef3c7" />
+      </mesh>
+
+      {/* Hair */}
+      <mesh position={[0, 40, -2]}>
+        <sphereGeometry args={[13, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshStandardMaterial color={color} />
+      </mesh>
+
+      {/* Eyes */}
+      <mesh position={[-5, 34, 12]}>
+        <sphereGeometry args={[2.5, 8, 8]} />
+        <meshStandardMaterial color="#1f2937" />
+      </mesh>
+      <mesh position={[5, 34, 12]}>
+        <sphereGeometry args={[2.5, 8, 8]} />
+        <meshStandardMaterial color="#1f2937" />
+      </mesh>
+      {/* Eye highlights */}
+      <mesh position={[-4, 35, 14]}>
+        <sphereGeometry args={[1, 6, 6]} />
         <meshStandardMaterial color="#ffffff" />
       </mesh>
-      <Billboard position={[0, 62, 0]}>
+      <mesh position={[6, 35, 14]}>
+        <sphereGeometry args={[1, 6, 6]} />
+        <meshStandardMaterial color="#ffffff" />
+      </mesh>
+
+      {/* Blush */}
+      <mesh position={[-9, 31, 10]}>
+        <circleGeometry args={[3, 12]} />
+        <meshStandardMaterial color="#fca5a5" transparent opacity={0.5} />
+      </mesh>
+      <mesh position={[9, 31, 10]}>
+        <circleGeometry args={[3, 12]} />
+        <meshStandardMaterial color="#fca5a5" transparent opacity={0.5} />
+      </mesh>
+
+      {/* Mouth */}
+      <mesh position={[0, 29, 13]}>
+        <boxGeometry args={[4, 1.5, 1]} />
+        <meshStandardMaterial color="#f87171" />
+      </mesh>
+
+      {/* Self indicator ring */}
+      {isSelf && (
+        <mesh position={[0, 1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[12, 14, 24]} />
+          <meshStandardMaterial color="#7c3aed" emissive="#7c3aed" emissiveIntensity={0.5} />
+        </mesh>
+      )}
+
+      <Billboard position={[0, 58, 0]}>
         <Text
-          fontSize={11}
+          fontSize={9}
           color="#ffffff"
-          outlineWidth={0.6}
-          outlineColor={isSelf ? "#7c3aed" : "#0f172a"}
+          outlineWidth={0.5}
+          outlineColor={isSelf ? "#7c3aed" : "#374151"}
           anchorX="center"
           anchorY="middle"
         >
