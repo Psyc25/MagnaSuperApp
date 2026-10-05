@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient, getCurrentProfile } from "@/lib/supabase/server";
 import { rowToCapitalRequest, type CapitalRequestRow } from "@/lib/capital-requests/mappers";
 import { renderCapitalRequestReportPdf } from "@/lib/capital-requests/pdf";
+import { todayISO } from "@/lib/shared/utils";
 
 // @react-pdf/renderer butuh Node.js APIs (Buffer, dsb) — bukan Edge Runtime,
 // sama seperti /api/invoices/[id]/pdf.
@@ -36,7 +37,7 @@ export async function GET() {
 
   const requests = (data ?? []).map(rowToCapitalRequest);
   const pdfBuffer = await renderCapitalRequestReportPdf(requests);
-  const fileName = `laporan-pengajuan-modal-${new Date().toISOString().slice(0, 10)}.pdf`;
+  const fileName = `laporan-pengajuan-modal-${todayISO()}.pdf`;
 
   return new NextResponse(new Uint8Array(pdfBuffer), {
     headers: {

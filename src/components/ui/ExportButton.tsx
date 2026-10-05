@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { loadXlsx } from "@/lib/shared/xlsx";
+import { todayISO } from "@/lib/shared/utils";
 
 export type ExportSheet = {
   /** Nama tab di file Excel — dipotong ke 31 karakter (batas format .xlsx). */
@@ -87,7 +88,7 @@ export function ExportButton({
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      const stamp = new Date().toISOString().slice(0, 10);
+      const stamp = todayISO();
       link.download = `${fileName}-${stamp}.xlsx`;
       document.body.appendChild(link);
       link.click();

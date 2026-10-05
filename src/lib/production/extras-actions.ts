@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { logActivity } from "@/lib/activity/log";
+import { todayISO } from "@/lib/shared/utils";
 import {
   rowToBomTemplate,
   rowToCrewPiecePayment,
@@ -831,7 +832,7 @@ export async function updateCrewPiecePaymentStatus(
     .from("production_crew_piece_payments")
     .update({
       status,
-      tanggal_bayar: status === "Dibayar" ? tanggalBayar || new Date().toISOString().slice(0, 10) : null,
+      tanggal_bayar: status === "Dibayar" ? tanggalBayar || todayISO() : null,
     })
     .eq("id", id);
 
@@ -1087,6 +1088,15 @@ export async function updateNcReportProgress(
   }
 ): Promise<MutationResult> {
   const supabase = await createClient();
+  // Tanggal ditutup hanya diisi saat status BERUBAH ke "Ditutup" (tanggal
+  // WIB) -- menyimpan ulang laporan yang sudah ditutup tidak menimpanya.
+  const { data: current } = await supabase
+    .from("production_nc_reports")
+    .select("status, tanggal_ditutup")
+    .eq("id", id)
+    .maybeSingle<{ status: NcStatus; tanggal_ditutup: string | null }>();
+  const tanggalDitutup =
+    input.status !== "Ditutup" ? null : current?.status === "Ditutup" && current.tanggal_ditutup ? current.tanggal_ditutup : todayISO();
   const { error } = await supabase
     .from("production_nc_reports")
     .update({
@@ -1094,7 +1104,7 @@ export async function updateNcReportProgress(
       akar_masalah: input.akarMasalah?.trim() || null,
       tindakan_korektif: input.tindakanKorektif?.trim() || null,
       tindakan_preventif: input.tindakanPreventif?.trim() || null,
-      tanggal_ditutup: input.status === "Ditutup" ? new Date().toISOString().slice(0, 10) : null,
+      tanggal_ditutup: tanggalDitutup,
     })
     .eq("id", id);
 
@@ -1202,7 +1212,7 @@ export async function updateSubcontractStatus(
     .from("production_subcontract_orders")
     .update({
       status,
-      tanggal_terima: status === "Diterima" ? tanggalTerima || new Date().toISOString().slice(0, 10) : null,
+      tanggal_terima: status === "Diterima" ? tanggalTerima || todayISO() : null,
     })
     .eq("id", id);
 

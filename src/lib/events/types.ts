@@ -442,7 +442,8 @@ export type UpdateChecklistProgressInput = {
 export type ChecklistStatusLogEntry = {
   id: string;
   checklistItemId: string;
-  status: EventChecklistStatus;
+  /** Label fase (Design..Finish, migrasi 0093) atau status lama untuk baris historis. */
+  status: string;
   picId?: string;
   picName?: string;
   changedAt: string;

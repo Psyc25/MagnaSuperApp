@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isoDaysFromNow, todayISO } from "./utils";
+import { isoDateInJakarta, isoDaysFromNow, todayISO } from "./utils";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -21,5 +21,14 @@ describe("tanggal menurut WIB", () => {
     vi.setSystemTime(new Date("2026-12-31T17:30:00Z")); // 01 Jan 2027 00:30 WIB
     expect(isoDaysFromNow(0)).toBe("2027-01-01");
     expect(isoDaysFromNow(7)).toBe("2027-01-08");
+  });
+});
+
+describe("isoDateInJakarta", () => {
+  it("timestamp 22:30 UTC = keesokan harinya di WIB", () => {
+    expect(isoDateInJakarta("2026-10-05T22:30:00+00:00")).toBe("2026-10-06");
+  });
+  it("timestamp siang tetap di tanggal yang sama", () => {
+    expect(isoDateInJakarta("2026-10-05T03:00:00Z")).toBe("2026-10-05");
   });
 });

@@ -67,9 +67,15 @@ export async function addEventExpense(
   if (validationError) return { ok: false, error: validationError };
 
   const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   const { data, error } = await supabase
     .from("event_expenses")
     .insert({
+      // Siapa yang MEMASUKKAN data (beda dari pic_name = siapa yang
+      // membayar); ikut disalin ke jurnal otomatis oleh post_event_expense_journal.
+      created_by: user?.id ?? null,
       expense_date: input.expenseDate,
       division: input.division,
       source_type: input.sourceType,

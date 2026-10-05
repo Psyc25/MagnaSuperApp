@@ -383,6 +383,9 @@ export function EventExpenseManager({
           // editTarget saat itu mengubah form jadi form tambah kosong dan
           // peringatannya hilang. onClose yang mengosongkannya.
         }}
+        onProofsChanged={(expenseId, proofs) =>
+          setExpenses((prev) => prev.map((item) => (item.id === expenseId ? { ...item, proofs } : item)))
+        }
       />
 
       <ConfirmDialog

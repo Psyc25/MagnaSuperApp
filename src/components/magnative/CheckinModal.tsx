@@ -6,7 +6,7 @@ import { Trash2, Users } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/ToastProvider";
-import { formatDateID, formatTimeID } from "@/lib/shared/utils";
+import { formatDateID, formatTimeID, isoDateInJakarta } from "@/lib/shared/utils";
 import {
   createCheckinLink,
   deleteCheckinLink,
@@ -146,7 +146,7 @@ export function CheckinModal({ project, onClose }: { project: Project; onClose: 
                 >
                   <span className="text-zinc-700 dark:text-zinc-200">{c.guestName || "Tamu (tanpa nama)"}</span>
                   <span className="text-zinc-400 dark:text-zinc-500">
-                    {formatDateID(c.checkedInAt.slice(0, 10))} {formatTimeID(c.checkedInAt)} WIB
+                    {formatDateID(isoDateInJakarta(c.checkedInAt))} {formatTimeID(c.checkedInAt)} WIB
                   </span>
                 </li>
               ))}

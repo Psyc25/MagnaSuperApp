@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { Document, Page, StyleSheet, Text, View, Image, renderToBuffer } from "@react-pdf/renderer";
-import { formatDateID } from "@/lib/magnarent/date";
+import { formatDateID, todayISO } from "@/lib/magnarent/date";
 import { calculateBookingTotal, countDaysInclusive, formatRupiah } from "@/lib/magnarent/pricing";
 import type { Booking, InventoryItem } from "@/lib/magnarent/types";
 import type { BookingDeposit } from "@/lib/magnarent/extras-types";
@@ -122,7 +122,7 @@ function ContractDocument({
           <View>
             <Text style={styles.docTitle}>SURAT PERJANJIAN SEWA ALAT</Text>
             <Text style={styles.docSubtitle}>No. Booking: {booking.id.slice(0, 8).toUpperCase()}</Text>
-            <Text style={styles.docSubtitle}>Tanggal Dibuat: {formatDateID(new Date().toISOString().slice(0, 10))}</Text>
+            <Text style={styles.docSubtitle}>Tanggal Dibuat: {formatDateID(todayISO())}</Text>
           </View>
         </View>
 

@@ -20,7 +20,7 @@ import { useToast } from "@/components/ui/ToastProvider";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { TrendBarChart } from "@/components/ui/TrendBarChart";
 import { prepareUploadFiles } from "@/lib/shared/image";
-import { formatDateID, formatRupiah } from "@/lib/shared/utils";
+import { formatDateID, formatRupiah, isoDateInJakarta } from "@/lib/shared/utils";
 import { cn } from "@/lib/cn";
 import type { CapitalRequest, CapitalRequestStatus } from "@/lib/capital-requests/types";
 import { decideCapitalRequest, removeCapitalRequestProof, uploadCapitalRequestProof } from "@/lib/capital-requests/actions";
@@ -450,7 +450,7 @@ function RequestCard({
       {req.status !== "Menunggu" && req.decidedAt && (
         <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-zinc-400 dark:text-zinc-500">
           <Clock className="h-3.5 w-3.5" />
-          Diputuskan {formatDateID(req.decidedAt.slice(0, 10))}
+          Diputuskan {formatDateID(isoDateInJakarta(req.decidedAt))}
         </p>
       )}
 

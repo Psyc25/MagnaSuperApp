@@ -72,6 +72,7 @@ export function EventExpenseFormModal({
   sourceOptions,
   editing,
   onSaved,
+  onProofsChanged,
 }: {
   open: boolean;
   onClose: () => void;
@@ -79,6 +80,10 @@ export function EventExpenseFormModal({
   /** Kalau diisi, modal masuk mode Edit untuk pengeluaran ini. */
   editing?: EventExpense | null;
   onSaved: (expense: EventExpense) => void;
+  /** Bukti dihapus LANGSUNG (sebelum form disimpan) -- induk perlu tahu
+   * supaya tabel/export tidak menampilkan bukti yang sudah tidak ada
+   * walau form akhirnya dibatalkan. */
+  onProofsChanged?: (expenseId: string, proofs: ExpenseProof[]) => void;
 }) {
   const [form, setForm] = useState(emptyForm);
   const [files, setFiles] = useState<File[]>([]);
@@ -139,7 +144,9 @@ export function EventExpenseFormModal({
       setError(result.error);
       return;
     }
-    setExistingProofs((prev) => prev.filter((p) => p.id !== proofId));
+    const remaining = existingProofs.filter((p) => p.id !== proofId);
+    setExistingProofs(remaining);
+    if (editing) onProofsChanged?.(editing.id, remaining);
   }
 
   async function handleSubmit(e: FormEvent) {
