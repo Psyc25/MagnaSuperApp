@@ -145,7 +145,11 @@ export async function middleware(request: NextRequest) {
   }
 
   if (user && isProtectedRoute) {
-    const division = (user.app_metadata as { division?: string } | null | undefined)?.division ?? "production";
+    // Tanpa division di app_metadata = tidak punya akses modul apa pun
+    // (sama dengan current_user_division() di database sejak migrasi 0094;
+    // dulu jatuh ke "production" sehingga akun hasil signup publik bisa
+    // membuka modul Production).
+    const division = (user.app_metadata as { division?: string } | null | undefined)?.division ?? "none";
 
     if (division !== "all") {
       const isOpenAdminRouteForDivision =
