@@ -102,7 +102,7 @@ export const QUERY_TOOLS: ToolDefinition[] = [
           },
           status: {
             type: "string",
-            enum: ["Aktif", "Non-Aktif", "Prospek"],
+            enum: ["Prospek", "Aktif", "Selesai", "Tidak Lanjut"],
             description: "Filter status klien",
           },
           searchName: {
@@ -310,38 +310,51 @@ export const ACTION_TOOLS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "create_event_expense",
-      description: "Catat pengeluaran event baru. HARUS konfirmasi dengan user sebelum mencatat.",
+      description: "Catat pengeluaran event/proyek baru. HARUS konfirmasi dengan user sebelum mencatat.",
       parameters: {
         type: "object",
         properties: {
-          eventId: {
+          sourceType: {
             type: "string",
-            description: "ID event terkait",
+            enum: ["magnarent_booking", "magnative_project", "production_booth", "umum"],
+            description: "Tipe sumber pengeluaran. 'umum' untuk pengeluaran operasional tanpa event/proyek terkait",
           },
-          tanggal: {
+          sourceId: {
+            type: "string",
+            description: "ID booking/proyek terkait (wajib jika sourceType bukan 'umum')",
+          },
+          division: {
+            type: "string",
+            enum: ["magnarent", "magnative", "production", "finance"],
+            description: "Divisi yang 'punya' pengeluaran ini",
+          },
+          expenseDate: {
             type: "string",
             description: "Tanggal pengeluaran (format: YYYY-MM-DD)",
           },
-          kategori: {
+          category: {
             type: "string",
-            enum: ["Sewa Venue", "Transportasi", "Konsumsi", "Dekorasi", "Dokumentasi", "Entertainer", "Lainnya"],
+            enum: ["Sewa Venue", "Dekorasi & Material", "Transportasi", "Konsumsi", "Talent / Vendor", "Percetakan", "Operasional Kantor", "Lain-lain"],
             description: "Kategori pengeluaran",
           },
-          keterangan: {
-            type: "string",
-            description: "Deskripsi pengeluaran",
-          },
-          jumlah: {
+          amount: {
             type: "number",
             description: "Jumlah pengeluaran (Rupiah)",
           },
-          metodeBayar: {
+          picName: {
             type: "string",
-            enum: ["Cash", "Transfer", "QRIS", "Kartu Kredit"],
-            description: "Metode pembayaran",
+            description: "Nama PIC yang mengeluarkan dana",
+          },
+          paymentMethod: {
+            type: "string",
+            description: "Metode pembayaran (Cash, Transfer BCA, QRIS, dll)",
+          },
+          notes: {
+            type: "string",
+            description: "Catatan/keterangan tambahan",
           },
         },
-        required: ["eventId", "tanggal", "kategori", "keterangan", "jumlah"],
+        required: ["category", "amount"],
       },
     },
   },
@@ -366,13 +379,13 @@ export const ACTION_TOOLS: ToolDefinition[] = [
             enum: ["Belum Mulai", "Sample", "Approval", "Preparation", "Production", "Finish"],
             description: "Status baru",
           },
-          picLapangan: {
+          pic: {
             type: "string",
-            description: "PIC Lapangan (opsional)",
+            description: "ID user PIC yang bertanggung jawab (opsional)",
           },
-          picProduksi: {
+          notes: {
             type: "string",
-            description: "PIC Produksi (opsional)",
+            description: "Catatan tambahan (opsional)",
           },
         },
         required: ["checklistItemId", "eventId", "status"],

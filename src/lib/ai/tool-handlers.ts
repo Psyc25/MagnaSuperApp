@@ -138,14 +138,14 @@ async function handleGetInventory(supabase: SupabaseClient, ctx: UserContext, ar
 
   let query = supabase
     .from("magnarent_inventory")
-    .select("id, nama, kategori, lokasi, jumlah_total, harga_sewa_harian, satuan")
-    .order("nama", { ascending: true });
+    .select("id, name, category, location, total_unit, price_per_day, unit_maintenance")
+    .order("name", { ascending: true });
 
   if (args.category) {
-    query = query.ilike("kategori", `%${args.category}%`);
+    query = query.ilike("category", `%${args.category}%`);
   }
   if (args.location) {
-    query = query.ilike("lokasi", `%${args.location}%`);
+    query = query.ilike("location", `%${args.location}%`);
   }
 
   const limit = typeof args.limit === "number" ? Math.min(args.limit, 50) : 20;
@@ -173,17 +173,17 @@ async function handleGetClients(supabase: SupabaseClient, ctx: UserContext, args
 
   let query = supabase
     .from("magnative_clients")
-    .select("id, nama, industri, nama_pic, telepon_pic, email_pic, status")
-    .order("nama", { ascending: true });
+    .select("id, name, industry, pic_name, pic_phone, pic_email, status")
+    .order("name", { ascending: true });
 
   if (args.industry) {
-    query = query.ilike("industri", `%${args.industry}%`);
+    query = query.ilike("industry", `%${args.industry}%`);
   }
   if (args.status) {
     query = query.eq("status", args.status);
   }
   if (args.searchName) {
-    query = query.ilike("nama", `%${args.searchName}%`);
+    query = query.ilike("name", `%${args.searchName}%`);
   }
 
   const limit = typeof args.limit === "number" ? Math.min(args.limit, 50) : 20;
@@ -219,12 +219,12 @@ async function handleGetProjects(supabase: SupabaseClient, ctx: UserContext, arg
   if (module === "production") {
     let query = supabase
       .from("production_booth_projects")
-      .select("id, nama, klien, lokasi, tanggal_mulai, tanggal_selesai, status, budget")
+      .select("id, name, nama_klien, lokasi_acara, tanggal_mulai, tanggal_instalasi, status, budget")
       .order("tanggal_mulai", { ascending: false })
       .limit(limit);
 
     if (args.status) query = query.eq("status", args.status);
-    if (args.clientName) query = query.ilike("klien", `%${args.clientName}%`);
+    if (args.clientName) query = query.ilike("nama_klien", `%${args.clientName}%`);
 
     const { data, error } = await query;
     if (error) return { success: false, error: error.message };
@@ -235,12 +235,12 @@ async function handleGetProjects(supabase: SupabaseClient, ctx: UserContext, arg
   // Default: magnative
   let query = supabase
     .from("magnative_projects")
-    .select("id, nama, tipe, tanggal_mulai, tanggal_selesai, status, budget, client:magnative_clients(id, nama)")
+    .select("id, name, type, tanggal_mulai, tanggal_selesai, status, budget, client:magnative_clients(id, name)")
     .order("tanggal_mulai", { ascending: false })
     .limit(limit);
 
   if (args.status) query = query.eq("status", args.status);
-  if (args.clientName) query = query.ilike("magnative_clients.nama", `%${args.clientName}%`);
+  if (args.clientName) query = query.ilike("magnative_clients.name", `%${args.clientName}%`);
 
   const { data, error } = await query;
   if (error) return { success: false, error: error.message };
@@ -255,17 +255,17 @@ async function handleGetEvents(supabase: SupabaseClient, ctx: UserContext, args:
 
   let query = supabase
     .from("events")
-    .select("id, nama, tanggal_mulai, tanggal_selesai, status, lokasi, event_type:event_types(nama)")
-    .order("tanggal_mulai", { ascending: false });
+    .select("id, name, client_name, start_date, end_date, status, location, event_type:event_types(name)")
+    .order("start_date", { ascending: false });
 
   if (args.status) {
     query = query.eq("status", args.status);
   }
   if (args.dateFrom) {
-    query = query.gte("tanggal_mulai", args.dateFrom);
+    query = query.gte("start_date", args.dateFrom);
   }
   if (args.dateTo) {
-    query = query.lte("tanggal_selesai", args.dateTo);
+    query = query.lte("end_date", args.dateTo);
   }
 
   const limit = typeof args.limit === "number" ? Math.min(args.limit, 50) : 20;
@@ -293,18 +293,18 @@ async function handleGetMaterials(supabase: SupabaseClient, ctx: UserContext, ar
 
   let query = supabase
     .from("production_materials")
-    .select("id, nama, kategori, stok, stok_minimum, satuan, harga_satuan")
-    .order("nama", { ascending: true });
+    .select("id, name, category, stock, min_stock, unit, price_per_unit, location")
+    .order("name", { ascending: true });
 
   if (args.category) {
-    query = query.ilike("kategori", `%${args.category}%`);
+    query = query.ilike("category", `%${args.category}%`);
   }
   if (args.lowStock === true) {
-    // Filter di client-side karena kita perlu compare stok < stok_minimum
+    // Filter di client-side karena kita perlu compare stock < min_stock
     const { data, error } = await query;
     if (error) return { success: false, error: error.message };
 
-    const lowStockItems = (data || []).filter((m: { stok: number; stok_minimum: number }) => m.stok < m.stok_minimum);
+    const lowStockItems = (data || []).filter((m: { stock: number; min_stock: number }) => m.stock < m.min_stock);
     return {
       success: true,
       data: {
@@ -350,8 +350,8 @@ async function handleCheckAvailability(supabase: SupabaseClient, ctx: UserContex
   if (!itemId && args.itemName) {
     const { data: items } = await supabase
       .from("magnarent_inventory")
-      .select("id, nama")
-      .ilike("nama", `%${args.itemName}%`)
+      .select("id, name")
+      .ilike("name", `%${args.itemName}%`)
       .limit(1);
 
     if (!items || items.length === 0) {
@@ -367,7 +367,7 @@ async function handleCheckAvailability(supabase: SupabaseClient, ctx: UserContex
   // Get item info
   const { data: item } = await supabase
     .from("magnarent_inventory")
-    .select("id, nama, jumlah_total")
+    .select("id, name, total_unit")
     .eq("id", itemId)
     .single();
 
@@ -384,14 +384,14 @@ async function handleCheckAvailability(supabase: SupabaseClient, ctx: UserContex
     .or(`tanggal_mulai.lte.${dateTo},tanggal_selesai.gte.${dateFrom}`);
 
   const bookedUnits = (bookings || []).reduce((sum: number, b: { jumlah_unit: number }) => sum + b.jumlah_unit, 0);
-  const availableUnits = item.jumlah_total - bookedUnits;
+  const availableUnits = item.total_unit - bookedUnits;
 
   return {
     success: true,
     data: {
-      item: { id: item.id, nama: item.nama },
+      item: { id: item.id, name: item.name },
       dateRange: { from: dateFrom, to: dateTo },
-      totalUnits: item.jumlah_total,
+      totalUnits: item.total_unit,
       bookedUnits,
       availableUnits,
       isAvailable: availableUnits > 0,
@@ -468,18 +468,25 @@ async function handleCreateEventExpense(supabase: SupabaseClient, ctx: UserConte
     return { success: false, error: "Tidak memiliki akses untuk mencatat pengeluaran" };
   }
 
+  // Determine source_type and division based on input
+  const sourceType = (args.sourceType as string) || "umum";
+  const division = (args.division as string) || ctx.division || "production";
+
   const { data, error } = await supabase
     .from("event_expenses")
     .insert({
-      event_id: args.eventId,
-      tanggal: args.tanggal,
-      kategori: args.kategori,
-      keterangan: args.keterangan,
-      jumlah: args.jumlah,
-      metode_bayar: args.metodeBayar || "Cash",
-      user_id: ctx.userId,
+      expense_date: args.expenseDate || new Date().toISOString().split("T")[0],
+      division,
+      source_type: sourceType,
+      source_id: sourceType !== "umum" ? args.sourceId : null,
+      category: args.category,
+      amount: args.amount,
+      pic_name: args.picName || ctx.userName,
+      payment_method: args.paymentMethod || "Cash",
+      notes: args.notes || null,
+      created_by: ctx.userId,
     })
-    .select("id, kategori, jumlah, keterangan")
+    .select("id, category, amount, notes")
     .single();
 
   if (error) {
@@ -501,15 +508,15 @@ async function handleUpdateChecklistProgress(supabase: SupabaseClient, ctx: User
   }
 
   const updateData: Record<string, unknown> = { status: args.status };
-  if (args.picLapangan) updateData.pic_lapangan = args.picLapangan;
-  if (args.picProduksi) updateData.pic_produksi = args.picProduksi;
+  if (args.pic) updateData.pic = args.pic;
+  if (args.notes) updateData.notes = args.notes;
 
   const { data, error } = await supabase
     .from("event_checklist_items")
     .update(updateData)
     .eq("id", args.checklistItemId)
     .eq("event_id", args.eventId)
-    .select("id, nama, status")
+    .select("id, item_name, status")
     .single();
 
   if (error) {
@@ -536,7 +543,7 @@ function buildConfirmationResponse(toolName: string, args: Args): ToolResult {
     update_booking_status: (a) =>
       `Ubah status booking ${a.bookingId} menjadi "${a.status}"`,
     create_event_expense: (a) =>
-      `Catat pengeluaran:\n- Kategori: ${a.kategori}\n- Jumlah: Rp ${Number(a.jumlah).toLocaleString("id-ID")}\n- Keterangan: ${a.keterangan}`,
+      `Catat pengeluaran:\n- Kategori: ${a.category}\n- Jumlah: Rp ${Number(a.amount).toLocaleString("id-ID")}\n- Catatan: ${a.notes || "-"}`,
     update_checklist_progress: (a) =>
       `Update checklist ${a.checklistItemId} ke status "${a.status}"`,
   };
