@@ -1,103 +1,78 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, MapPin, MessageSquare, Users } from "lucide-react";
+import {
+  Bell,
+  Building2,
+  ChevronRight,
+  Home,
+  LayoutGrid,
+  MessageSquare,
+  Monitor,
+  Search,
+  Users,
+  X,
+  Zap,
+  Activity,
+  Calendar,
+  TrendingUp
+} from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Billboard, Text } from "@react-three/drei";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { OrthographicCamera, Text } from "@react-three/drei";
 import * as THREE from "three";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/cn";
-import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
-import type { ChatRoom } from "@/lib/chat/rooms";
 import type { Division } from "@/lib/supabase/types";
 import type { OfficeRosterEntry } from "@/lib/virtual-office/data";
-import type { OfficeRoom, Prop, Rect } from "@/lib/virtual-office/map";
+import type { OfficeRoom } from "@/lib/virtual-office/map";
 import {
   AGENT_NPC_POSITIONS,
   DIVISION_COLORS,
-  OBSTACLES,
-  OUTDOOR_MARGIN,
-  PLAYER_SPEED,
-  PROPS,
   ROOMS,
-  SPAWN,
   WORLD_H,
   WORLD_W,
-  getRoomAt,
-  resolveMove,
 } from "@/lib/virtual-office/map";
 import { getAgentById, type AIAgent } from "@/lib/ai/agents";
 
 /**
- * Tahap H+ -- "Kantor Virtual" versi 3D (permintaan Owner: "ubah bentuk
- * virtual gamenya ... di buat 3d ... pepohonan dan isi kantor"). Render
- * pakai React Three Fiber (WebGL sungguhan, bukan isometrik 2D) --
- * geometri dasar (box/cylinder/cone/sphere), BUKAN model 3D siap pakai,
- * supaya tidak menambah file asset.
+ * Virtual Office v2 - Isometric Interactive Workspace
  *
- * Logika non-visual (koneksi Realtime, kontrol keyboard, matematika
- * gerak/collision di map.ts) SENGAJA TIDAK diubah dari versi 2D --
- * hanya lapisan render yang diganti dari <canvas> 2D ke <Canvas> R3F.
- * Posisi avatar tiap frame diubah langsung lewat ref Three.js
- * (group.position.set), BUKAN lewat React state, supaya tidak ada
- * re-render React per frame gerakan (sama seperti filosofi versi 2D).
+ * Konsep: "Living Application" - visualisasi aktivitas operasional
+ * dalam bentuk kantor isometrik interaktif, bukan sekadar dashboard.
  *
- * Kamera "mengikuti dari belakang-atas" dengan offset TETAP (bukan
- * orbit bebas) supaya arah selalu bisa diprediksi pemain.
+ * Features:
+ * - Fixed isometric camera (tidak follow player)
+ * - Click-to-zoom pada area
+ * - Status indicators pada karakter
+ * - Glassmorphism UI overlay
+ * - Real-time presence & activities
  */
 
-type Dir = "up" | "down" | "left" | "right";
-type RemotePos = { x: number; y: number; dir: Dir };
-type Pos = { x: number; y: number };
-
-const CHANNEL_NAME = "kantor-virtual";
-const BROADCAST_INTERVAL_MS = 70;
-const CHAT_PROXIMITY_PX = 72;
-const CAMERA_OFFSET = { x: 0, y: 340, z: 300 };
-
-const DIR_VECTORS: Record<Dir, { x: number; z: number }> = {
-  up: { x: 0, z: -1 },
-  down: { x: 0, z: 1 },
-  left: { x: -1, z: 0 },
-  right: { x: 1, z: 0 },
-};
-
-function dirToRadians(dir: Dir): number {
-  const v = DIR_VECTORS[dir];
-  return Math.atan2(v.x, v.z);
-}
-
-/** Konversi koordinat "peta 2D" (x,y piksel, y makin besar = makin ke
- * bawah) jadi koordinat scene 3D (X kanan, Y atas, Z depan) -- dipusatkan
- * di tengah dunia supaya kamera default (0,0,0) pas di tengah kantor. */
-function toScene(x: number, y: number): [number, number, number] {
-  return [x - WORLD_W / 2, 0, y - WORLD_H / 2];
-}
-
-/** "#RRGGBBAA" -> warna solid + opacity 0..1 (Three.js material tidak
- * baca alpha dari string hex 8-digit seperti canvas 2D). */
-function hex8ToRgbAlpha(hex: string): { color: string; opacity: number } {
-  if (hex.length === 9) {
-    return { color: hex.slice(0, 7), opacity: parseInt(hex.slice(7, 9), 16) / 255 };
-  }
-  return { color: hex, opacity: 1 };
-}
-
 type CurrentUser = { id: string; fullName: string; username: string | null; division: Division };
+type RemotePresence = { id: string; status: "online" | "busy" | "away"; activity?: string };
 
-/** Pilih ruang chat yang bisa dilihat KEDUA pihak -- investor SENGAJA
- * tidak pernah dapat tombol chat (fitur Chat tim ditutup total untuk
- * investor, lihat lib/chat/rooms.ts availableChatRooms -- tombol yang
- * membawa mereka ke halaman yang langsung redirect balik cuma bikin
- * bingung, bukan fitur). */
-function pickChatTarget(me: Division, other: OfficeRosterEntry): { room: ChatRoom; mention?: string } | null {
-  if (me === "investor" || other.division === "investor") return null;
-  const room: ChatRoom =
-    me === other.division && (me === "magnarent" || me === "magnative" || me === "production") ? me : "bersama";
-  return { room, mention: other.username ?? undefined };
+const CHANNEL_NAME = "kantor-virtual-v2";
+
+// Isometric camera settings
+const CAMERA_ZOOM = 0.8;
+
+/** Angka mock yang stabil per id (pengganti Math.random() saat render, yang
+ * dilarang React Compiler dan berubah tiap roster berubah). */
+function stableMockCount(id: string, max: number): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h % max;
 }
+
+// Room data with activities
+type RoomData = {
+  room: OfficeRoom;
+  occupants: OfficeRosterEntry[];
+  activities: number;
+  notifications: number;
+};
 
 export function VirtualOfficeClient({
   currentUser,
@@ -106,1145 +81,982 @@ export function VirtualOfficeClient({
   currentUser: CurrentUser;
   roster: OfficeRosterEntry[];
 }) {
-  const rosterById = useMemo(() => new Map(roster.map((r) => [r.id, r])), [roster]);
+  // UI State
+  const [selectedRoom, setSelectedRoom] = useState<OfficeRoom | null>(null);
+  const [selectedPerson, setSelectedPerson] = useState<OfficeRosterEntry | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<AIAgent | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [notifications] = useState(3); // Mock notifications
 
-  const posRef = useRef<Pos>({ ...SPAWN });
-  const dirRef = useRef<Dir>("down");
-  const keysRef = useRef<Set<string>>(new Set());
-  const remoteRef = useRef<Map<string, RemotePos>>(new Map());
-  const channelRef = useRef<RealtimeChannel | null>(null);
-  const lastBroadcastRef = useRef(0);
-  const lastRoomLabelRef = useRef("");
-  const lastNearbyIdRef = useRef<string | null>(null);
-  const onlineIdsRef = useRef<string[]>([]);
-
+  // Realtime presence
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
-  const [roomLabel, setRoomLabel] = useState("Koridor");
-  const [nearby, setNearby] = useState<OfficeRosterEntry | null>(null);
-  const [nearbyAgent, setNearbyAgent] = useState<AIAgent | null>(null);
+  const [, setPresenceMap] = useState<Map<string, RemotePresence>>(new Map());
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
-  useEffect(() => {
-    onlineIdsRef.current = onlineIds;
-  }, [onlineIds]);
+  // Camera state for zoom
+  const [cameraTarget, setCameraTarget] = useState<{ x: number; y: number; zoom: number }>({
+    x: WORLD_W / 2,
+    y: WORLD_H / 2,
+    zoom: CAMERA_ZOOM
+  });
 
-  // ---- Realtime: presence (siapa online) + broadcast (posisi jalan) ----
-  // Satu channel dipakai bersama SELURUH pengguna yang buka halaman ini --
-  // "key" presence = id pengguna, jadi kalau dia buka 2 tab tetap kehitung
-  // satu orang (bukan dobel avatar).
+  // Realtime connection
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase.channel(CHANNEL_NAME, {
-      config: { broadcast: { self: false }, presence: { key: currentUser.id } },
-    });
-
-    channel.on("broadcast", { event: "move" }, ({ payload }) => {
-      const p = payload as { id: string; x: number; y: number; dir: Dir };
-      if (p.id === currentUser.id) return;
-      remoteRef.current.set(p.id, { x: p.x, y: p.y, dir: p.dir });
+      config: { presence: { key: currentUser.id } },
     });
 
     channel.on("presence", { event: "sync" }, () => {
-      const ids = Object.keys(channel.presenceState());
+      const state = channel.presenceState();
+      const ids = Object.keys(state);
       setOnlineIds(ids);
-      for (const id of Array.from(remoteRef.current.keys())) {
-        if (!ids.includes(id)) remoteRef.current.delete(id);
-      }
+
+      const newPresenceMap = new Map<string, RemotePresence>();
+      ids.forEach(id => {
+        newPresenceMap.set(id, {
+          id,
+          status: "online",
+          activity: "Working"
+        });
+      });
+      setPresenceMap(newPresenceMap);
     });
 
     channel.subscribe((status) => {
-      if (status !== "SUBSCRIBED") return;
-      channel.track({ onlineAt: new Date().toISOString() });
-      channel.send({
-        type: "broadcast",
-        event: "move",
-        payload: { id: currentUser.id, x: posRef.current.x, y: posRef.current.y, dir: dirRef.current },
-      });
+      if (status === "SUBSCRIBED") {
+        channel.track({
+          onlineAt: new Date().toISOString(),
+          status: "online",
+          activity: "Viewing Office"
+        });
+      }
     });
 
     channelRef.current = channel;
     return () => {
       supabase.removeChannel(channel);
-      channelRef.current = null;
     };
   }, [currentUser.id]);
 
-  // ---- Kontrol keyboard (WASD / tombol panah) ----
-  useEffect(() => {
-    const MOVE_KEYS = new Set(["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"]);
-    function onKeyDown(e: KeyboardEvent) {
-      const k = e.key.toLowerCase();
-      if (!MOVE_KEYS.has(k)) return;
-      keysRef.current.add(k);
-    }
-    function onKeyUp(e: KeyboardEvent) {
-      keysRef.current.delete(e.key.toLowerCase());
-    }
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-    };
+  // Build room data with occupants
+  const roomsData = useMemo<RoomData[]>(() => {
+    return ROOMS.map(room => {
+      const occupants = roster.filter(r => {
+        if (room.division === null) return false;
+        if (room.division === "all") return r.division === "all";
+        return r.division === room.division;
+      });
+
+      return {
+        room,
+        occupants: occupants.slice(0, 5),
+        activities: stableMockCount(room.id, 5),
+        notifications: room.id === "magnarent-desk" ? 2 : room.id === "meeting-room" ? 1 : 0,
+      };
+    });
+  }, [roster]);
+
+  // Handle room click
+  const handleRoomClick = useCallback((room: OfficeRoom) => {
+    setSelectedRoom(room);
+    setSelectedPerson(null);
+    setSelectedAgent(null);
+    setCameraTarget({
+      x: room.rect.x + room.rect.w / 2,
+      y: room.rect.y + room.rect.h / 2,
+      zoom: 1.5
+    });
   }, []);
 
-  // ---- Tombol arah sentuh (HP) -- pakai "kunci virtual" yang sama
-  // dengan keyboard supaya logika gerak di game loop cukup satu jalur. ----
-  const pressVirtual = useCallback((key: string, down: boolean) => {
-    if (down) keysRef.current.add(key);
-    else keysRef.current.delete(key);
+  // Handle person click
+  const handlePersonClick = useCallback((person: OfficeRosterEntry) => {
+    setSelectedPerson(person);
+    setSelectedRoom(null);
+    setSelectedAgent(null);
   }, []);
 
-  const chatTarget = nearby ? pickChatTarget(currentUser.division, nearby) : null;
+  // Handle agent click
+  const handleAgentClick = useCallback((agent: AIAgent) => {
+    setSelectedAgent(agent);
+    setSelectedRoom(null);
+    setSelectedPerson(null);
+  }, []);
+
+  // Reset view
+  const resetView = useCallback(() => {
+    setSelectedRoom(null);
+    setSelectedPerson(null);
+    setSelectedAgent(null);
+    setCameraTarget({ x: WORLD_W / 2, y: WORLD_H / 2, zoom: CAMERA_ZOOM });
+  }, []);
+
+  // Get status color
+  const getStatusColor = (id: string) => {
+    if (onlineIds.includes(id)) return "#22c55e";
+    return "#94a3b8";
+  };
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold text-zinc-600 dark:text-zinc-300",
-            GLASS_SURFACE,
-            GLASS_BORDER
-          )}
-        >
-          <MapPin className="h-3.5 w-3.5 text-violet-500" />
-          Kamu di: <span className="font-bold text-zinc-900 dark:text-white">{roomLabel}</span>
-        </span>
-        <span
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold text-zinc-600 dark:text-zinc-300",
-            GLASS_SURFACE,
-            GLASS_BORDER
-          )}
-        >
-          <Users className="h-3.5 w-3.5 text-emerald-500" />
-          {onlineIds.length} orang online
-        </span>
+    <div className="relative h-[calc(100vh-6rem)] w-full overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+
+      {/* Top Navigation Bar */}
+      <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-3 backdrop-blur-xl bg-slate-900/70 border-b border-white/10">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 rounded-lg hover:bg-white/10 transition"
+          >
+            <LayoutGrid className="h-5 w-5 text-white/70" />
+          </button>
+          <div className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+              <Building2 className="h-4 w-4 text-white" />
+            </div>
+            <span className="font-bold text-white">Virtual Office</span>
+          </div>
+        </div>
+
+        {/* Search */}
+        <div className="flex-1 max-w-md mx-8">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/40" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search rooms, people, activities..."
+              className="w-full pl-10 pr-4 py-2 rounded-xl bg-white/5 border border-white/10 text-sm text-white placeholder:text-white/40 focus:outline-none focus:border-violet-500/50"
+            />
+          </div>
+        </div>
+
+        {/* Right actions */}
+        <div className="flex items-center gap-3">
+          <button className="relative p-2 rounded-lg hover:bg-white/10 transition">
+            <Bell className="h-5 w-5 text-white/70" />
+            {notifications > 0 && (
+              <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center">
+                {notifications}
+              </span>
+            )}
+          </button>
+          <div className="flex items-center gap-2 pl-3 border-l border-white/10">
+            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center text-sm font-bold text-white">
+              {currentUser.fullName.charAt(0)}
+            </div>
+            <div className="hidden md:block">
+              <p className="text-sm font-medium text-white">{currentUser.fullName}</p>
+              <p className="text-[10px] text-white/50 capitalize">{currentUser.division}</p>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div
-        className="relative overflow-hidden rounded-2xl border border-zinc-200 shadow-sm dark:border-white/10"
-        style={{ aspectRatio: `${WORLD_W} / ${WORLD_H}` }}
-      >
+      {/* Sidebar */}
+      <div className={cn(
+        "absolute top-14 left-0 bottom-0 z-10 w-64 backdrop-blur-xl bg-slate-900/80 border-r border-white/10 transition-transform duration-300",
+        !sidebarOpen && "-translate-x-full"
+      )}>
+        <div className="p-4 space-y-6">
+          {/* Quick Stats */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-white/50 uppercase tracking-wider">Overview</h3>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <div className="flex items-center gap-2 text-emerald-400">
+                  <Users className="h-4 w-4" />
+                  <span className="text-lg font-bold">{onlineIds.length}</span>
+                </div>
+                <p className="text-[10px] text-white/50 mt-1">Online Now</p>
+              </div>
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <div className="flex items-center gap-2 text-amber-400">
+                  <Activity className="h-4 w-4" />
+                  <span className="text-lg font-bold">12</span>
+                </div>
+                <p className="text-[10px] text-white/50 mt-1">Active Tasks</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Navigation */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-white/50 uppercase tracking-wider">Navigation</h3>
+            <nav className="space-y-1">
+              <button
+                onClick={resetView}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white/70 hover:bg-white/10 hover:text-white transition"
+              >
+                <Home className="h-4 w-4" />
+                <span>Overview</span>
+              </button>
+              {ROOMS.map(room => (
+                <button
+                  key={room.id}
+                  onClick={() => handleRoomClick(room)}
+                  className={cn(
+                    "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition",
+                    selectedRoom?.id === room.id
+                      ? "bg-violet-500/20 text-violet-300"
+                      : "text-white/70 hover:bg-white/10 hover:text-white"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: room.accentColor }}
+                    />
+                    <span className="truncate">{room.label}</span>
+                  </div>
+                  {roomsData.find(r => r.room.id === room.id)?.notifications ? (
+                    <span className="h-5 w-5 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center">
+                      {roomsData.find(r => r.room.id === room.id)?.notifications}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </nav>
+          </div>
+
+          {/* AI Agents */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-white/50 uppercase tracking-wider">AI Assistants</h3>
+            <div className="space-y-1">
+              {AGENT_NPC_POSITIONS.map(pos => {
+                const agent = getAgentById(pos.agentId);
+                if (!agent) return null;
+                return (
+                  <button
+                    key={agent.id}
+                    onClick={() => handleAgentClick(agent)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition",
+                      selectedAgent?.id === agent.id
+                        ? "bg-violet-500/20 text-violet-300"
+                        : "text-white/70 hover:bg-white/10 hover:text-white"
+                    )}
+                  >
+                    <span className="text-lg">{agent.icon}</span>
+                    <div className="text-left">
+                      <p className="font-medium">{agent.name}</p>
+                      <p className="text-[10px] text-white/50">{agent.description}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Canvas */}
+      <div className={cn(
+        "absolute top-14 bottom-0 right-0 transition-all duration-300",
+        sidebarOpen ? "left-64" : "left-0"
+      )}>
         <Canvas
-          style={{ width: "100%", height: "100%", display: "block" }}
+          style={{ width: "100%", height: "100%" }}
           dpr={[1, 2]}
           gl={{ antialias: true }}
-          camera={{ fov: 42, near: 1, far: 3000 }}
+          orthographic
         >
-          {/* Sky gradient - corporate blue */}
-          <color attach="background" args={["#e0f2fe"]} />
-
-          {/* Soft ambient for corporate feel */}
-          <ambientLight intensity={0.6} />
-
-          {/* Main sun light with soft shadows */}
-          <directionalLight
-            position={[300, 500, 200]}
-            intensity={1.2}
-            color="#fff5eb"
-            castShadow
-          />
-
-          {/* Fill light from opposite side */}
-          <directionalLight
-            position={[-200, 300, -100]}
-            intensity={0.4}
-            color="#e0f2fe"
-          />
-
-          {/* Sky/ground color blend */}
-          <hemisphereLight args={["#bfdbfe", "#86efac", 0.5]} />
-
-          <GardenGround />
-          <BuildingFloor />
-          {ROOMS.map((room) => (
-            <RoomFloor key={room.id} room={room} />
-          ))}
-          {OBSTACLES.map((rect, i) => (
-            <Desk key={i} rect={rect} />
-          ))}
-          {PROPS.map((prop) => (
-            <PropMesh key={prop.id} prop={prop} />
-          ))}
-
-          <SelfAvatar posRef={posRef} dirRef={dirRef} currentUser={currentUser} />
-          {onlineIds
-            .filter((id) => id !== currentUser.id)
-            .map((id) => {
-              const entry = rosterById.get(id);
-              if (!entry) return null;
-              return <RemoteAvatar key={id} id={id} remoteRef={remoteRef} entry={entry} />;
-            })}
-
-          {/* AI Agent NPCs */}
-          {AGENT_NPC_POSITIONS.map((npcPos) => {
-            const agent = getAgentById(npcPos.agentId);
-            if (!agent) return null;
-            return (
-              <AgentNPC
-                key={npcPos.agentId}
-                agent={agent}
-                x={npcPos.x}
-                y={npcPos.y}
-                onClick={() => setNearbyAgent(agent)}
-              />
-            );
-          })}
-
-          <GameLoop
-            keysRef={keysRef}
-            posRef={posRef}
-            dirRef={dirRef}
-            channelRef={channelRef}
-            lastBroadcastRef={lastBroadcastRef}
-            lastRoomLabelRef={lastRoomLabelRef}
-            lastNearbyIdRef={lastNearbyIdRef}
-            remoteRef={remoteRef}
+          <IsometricScene
+            roomsData={roomsData}
+            roster={roster}
+            onlineIds={onlineIds}
             currentUser={currentUser}
-            rosterById={rosterById}
-            setRoomLabel={setRoomLabel}
-            setNearby={setNearby}
+            cameraTarget={cameraTarget}
+            onRoomClick={handleRoomClick}
+            onPersonClick={handlePersonClick}
+            onAgentClick={handleAgentClick}
+            selectedRoom={selectedRoom}
           />
         </Canvas>
+      </div>
 
-        {chatTarget && nearby && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2">
-            <Link
-              href={`/dashboard/chat?room=${chatTarget.room}${
-                chatTarget.mention ? `&mention=${encodeURIComponent(chatTarget.mention)}` : ""
-              }`}
-              className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white shadow-lg transition-transform hover:scale-105 dark:bg-white dark:text-zinc-900"
+      {/* Detail Panel - Room */}
+      {selectedRoom && (
+        <DetailPanel onClose={resetView}>
+          <div className="flex items-center gap-3 mb-4">
+            <div
+              className="h-10 w-10 rounded-xl flex items-center justify-center"
+              style={{ backgroundColor: selectedRoom.accentColor + "30" }}
             >
-              <MessageSquare className="h-3.5 w-3.5" />
-              Chat dengan {nearby.fullName.split(" ")[0]}
-            </Link>
+              <Monitor className="h-5 w-5" style={{ color: selectedRoom.accentColor }} />
+            </div>
+            <div>
+              <h3 className="font-bold text-white">{selectedRoom.label}</h3>
+              <p className="text-xs text-white/50">
+                {selectedRoom.division ? `Division: ${selectedRoom.division}` : "Shared Space"}
+              </p>
+            </div>
           </div>
-        )}
 
-        {nearbyAgent && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2">
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <StatCard icon={Users} label="Occupants" value={roomsData.find(r => r.room.id === selectedRoom.id)?.occupants.length || 0} color="cyan" />
+            <StatCard icon={Activity} label="Activities" value={roomsData.find(r => r.room.id === selectedRoom.id)?.activities || 0} color="amber" />
+            <StatCard icon={Bell} label="Alerts" value={roomsData.find(r => r.room.id === selectedRoom.id)?.notifications || 0} color="red" />
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="text-xs font-semibold text-white/50 uppercase">Team Members</h4>
+            {roomsData.find(r => r.room.id === selectedRoom.id)?.occupants.map(person => (
+              <button
+                key={person.id}
+                onClick={() => handlePersonClick(person)}
+                className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 transition"
+              >
+                <div className="relative">
+                  <div
+                    className="h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold text-white"
+                    style={{ backgroundColor: DIVISION_COLORS[person.division] }}
+                  >
+                    {person.fullName.charAt(0)}
+                  </div>
+                  <div
+                    className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-800"
+                    style={{ backgroundColor: getStatusColor(person.id) }}
+                  />
+                </div>
+                <div className="text-left flex-1">
+                  <p className="text-sm font-medium text-white">{person.fullName}</p>
+                  <p className="text-[10px] text-white/50 capitalize">{person.division}</p>
+                </div>
+                <ChevronRight className="h-4 w-4 text-white/30" />
+              </button>
+            ))}
+          </div>
+        </DetailPanel>
+      )}
+
+      {/* Detail Panel - Person */}
+      {selectedPerson && (
+        <DetailPanel onClose={resetView}>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="relative">
+              <div
+                className="h-12 w-12 rounded-full flex items-center justify-center text-lg font-bold text-white"
+                style={{ backgroundColor: DIVISION_COLORS[selectedPerson.division] }}
+              >
+                {selectedPerson.fullName.charAt(0)}
+              </div>
+              <div
+                className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border-2 border-slate-800"
+                style={{ backgroundColor: getStatusColor(selectedPerson.id) }}
+              />
+            </div>
+            <div>
+              <h3 className="font-bold text-white">{selectedPerson.fullName}</h3>
+              <p className="text-xs text-white/50 capitalize">{selectedPerson.division}</p>
+            </div>
+          </div>
+
+          <div className="space-y-3 mb-4">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-white/5">
+              <span className="text-sm text-white/70">Status</span>
+              <span className={cn(
+                "text-sm font-medium",
+                onlineIds.includes(selectedPerson.id) ? "text-emerald-400" : "text-white/50"
+              )}>
+                {onlineIds.includes(selectedPerson.id) ? "Online" : "Offline"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-3 rounded-lg bg-white/5">
+              <span className="text-sm text-white/70">Activity</span>
+              <span className="text-sm text-white">Working</span>
+            </div>
+            <div className="flex items-center justify-between p-3 rounded-lg bg-white/5">
+              <span className="text-sm text-white/70">Tasks</span>
+              <span className="text-sm text-amber-400">3 pending</span>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
             <Link
-              href={`/dashboard/ai-assistant?agent=${nearbyAgent.id}`}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-white shadow-lg transition-transform hover:scale-105",
-                `bg-gradient-to-r ${nearbyAgent.color}`
-              )}
+              href={`/dashboard/chat?mention=${selectedPerson.username || ""}`}
+              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-violet-500 text-white text-sm font-medium hover:bg-violet-600 transition"
             >
-              <span>{nearbyAgent.icon}</span>
-              Bicara dengan {nearbyAgent.name}
+              <MessageSquare className="h-4 w-4" />
+              Message
             </Link>
-            <button
-              onClick={() => setNearbyAgent(null)}
-              className="grid h-8 w-8 place-items-center rounded-full bg-zinc-800 text-white hover:bg-zinc-700"
-            >
-              ✕
+            <button className="px-4 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/20 transition">
+              View Profile
             </button>
           </div>
-        )}
-      </div>
+        </DetailPanel>
+      )}
 
-      <div className="flex items-center justify-center gap-1.5 sm:hidden">
-        <DpadButton icon={ChevronLeft} onPress={(d) => pressVirtual("arrowleft", d)} />
-        <div className="flex flex-col gap-1.5">
-          <DpadButton icon={ChevronUp} onPress={(d) => pressVirtual("arrowup", d)} />
-          <DpadButton icon={ChevronDown} onPress={(d) => pressVirtual("arrowdown", d)} />
+      {/* Detail Panel - Agent */}
+      {selectedAgent && (
+        <DetailPanel onClose={resetView}>
+          <div className="flex items-center gap-3 mb-4">
+            <div className={cn(
+              "h-12 w-12 rounded-xl flex items-center justify-center text-2xl",
+              `bg-gradient-to-br ${selectedAgent.color}`
+            )}>
+              {selectedAgent.icon}
+            </div>
+            <div>
+              <h3 className="font-bold text-white">{selectedAgent.name}</h3>
+              <p className="text-xs text-white/50">{selectedAgent.description}</p>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl bg-white/5 border border-white/10 mb-4">
+            <p className="text-sm text-white/70">
+              {selectedAgent.id === "nova" && "Your all-in-one assistant. Ask me anything about the application, data, or get help with any module."}
+              {selectedAgent.id === "reno" && "Specialized in Magnarent. I can help with bookings, inventory, availability checks, and rental analytics."}
+              {selectedAgent.id === "crea" && "Your creative partner for Magnative. I handle clients, projects, content planning, and creative brainstorming."}
+              {selectedAgent.id === "fabr" && "Production expert. I manage materials, booth projects, and help calculate project requirements."}
+              {selectedAgent.id === "finn" && "Finance analyst. I track expenses, invoices, and provide financial insights and reports."}
+            </p>
+          </div>
+
+          <Link
+            href={`/dashboard/ai-assistant?agent=${selectedAgent.id}`}
+            className={cn(
+              "w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white font-medium transition",
+              `bg-gradient-to-r ${selectedAgent.color} hover:opacity-90`
+            )}
+          >
+            <Zap className="h-4 w-4" />
+            Start Conversation
+          </Link>
+        </DetailPanel>
+      )}
+
+      {/* Bottom Stats Bar */}
+      <div className="absolute bottom-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-2 backdrop-blur-xl bg-slate-900/70 border-t border-white/10">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2 text-xs text-white/50">
+            <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>{onlineIds.length} online</span>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-white/50">
+            <Calendar className="h-3 w-3" />
+            <span>3 meetings today</span>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-white/50">
+            <TrendingUp className="h-3 w-3" />
+            <span>Activity: High</span>
+          </div>
         </div>
-        <DpadButton icon={ChevronRight} onPress={(d) => pressVirtual("arrowright", d)} />
+        <div className="text-xs text-white/30">
+          Click on rooms or characters to interact
+        </div>
       </div>
-
-      <p className="text-center text-[11px] text-zinc-400 dark:text-zinc-500 sm:text-left">
-        Gerak pakai tombol panah/WASD (atau tombol arah di atas kalau di HP) -- dekati rekan kerja buat lihat tombol
-        &quot;Chat&quot;.
-      </p>
     </div>
   );
 }
 
-function DpadButton({ icon: Icon, onPress }: { icon: typeof ChevronUp; onPress: (down: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      onPointerDown={() => onPress(true)}
-      onPointerUp={() => onPress(false)}
-      onPointerLeave={() => onPress(false)}
-      className="grid h-11 w-11 place-items-center rounded-xl border border-zinc-200 bg-white text-zinc-600 shadow-sm active:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-    >
-      <Icon className="h-5 w-5" />
-    </button>
-  );
-}
-
 /* ------------------------------------------------------------------ */
-/* Scene 3D -- Corporate Modern Style dengan detail realistis         */
+/* UI Components                                                       */
 /* ------------------------------------------------------------------ */
 
-function GardenGround() {
-  const [x, , z] = toScene(WORLD_W / 2, WORLD_H / 2);
+function DetailPanel({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
-    <group>
-      {/* Main grass */}
-      <mesh position={[x, -1, z]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[WORLD_W + OUTDOOR_MARGIN * 2, WORLD_H + OUTDOOR_MARGIN * 2]} />
-        <meshStandardMaterial color="#22c55e" side={THREE.DoubleSide} />
-      </mesh>
-      {/* Pathway/sidewalk around building */}
-      <mesh position={[x, -0.5, z]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[WORLD_W + 40, WORLD_H + 40]} />
-        <meshStandardMaterial color="#d1d5db" side={THREE.DoubleSide} />
-      </mesh>
-    </group>
+    <div className="absolute top-14 right-0 bottom-0 w-80 z-30 backdrop-blur-xl bg-slate-900/90 border-l border-white/10 p-4 overflow-y-auto">
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 p-1 rounded-lg hover:bg-white/10 transition"
+      >
+        <X className="h-4 w-4 text-white/50" />
+      </button>
+      {children}
+    </div>
   );
 }
 
-function BuildingFloor() {
-  const [x, , z] = toScene(WORLD_W / 2, WORLD_H / 2);
-  return (
-    <group>
-      {/* Main floor - polished concrete look */}
-      <mesh position={[x, 0, z]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[WORLD_W, WORLD_H]} />
-        <meshStandardMaterial color="#f8fafc" side={THREE.DoubleSide} metalness={0.1} roughness={0.8} />
-      </mesh>
-      {/* Corridor stripe */}
-      <mesh position={[x, 0.2, z]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[40, WORLD_H]} />
-        <meshStandardMaterial color="#e2e8f0" side={THREE.DoubleSide} />
-      </mesh>
-      <mesh position={[x, 0.2, z]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[WORLD_W, 40]} />
-        <meshStandardMaterial color="#e2e8f0" side={THREE.DoubleSide} />
-      </mesh>
-    </group>
-  );
-}
-
-function RoomFloor({ room }: { room: OfficeRoom }) {
-  const [x, , z] = toScene(room.rect.x + room.rect.w / 2, room.rect.y + room.rect.h / 2);
-  const { color, opacity } = hex8ToRgbAlpha(room.floorColor);
-  return (
-    <group>
-      {/* Carpet/floor */}
-      <mesh position={[x, 0.5, z]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[room.rect.w - 8, room.rect.h - 8]} />
-        <meshStandardMaterial color={color} transparent opacity={Math.max(opacity, 0.6)} side={THREE.DoubleSide} />
-      </mesh>
-      {/* Glass partition walls (low) */}
-      <mesh position={[x - room.rect.w / 2 + 2, 25, z]}>
-        <boxGeometry args={[4, 50, room.rect.h]} />
-        <meshStandardMaterial color="#94a3b8" transparent opacity={0.3} metalness={0.9} roughness={0.1} />
-      </mesh>
-      <mesh position={[x, 25, z - room.rect.h / 2 + 2]}>
-        <boxGeometry args={[room.rect.w, 50, 4]} />
-        <meshStandardMaterial color="#94a3b8" transparent opacity={0.3} metalness={0.9} roughness={0.1} />
-      </mesh>
-      {/* Accent strip on floor */}
-      <mesh position={[x - room.rect.w / 2 + 6, 0.8, z]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[4, room.rect.h - 16]} />
-        <meshStandardMaterial color={room.accentColor} />
-      </mesh>
-    </group>
-  );
-}
-
-function Desk({ rect }: { rect: Rect }) {
-  const [x, , z] = toScene(rect.x + rect.w / 2, rect.y + rect.h / 2);
-  return (
-    <group>
-      {/* Modern white desk top */}
-      <mesh position={[x, 28, z]}>
-        <boxGeometry args={[rect.w, 4, rect.h]} />
-        <meshStandardMaterial color="#ffffff" metalness={0.1} roughness={0.3} />
-      </mesh>
-      {/* Metal legs */}
-      <mesh position={[x - rect.w / 2 + 6, 14, z - rect.h / 2 + 6]}>
-        <boxGeometry args={[4, 28, 4]} />
-        <meshStandardMaterial color="#71717a" metalness={0.8} roughness={0.2} />
-      </mesh>
-      <mesh position={[x + rect.w / 2 - 6, 14, z - rect.h / 2 + 6]}>
-        <boxGeometry args={[4, 28, 4]} />
-        <meshStandardMaterial color="#71717a" metalness={0.8} roughness={0.2} />
-      </mesh>
-      <mesh position={[x - rect.w / 2 + 6, 14, z + rect.h / 2 - 6]}>
-        <boxGeometry args={[4, 28, 4]} />
-        <meshStandardMaterial color="#71717a" metalness={0.8} roughness={0.2} />
-      </mesh>
-      <mesh position={[x + rect.w / 2 - 6, 14, z + rect.h / 2 - 6]}>
-        <boxGeometry args={[4, 28, 4]} />
-        <meshStandardMaterial color="#71717a" metalness={0.8} roughness={0.2} />
-      </mesh>
-    </group>
-  );
-}
-
-function PropMesh({ prop }: { prop: Prop }) {
-  const [x, , z] = toScene(prop.x, prop.y);
-  switch (prop.type) {
-    case "tree":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 20, 0]}>
-            <cylinderGeometry args={[4, 5, 40, 8]} />
-            <meshStandardMaterial color="#78350f" />
-          </mesh>
-          <mesh position={[0, 58, 0]}>
-            <coneGeometry args={[28, 60, 8]} />
-            <meshStandardMaterial color="#15803d" />
-          </mesh>
-        </group>
-      );
-    case "bush":
-      return (
-        <mesh position={[x, 10, z]}>
-          <sphereGeometry args={[14, 8, 8]} />
-          <meshStandardMaterial color="#16a34a" />
-        </mesh>
-      );
-    case "chair":
-    case "meetingChair":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 10, 0]}>
-            <boxGeometry args={[16, 4, 16]} />
-            <meshStandardMaterial color="#334155" />
-          </mesh>
-          <mesh position={[0, 20, -7]}>
-            <boxGeometry args={[16, 20, 3]} />
-            <meshStandardMaterial color="#334155" />
-          </mesh>
-        </group>
-      );
-
-    case "computer":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 22, 0]}>
-            <boxGeometry args={[16, 12, 2]} />
-            <meshStandardMaterial color="#0f172a" />
-          </mesh>
-          <mesh position={[0, 15, 4]}>
-            <boxGeometry args={[10, 2, 8]} />
-            <meshStandardMaterial color="#475569" />
-          </mesh>
-        </group>
-      );
-    case "fridge":
-      return (
-        <mesh position={[x, 30, z]}>
-          <boxGeometry args={[26, 60, 24]} />
-          <meshStandardMaterial color="#e2e8f0" />
-        </mesh>
-      );
-    case "dispenser":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 20, 0]}>
-            <cylinderGeometry args={[8, 10, 40, 12]} />
-            <meshStandardMaterial color="#38bdf8" />
-          </mesh>
-          <mesh position={[0, 44, 0]}>
-            <cylinderGeometry args={[7, 7, 8, 12]} />
-            <meshStandardMaterial color="#0ea5e9" />
-          </mesh>
-        </group>
-      );
-    case "cabinet":
-      return (
-        <mesh position={[x, 35, z]}>
-          <boxGeometry args={[40, 70, 24]} />
-          <meshStandardMaterial color="#92400e" />
-        </mesh>
-      );
-
-    // -- Dekorasi khas per ruangan (permintaan Owner setelah lihat
-    // referensi video game RPG top-down: tiap ruangan lebih "niat" &
-    // punya identitas beda-beda, tetap primitif geometri saja). --
-    case "crate":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 10, 0]}>
-            <boxGeometry args={[22, 20, 22]} />
-            <meshStandardMaterial color="#a16207" />
-          </mesh>
-          <mesh position={[9, 28, 5]}>
-            <boxGeometry args={[18, 16, 18]} />
-            <meshStandardMaterial color="#ca8a04" />
-          </mesh>
-        </group>
-      );
-    case "rack":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 35, 0]}>
-            <boxGeometry args={[40, 70, 16]} />
-            <meshStandardMaterial color="#57534e" />
-          </mesh>
-          <mesh position={[-10, 20, 7]}>
-            <boxGeometry args={[10, 10, 6]} />
-            <meshStandardMaterial color="#0ea5e9" />
-          </mesh>
-          <mesh position={[8, 50, 7]}>
-            <boxGeometry args={[12, 8, 6]} />
-            <meshStandardMaterial color="#f59e0b" />
-          </mesh>
-        </group>
-      );
-    case "moodboard":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 40, 0]}>
-            <boxGeometry args={[36, 26, 2]} />
-            <meshStandardMaterial color="#fbcfe8" />
-          </mesh>
-          <mesh position={[-10, 44, 1.5]}>
-            <boxGeometry args={[8, 6, 1]} />
-            <meshStandardMaterial color="#f9a8d4" />
-          </mesh>
-          <mesh position={[10, 36, 1.5]}>
-            <boxGeometry args={[8, 6, 1]} />
-            <meshStandardMaterial color="#c026d3" />
-          </mesh>
-        </group>
-      );
-    case "ringlight":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 25, 0]}>
-            <cylinderGeometry args={[2, 2, 50, 8]} />
-            <meshStandardMaterial color="#1f2937" />
-          </mesh>
-          <mesh position={[0, 55, 0]} rotation={[Math.PI / 2, 0, 0]}>
-            <torusGeometry args={[14, 3, 8, 20]} />
-            <meshStandardMaterial color="#fde68a" emissive="#fde68a" emissiveIntensity={0.4} />
-          </mesh>
-        </group>
-      );
-    case "ladder":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[-6, 25, 0]} rotation={[0, 0, 0.15]}>
-            <boxGeometry args={[3, 50, 3]} />
-            <meshStandardMaterial color="#78350f" />
-          </mesh>
-          <mesh position={[6, 25, 0]} rotation={[0, 0, -0.15]}>
-            <boxGeometry args={[3, 50, 3]} />
-            <meshStandardMaterial color="#78350f" />
-          </mesh>
-          <mesh position={[0, 16, 0]}>
-            <boxGeometry args={[16, 3, 3]} />
-            <meshStandardMaterial color="#92400e" />
-          </mesh>
-          <mesh position={[0, 32, 0]}>
-            <boxGeometry args={[13, 3, 3]} />
-            <meshStandardMaterial color="#92400e" />
-          </mesh>
-        </group>
-      );
-    case "planks":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 6, 0]}>
-            <boxGeometry args={[50, 6, 14]} />
-            <meshStandardMaterial color="#b45309" />
-          </mesh>
-          <mesh position={[2, 14, 0]}>
-            <boxGeometry args={[46, 6, 12]} />
-            <meshStandardMaterial color="#a16207" />
-          </mesh>
-          <mesh position={[-2, 22, 0]}>
-            <boxGeometry args={[44, 6, 12]} />
-            <meshStandardMaterial color="#92400e" />
-          </mesh>
-        </group>
-      );
-    case "tv":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 45, 0]}>
-            <boxGeometry args={[46, 28, 3]} />
-            <meshStandardMaterial color="#0f172a" />
-          </mesh>
-          <mesh position={[0, 45, 1.8]}>
-            <boxGeometry args={[40, 22, 1]} />
-            <meshStandardMaterial color="#38bdf8" emissive="#38bdf8" emissiveIntensity={0.3} />
-          </mesh>
-          <mesh position={[0, 26, 0]}>
-            <boxGeometry args={[6, 20, 6]} />
-            <meshStandardMaterial color="#1f2937" />
-          </mesh>
-        </group>
-      );
-    case "whiteboard":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 42, 0]}>
-            <boxGeometry args={[50, 32, 2]} />
-            <meshStandardMaterial color="#f8fafc" />
-          </mesh>
-          <mesh position={[-20, 14, 0]}>
-            <cylinderGeometry args={[1.5, 1.5, 28, 6]} />
-            <meshStandardMaterial color="#94a3b8" />
-          </mesh>
-          <mesh position={[20, 14, 0]}>
-            <cylinderGeometry args={[1.5, 1.5, 28, 6]} />
-            <meshStandardMaterial color="#94a3b8" />
-          </mesh>
-        </group>
-      );
-    case "stool":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 22, 0]}>
-            <cylinderGeometry args={[9, 9, 4, 12]} />
-            <meshStandardMaterial color="#ea580c" />
-          </mesh>
-          <mesh position={[0, 10, 0]}>
-            <cylinderGeometry args={[2, 2, 20, 8]} />
-            <meshStandardMaterial color="#78350f" />
-          </mesh>
-        </group>
-      );
-    case "microwave":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 15, 0]}>
-            <boxGeometry args={[26, 18, 20]} />
-            <meshStandardMaterial color="#e2e8f0" />
-          </mesh>
-          <mesh position={[0, 15, 10.5]}>
-            <boxGeometry args={[18, 12, 1]} />
-            <meshStandardMaterial color="#1e293b" />
-          </mesh>
-        </group>
-      );
-    case "bookshelf":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 45, 0]}>
-            <boxGeometry args={[44, 90, 18]} />
-            <meshStandardMaterial color="#7c2d12" />
-          </mesh>
-          <mesh position={[-10, 20, 10]}>
-            <boxGeometry args={[5, 16, 3]} />
-            <meshStandardMaterial color="#f59e0b" />
-          </mesh>
-          <mesh position={[-4, 45, 10]}>
-            <boxGeometry args={[5, 16, 3]} />
-            <meshStandardMaterial color="#0ea5e9" />
-          </mesh>
-          <mesh position={[2, 70, 10]}>
-            <boxGeometry args={[5, 16, 3]} />
-            <meshStandardMaterial color="#dc2626" />
-          </mesh>
-        </group>
-      );
-    case "sofa":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 12, 0]}>
-            <boxGeometry args={[46, 16, 20]} />
-            <meshStandardMaterial color="#6d28d9" />
-          </mesh>
-          <mesh position={[0, 26, -8]}>
-            <boxGeometry args={[46, 22, 4]} />
-            <meshStandardMaterial color="#6d28d9" />
-          </mesh>
-          <mesh position={[-21, 20, 0]}>
-            <boxGeometry args={[4, 20, 20]} />
-            <meshStandardMaterial color="#5b21b6" />
-          </mesh>
-          <mesh position={[21, 20, 0]}>
-            <boxGeometry args={[4, 20, 20]} />
-            <meshStandardMaterial color="#5b21b6" />
-          </mesh>
-        </group>
-      );
-    case "bench":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 18, 0]}>
-            <boxGeometry args={[50, 4, 16]} />
-            <meshStandardMaterial color="#92400e" />
-          </mesh>
-          <mesh position={[0, 32, -7]}>
-            <boxGeometry args={[50, 20, 3]} />
-            <meshStandardMaterial color="#92400e" />
-          </mesh>
-          <mesh position={[-20, 9, 0]}>
-            <boxGeometry args={[4, 18, 16]} />
-            <meshStandardMaterial color="#3f3f46" />
-          </mesh>
-          <mesh position={[20, 9, 0]}>
-            <boxGeometry args={[4, 18, 16]} />
-            <meshStandardMaterial color="#3f3f46" />
-          </mesh>
-        </group>
-      );
-    case "lamppost":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 45, 0]}>
-            <cylinderGeometry args={[2, 2.5, 90, 8]} />
-            <meshStandardMaterial color="#27272a" />
-          </mesh>
-          <mesh position={[0, 92, 0]}>
-            <sphereGeometry args={[9, 12, 12]} />
-            <meshStandardMaterial color="#fef08a" emissive="#fde047" emissiveIntensity={0.7} />
-          </mesh>
-        </group>
-      );
-    case "pottedplant":
-      return (
-        <group position={[x, 0, z]}>
-          <mesh position={[0, 8, 0]}>
-            <cylinderGeometry args={[9, 7, 16, 10]} />
-            <meshStandardMaterial color="#b45309" />
-          </mesh>
-          <mesh position={[0, 24, 0]}>
-            <sphereGeometry args={[13, 10, 10]} />
-            <meshStandardMaterial color="#22c55e" />
-          </mesh>
-        </group>
-      );
-    default:
-      return null;
-  }
-}
-
-/** AI Agent NPC — robot-style avatar with wandering behavior */
-function AgentNPC({ agent, x, y, onClick }: { agent: AIAgent; x: number; y: number; onClick: () => void }) {
-  const mainGroupRef = useRef<THREE.Group | null>(null);
-  const bodyRef = useRef<THREE.Group | null>(null);
-  const [hovered, setHovered] = useState(false);
-
-  // Wandering state
-  const homePos = useRef({ x, y });
-  const currentPos = useRef({ x, y });
-  const targetPos = useRef({ x, y });
-  const isWalking = useRef(false);
-  // Jeda awal acak diisi di effect saat mount -- Math.random() tidak boleh
-  // dipanggil saat render (React Compiler: impure function).
-  const waitTimer = useRef(0);
-  const walkTime = useRef(0);
-  useEffect(() => {
-    waitTimer.current = Math.random() * 3;
-  }, []);
-
-  const WANDER_RADIUS = 60; // How far from home they can wander
-  const WALK_SPEED = 35; // Pixels per second
-  const WAIT_MIN = 2; // Min seconds to wait
-  const WAIT_MAX = 5; // Max seconds to wait
-
-  // Pick a new random target within wander radius
-  const pickNewTarget = () => {
-    const angle = Math.random() * Math.PI * 2;
-    const dist = Math.random() * WANDER_RADIUS;
-    targetPos.current = {
-      x: homePos.current.x + Math.cos(angle) * dist,
-      y: homePos.current.y + Math.sin(angle) * dist,
-    };
+function StatCard({ icon: Icon, label, value, color }: { icon: typeof Users; label: string; value: number; color: string }) {
+  const colors: Record<string, string> = {
+    cyan: "text-cyan-400",
+    amber: "text-amber-400",
+    red: "text-red-400",
+    emerald: "text-emerald-400",
   };
+  return (
+    <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
+      <Icon className={cn("h-4 w-4 mx-auto mb-1", colors[color])} />
+      <p className="text-lg font-bold text-white">{value}</p>
+      <p className="text-[10px] text-white/50">{label}</p>
+    </div>
+  );
+}
 
-  useFrame((_, delta) => {
-    const mainGroup = mainGroupRef.current;
-    const body = bodyRef.current;
-    if (!mainGroup || !body) return;
+/* ------------------------------------------------------------------ */
+/* 3D Scene - Isometric View                                          */
+/* ------------------------------------------------------------------ */
 
-    const dt = Math.min(delta, 0.05);
+function IsometricScene({
+  roomsData,
+  roster,
+  onlineIds,
+  currentUser,
+  cameraTarget,
+  onRoomClick,
+  onPersonClick,
+  onAgentClick,
+  selectedRoom,
+}: {
+  roomsData: RoomData[];
+  roster: OfficeRosterEntry[];
+  onlineIds: string[];
+  currentUser: { id: string; fullName: string; division: Division };
+  cameraTarget: { x: number; y: number; zoom: number };
+  onRoomClick: (room: OfficeRoom) => void;
+  onPersonClick: (person: OfficeRosterEntry) => void;
+  onAgentClick: (agent: AIAgent) => void;
+  selectedRoom: OfficeRoom | null;
+}) {
+  const targetRef = useRef(new THREE.Vector3());
 
-    if (isWalking.current) {
-      // Move toward target
-      const dx = targetPos.current.x - currentPos.current.x;
-      const dy = targetPos.current.y - currentPos.current.y;
-      const dist = Math.hypot(dx, dy);
+  // Smooth camera movement -- kamera diambil dari argumen useFrame (bukan
+  // nilai kembalian useThree) supaya boleh dimutasi (aturan React Compiler).
+  useFrame(({ camera }) => {
+    const targetX = cameraTarget.x - WORLD_W / 2;
+    const targetZ = cameraTarget.y - WORLD_H / 2;
+    targetRef.current.set(targetX, 0, targetZ);
 
-      if (dist < 3) {
-        // Reached target, start waiting
-        isWalking.current = false;
-        waitTimer.current = WAIT_MIN + Math.random() * (WAIT_MAX - WAIT_MIN);
-      } else {
-        // Move toward target
-        const moveSpeed = WALK_SPEED * dt;
-        currentPos.current.x += (dx / dist) * moveSpeed;
-        currentPos.current.y += (dy / dist) * moveSpeed;
+    // Smooth interpolation
+    camera.position.lerp(
+      new THREE.Vector3(
+        targetX + 400 * cameraTarget.zoom,
+        500 * cameraTarget.zoom,
+        targetZ + 400 * cameraTarget.zoom
+      ),
+      0.05
+    );
+    camera.lookAt(targetRef.current);
 
-        // Face movement direction
-        body.rotation.y = Math.atan2(dx, dy);
-
-        // Walking animation (bobbing)
-        walkTime.current += dt * 8;
-      }
-    } else {
-      // Waiting/idle
-      waitTimer.current -= dt;
-      if (waitTimer.current <= 0) {
-        pickNewTarget();
-        isWalking.current = true;
-        walkTime.current = 0;
-      }
-
-      // Idle animation - slow look around
-      body.rotation.y += dt * 0.3;
+    if (camera instanceof THREE.OrthographicCamera) {
+      const targetZoom = 0.5 / cameraTarget.zoom;
+      camera.zoom = THREE.MathUtils.lerp(camera.zoom, targetZoom, 0.05);
+      camera.updateProjectionMatrix();
     }
-
-    // Update position
-    const [sx, , sz] = toScene(currentPos.current.x, currentPos.current.y);
-    mainGroup.position.x = sx;
-    mainGroup.position.z = sz;
-
-    // Bobbing animation when walking
-    const bobHeight = isWalking.current ? Math.sin(walkTime.current) * 3 : 0;
-    body.position.y = bobHeight;
   });
 
-  const gradientColors: Record<string, string> = {
+  return (
+    <>
+      {/* Lighting */}
+      <ambientLight intensity={0.5} />
+      <directionalLight position={[300, 500, 300]} intensity={0.8} color="#fff5eb" />
+      <directionalLight position={[-200, 300, -200]} intensity={0.3} color="#e0f2fe" />
+      <hemisphereLight args={["#bfdbfe", "#86efac", 0.4]} />
+
+      {/* Ground */}
+      <Ground />
+
+      {/* Building Base */}
+      <BuildingBase />
+
+      {/* Rooms */}
+      {roomsData.map(({ room, occupants, notifications }) => (
+        <Room
+          key={room.id}
+          room={room}
+          occupants={occupants}
+          notifications={notifications}
+          isSelected={selectedRoom?.id === room.id}
+          onClick={() => onRoomClick(room)}
+        />
+      ))}
+
+      {/* Characters */}
+      {roster.slice(0, 15).map((person, i) => (
+        <Character
+          key={person.id}
+          person={person}
+          position={getCharacterPosition(person, i)}
+          isOnline={onlineIds.includes(person.id)}
+          isSelf={person.id === currentUser.id}
+          onClick={() => onPersonClick(person)}
+        />
+      ))}
+
+      {/* AI Agents */}
+      {AGENT_NPC_POSITIONS.map(pos => {
+        const agent = getAgentById(pos.agentId);
+        if (!agent) return null;
+        return (
+          <AgentNPC
+            key={agent.id}
+            agent={agent}
+            x={pos.x}
+            y={pos.y}
+            onClick={() => onAgentClick(agent)}
+          />
+        );
+      })}
+
+      {/* Camera */}
+      <OrthographicCamera makeDefault position={[400, 500, 400]} zoom={0.5} />
+    </>
+  );
+}
+
+function Ground() {
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2, 0]}>
+      <planeGeometry args={[WORLD_W + 200, WORLD_H + 200]} />
+      <meshStandardMaterial color="#1e293b" />
+    </mesh>
+  );
+}
+
+function BuildingBase() {
+  return (
+    <group>
+      {/* Main floor */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
+        <planeGeometry args={[WORLD_W, WORLD_H]} />
+        <meshStandardMaterial color="#334155" metalness={0.2} roughness={0.8} />
+      </mesh>
+      {/* Floor pattern - corridors */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.5, 0]}>
+        <planeGeometry args={[50, WORLD_H]} />
+        <meshStandardMaterial color="#475569" />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.5, 0]}>
+        <planeGeometry args={[WORLD_W, 50]} />
+        <meshStandardMaterial color="#475569" />
+      </mesh>
+    </group>
+  );
+}
+
+function Room({
+  room,
+  notifications,
+  isSelected,
+  onClick,
+}: {
+  room: OfficeRoom;
+  occupants: OfficeRosterEntry[];
+  notifications: number;
+  isSelected: boolean;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const x = room.rect.x + room.rect.w / 2 - WORLD_W / 2;
+  const z = room.rect.y + room.rect.h / 2 - WORLD_H / 2;
+
+  return (
+    <group
+      position={[x, 0, z]}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      onPointerOver={() => setHovered(true)}
+      onPointerOut={() => setHovered(false)}
+    >
+      {/* Floor */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1, 0]}>
+        <planeGeometry args={[room.rect.w - 10, room.rect.h - 10]} />
+        <meshStandardMaterial
+          color={room.accentColor}
+          transparent
+          opacity={isSelected ? 0.4 : hovered ? 0.25 : 0.15}
+        />
+      </mesh>
+
+      {/* Walls - Glass partitions */}
+      <GlassWall position={[-room.rect.w / 2 + 3, 20, 0]} size={[3, 40, room.rect.h - 10]} color={room.accentColor} />
+      <GlassWall position={[0, 20, -room.rect.h / 2 + 3]} size={[room.rect.w - 10, 40, 3]} color={room.accentColor} />
+
+      {/* Desk */}
+      <ModernDesk position={[0, 0, 0]} width={room.rect.w * 0.4} />
+
+      {/* Notification indicator */}
+      {notifications > 0 && (
+        <group position={[room.rect.w / 2 - 20, 60, -room.rect.h / 2 + 20]}>
+          <mesh>
+            <sphereGeometry args={[8, 16, 16]} />
+            <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.5} />
+          </mesh>
+          <Text
+            position={[0, 0, 9]}
+            fontSize={8}
+            color="white"
+            anchorX="center"
+            anchorY="middle"
+          >
+            {notifications}
+          </Text>
+        </group>
+      )}
+
+      {/* Room label */}
+      <Text
+        position={[0, 2, room.rect.h / 2 - 15]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={12}
+        color={room.accentColor}
+        anchorX="center"
+        anchorY="middle"
+      >
+        {room.label}
+      </Text>
+    </group>
+  );
+}
+
+function GlassWall({ position, size, color }: { position: [number, number, number]; size: [number, number, number]; color: string }) {
+  return (
+    <mesh position={position}>
+      <boxGeometry args={size} />
+      <meshStandardMaterial color={color} transparent opacity={0.15} metalness={0.9} roughness={0.1} />
+    </mesh>
+  );
+}
+
+function ModernDesk({ position, width }: { position: [number, number, number]; width: number }) {
+  return (
+    <group position={position}>
+      {/* Desk top */}
+      <mesh position={[0, 28, 0]}>
+        <boxGeometry args={[width, 3, width * 0.4]} />
+        <meshStandardMaterial color="#f8fafc" metalness={0.1} roughness={0.3} />
+      </mesh>
+      {/* Legs */}
+      {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([lx, lz], i) => (
+        <mesh key={i} position={[lx * (width / 2 - 5), 14, lz * (width * 0.15)]}>
+          <boxGeometry args={[3, 28, 3]} />
+          <meshStandardMaterial color="#64748b" metalness={0.7} roughness={0.3} />
+        </mesh>
+      ))}
+      {/* Monitor */}
+      <mesh position={[0, 40, -width * 0.1]}>
+        <boxGeometry args={[width * 0.3, 20, 2]} />
+        <meshStandardMaterial color="#1e293b" />
+      </mesh>
+      <mesh position={[0, 40, -width * 0.1 + 1.5]}>
+        <boxGeometry args={[width * 0.28, 18, 0.5]} />
+        <meshStandardMaterial color="#38bdf8" emissive="#38bdf8" emissiveIntensity={0.3} />
+      </mesh>
+    </group>
+  );
+}
+
+function Character({
+  person,
+  position,
+  isOnline,
+  isSelf,
+  onClick,
+}: {
+  person: OfficeRosterEntry;
+  position: [number, number, number];
+  isOnline: boolean;
+  isSelf: boolean;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const groupRef = useRef<THREE.Group>(null);
+
+  // Subtle idle animation
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.position.y = position[1] + Math.sin(state.clock.elapsedTime * 2 + position[0]) * 1;
+    }
+  });
+
+  const color = DIVISION_COLORS[person.division];
+
+  return (
+    <group
+      ref={groupRef}
+      position={position}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      onPointerOver={() => setHovered(true)}
+      onPointerOut={() => setHovered(false)}
+    >
+      {/* Shadow */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.5, 0]}>
+        <circleGeometry args={[8, 16]} />
+        <meshStandardMaterial color="#000" transparent opacity={0.3} />
+      </mesh>
+
+      {/* Body - Chibi style */}
+      <mesh position={[0, 10, 0]}>
+        <capsuleGeometry args={[6, 8, 8, 12]} />
+        <meshStandardMaterial color={color} />
+      </mesh>
+
+      {/* Head - Big chibi head */}
+      <mesh position={[0, 26, 0]}>
+        <sphereGeometry args={[10, 20, 20]} />
+        <meshStandardMaterial color="#fef3c7" />
+      </mesh>
+
+      {/* Hair */}
+      <mesh position={[0, 30, -2]}>
+        <sphereGeometry args={[9, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshStandardMaterial color={color} />
+      </mesh>
+
+      {/* Eyes */}
+      <mesh position={[-3.5, 26, 8]}>
+        <sphereGeometry args={[1.8, 8, 8]} />
+        <meshStandardMaterial color="#1f2937" />
+      </mesh>
+      <mesh position={[3.5, 26, 8]}>
+        <sphereGeometry args={[1.8, 8, 8]} />
+        <meshStandardMaterial color="#1f2937" />
+      </mesh>
+
+      {/* Status indicator */}
+      <mesh position={[8, 34, 0]}>
+        <sphereGeometry args={[3, 12, 12]} />
+        <meshStandardMaterial
+          color={isOnline ? "#22c55e" : "#94a3b8"}
+          emissive={isOnline ? "#22c55e" : "#94a3b8"}
+          emissiveIntensity={isOnline ? 0.5 : 0.1}
+        />
+      </mesh>
+
+      {/* Self indicator ring */}
+      {isSelf && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1, 0]}>
+          <ringGeometry args={[10, 12, 24]} />
+          <meshStandardMaterial color="#7c3aed" emissive="#7c3aed" emissiveIntensity={0.5} />
+        </mesh>
+      )}
+
+      {/* Name on hover */}
+      {hovered && (
+        <Text
+          position={[0, 45, 0]}
+          fontSize={8}
+          color="white"
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.5}
+          outlineColor="#000"
+        >
+          {person.fullName}
+        </Text>
+      )}
+    </group>
+  );
+}
+
+function AgentNPC({
+  agent,
+  x,
+  y,
+  onClick,
+}: {
+  agent: AIAgent;
+  x: number;
+  y: number;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const groupRef = useRef<THREE.Group>(null);
+  const sx = x - WORLD_W / 2;
+  const sz = y - WORLD_H / 2;
+
+  const colors: Record<string, string> = {
     nova: "#8b5cf6",
     reno: "#10b981",
     crea: "#ec4899",
     fabr: "#f59e0b",
     finn: "#0ea5e9",
   };
-  const color = gradientColors[agent.id] ?? "#8b5cf6";
+  const color = colors[agent.id] ?? "#8b5cf6";
 
-  const [sx, , sz] = toScene(x, y);
+  // Floating animation
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.position.y = Math.sin(state.clock.elapsedTime * 1.5) * 3;
+      groupRef.current.rotation.y = state.clock.elapsedTime * 0.3;
+    }
+  });
 
   return (
     <group
-      ref={mainGroupRef}
       position={[sx, 0, sz]}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       onPointerOver={() => setHovered(true)}
       onPointerOut={() => setHovered(false)}
     >
-      {/* Shadow with glow */}
-      <mesh position={[0, 0.5, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[12, 24]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 0.8 : 0.4} transparent opacity={0.3} />
+      {/* Glow ring */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1, 0]}>
+        <ringGeometry args={[12, 16, 24]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={hovered ? 0.8 : 0.4}
+          transparent
+          opacity={0.6}
+        />
       </mesh>
 
-      {/* Chibi Robot body */}
-      <group ref={bodyRef}>
-        {/* Small body */}
-        <mesh position={[0, 12, 0]}>
-          <capsuleGeometry args={[8, 8, 8, 12]} />
-          <meshStandardMaterial color={color} metalness={0.3} roughness={0.4} />
+      {/* Robot body */}
+      <group ref={groupRef}>
+        {/* Body */}
+        <mesh position={[0, 14, 0]}>
+          <capsuleGeometry args={[7, 6, 8, 12]} />
+          <meshStandardMaterial color={color} metalness={0.4} roughness={0.3} />
         </mesh>
 
-        {/* Arms */}
-        <mesh position={[-12, 14, 0]}>
-          <capsuleGeometry args={[3, 5, 4, 8]} />
-          <meshStandardMaterial color={color} metalness={0.3} roughness={0.4} />
-        </mesh>
-        <mesh position={[12, 14, 0]}>
-          <capsuleGeometry args={[3, 5, 4, 8]} />
-          <meshStandardMaterial color={color} metalness={0.3} roughness={0.4} />
-        </mesh>
-
-        {/* Big robot head */}
-        <mesh position={[0, 36, 0]}>
-          <boxGeometry args={[22, 18, 16]} />
+        {/* Head */}
+        <mesh position={[0, 30, 0]}>
+          <boxGeometry args={[16, 12, 12]} />
           <meshStandardMaterial color="#374151" metalness={0.5} roughness={0.3} />
         </mesh>
 
         {/* Face screen */}
-        <mesh position={[0, 36, 8.5]}>
-          <boxGeometry args={[18, 12, 1]} />
+        <mesh position={[0, 30, 6.5]}>
+          <boxGeometry args={[12, 8, 1]} />
           <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 0.8 : 0.4} />
         </mesh>
 
-        {/* Robot eyes on screen */}
-        <mesh position={[-5, 37, 9]}>
-          <boxGeometry args={[4, 4, 0.5]} />
-          <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.3} />
+        {/* Eyes */}
+        <mesh position={[-3, 31, 7]}>
+          <boxGeometry args={[3, 3, 0.5]} />
+          <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={0.3} />
         </mesh>
-        <mesh position={[5, 37, 9]}>
-          <boxGeometry args={[4, 4, 0.5]} />
-          <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.3} />
+        <mesh position={[3, 31, 7]}>
+          <boxGeometry args={[3, 3, 0.5]} />
+          <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={0.3} />
         </mesh>
 
         {/* Antenna */}
-        <mesh position={[0, 48, 0]}>
-          <cylinderGeometry args={[1.5, 1.5, 6, 8]} />
-          <meshStandardMaterial color="#71717a" metalness={0.6} roughness={0.3} />
+        <mesh position={[0, 38, 0]}>
+          <cylinderGeometry args={[1, 1, 4, 8]} />
+          <meshStandardMaterial color="#64748b" />
         </mesh>
-        <mesh position={[0, 52, 0]}>
-          <sphereGeometry args={[3, 12, 12]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 1.2 : 0.6} />
-        </mesh>
-
-        {/* Ear pieces */}
-        <mesh position={[-12, 36, 0]}>
-          <boxGeometry args={[3, 8, 8]} />
-          <meshStandardMaterial color="#52525b" metalness={0.5} roughness={0.3} />
-        </mesh>
-        <mesh position={[12, 36, 0]}>
-          <boxGeometry args={[3, 8, 8]} />
-          <meshStandardMaterial color="#52525b" metalness={0.5} roughness={0.3} />
+        <mesh position={[0, 41, 0]}>
+          <sphereGeometry args={[2.5, 12, 12]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 1 : 0.5} />
         </mesh>
       </group>
 
-      {/* Agent name label */}
-      <Billboard position={[0, 62, 0]}>
-        <Text
-          fontSize={9}
-          color="#ffffff"
-          outlineWidth={0.6}
-          outlineColor={color}
-          anchorX="center"
-          anchorY="middle"
-        >
-          {agent.icon} {agent.name}
-        </Text>
-      </Billboard>
+      {/* Label */}
+      <Text
+        position={[0, 52, 0]}
+        fontSize={8}
+        color="white"
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.5}
+        outlineColor={color}
+      >
+        {agent.icon} {agent.name}
+      </Text>
     </group>
   );
 }
 
-/** Chibi-style avatar - big head, small cute body */
-const AvatarMesh = forwardRef<THREE.Group, { color: string; label: string; isSelf: boolean }>(function AvatarMesh(
-  { color, label, isSelf },
-  ref
-) {
-  return (
-    <group ref={ref}>
-      {/* Shadow */}
-      <mesh position={[0, 0.5, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[10, 16]} />
-        <meshStandardMaterial color="#000000" transparent opacity={0.2} />
-      </mesh>
+// Helper function to position characters
+function getCharacterPosition(person: OfficeRosterEntry, index: number): [number, number, number] {
+  const room = ROOMS.find(r => r.division === person.division) || ROOMS[0];
+  const baseX = room.rect.x + room.rect.w / 2 - WORLD_W / 2;
+  const baseZ = room.rect.y + room.rect.h / 2 - WORLD_H / 2;
 
-      {/* Small chibi body */}
-      <mesh position={[0, 12, 0]}>
-        <capsuleGeometry args={[7, 10, 8, 12]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
+  const offsetX = ((index % 3) - 1) * 30;
+  const offsetZ = (Math.floor(index / 3) - 1) * 30;
 
-      {/* Arms */}
-      <mesh position={[-10, 14, 0]}>
-        <capsuleGeometry args={[3, 6, 4, 8]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      <mesh position={[10, 14, 0]}>
-        <capsuleGeometry args={[3, 6, 4, 8]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-
-      {/* Big chibi head */}
-      <mesh position={[0, 34, 0]}>
-        <sphereGeometry args={[14, 20, 20]} />
-        <meshStandardMaterial color="#fef3c7" />
-      </mesh>
-
-      {/* Hair */}
-      <mesh position={[0, 40, -2]}>
-        <sphereGeometry args={[13, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-
-      {/* Eyes */}
-      <mesh position={[-5, 34, 12]}>
-        <sphereGeometry args={[2.5, 8, 8]} />
-        <meshStandardMaterial color="#1f2937" />
-      </mesh>
-      <mesh position={[5, 34, 12]}>
-        <sphereGeometry args={[2.5, 8, 8]} />
-        <meshStandardMaterial color="#1f2937" />
-      </mesh>
-      {/* Eye highlights */}
-      <mesh position={[-4, 35, 14]}>
-        <sphereGeometry args={[1, 6, 6]} />
-        <meshStandardMaterial color="#ffffff" />
-      </mesh>
-      <mesh position={[6, 35, 14]}>
-        <sphereGeometry args={[1, 6, 6]} />
-        <meshStandardMaterial color="#ffffff" />
-      </mesh>
-
-      {/* Blush */}
-      <mesh position={[-9, 31, 10]}>
-        <circleGeometry args={[3, 12]} />
-        <meshStandardMaterial color="#fca5a5" transparent opacity={0.5} />
-      </mesh>
-      <mesh position={[9, 31, 10]}>
-        <circleGeometry args={[3, 12]} />
-        <meshStandardMaterial color="#fca5a5" transparent opacity={0.5} />
-      </mesh>
-
-      {/* Mouth */}
-      <mesh position={[0, 29, 13]}>
-        <boxGeometry args={[4, 1.5, 1]} />
-        <meshStandardMaterial color="#f87171" />
-      </mesh>
-
-      {/* Self indicator ring */}
-      {isSelf && (
-        <mesh position={[0, 1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[12, 14, 24]} />
-          <meshStandardMaterial color="#7c3aed" emissive="#7c3aed" emissiveIntensity={0.5} />
-        </mesh>
-      )}
-
-      <Billboard position={[0, 58, 0]}>
-        <Text
-          fontSize={9}
-          color="#ffffff"
-          outlineWidth={0.5}
-          outlineColor={isSelf ? "#7c3aed" : "#374151"}
-          anchorX="center"
-          anchorY="middle"
-        >
-          {label}
-        </Text>
-      </Billboard>
-    </group>
-  );
-});
-
-function SelfAvatar({
-  posRef,
-  dirRef,
-  currentUser,
-}: {
-  posRef: { current: Pos };
-  dirRef: { current: Dir };
-  currentUser: CurrentUser;
-}) {
-  const groupRef = useRef<THREE.Group | null>(null);
-  useFrame(() => {
-    const g = groupRef.current;
-    if (!g) return;
-    const [x, y, z] = toScene(posRef.current.x, posRef.current.y);
-    g.position.set(x, y, z);
-    g.rotation.y = dirToRadians(dirRef.current);
-  });
-  return (
-    <AvatarMesh
-      ref={groupRef}
-      color={DIVISION_COLORS[currentUser.division]}
-      label={`${currentUser.fullName} (Kamu)`}
-      isSelf
-    />
-  );
-}
-
-function RemoteAvatar({
-  id,
-  remoteRef,
-  entry,
-}: {
-  id: string;
-  remoteRef: { current: Map<string, RemotePos> };
-  entry: OfficeRosterEntry;
-}) {
-  const groupRef = useRef<THREE.Group | null>(null);
-  useFrame(() => {
-    const g = groupRef.current;
-    if (!g) return;
-    const rp = remoteRef.current.get(id);
-    const [x, y, z] = toScene(rp?.x ?? SPAWN.x, rp?.y ?? SPAWN.y);
-    g.position.set(x, y, z);
-    if (rp) g.rotation.y = dirToRadians(rp.dir);
-  });
-  return <AvatarMesh ref={groupRef} color={DIVISION_COLORS[entry.division]} label={entry.fullName} isSelf={false} />;
-}
-
-/** Komponen "tak kasat mata" (return null) yang isinya SATU-SATUNYA
- * `useFrame` untuk logika non-visual -- baca input keyboard, gerakkan
- * posRef lewat resolveMove, broadcast posisi (throttle), deteksi ruangan
- * & rekan terdekat (buat tombol Chat), dan gerakkan kamera "mengikuti"
- * avatar sendiri dengan offset tetap (BUKAN orbit bebas). Dipisah dari
- * SelfAvatar/RemoteAvatar supaya render posisi avatar tidak numpuk
- * dengan logika input/network di satu tempat. */
-function GameLoop({
-  keysRef,
-  posRef,
-  dirRef,
-  channelRef,
-  lastBroadcastRef,
-  lastRoomLabelRef,
-  lastNearbyIdRef,
-  remoteRef,
-  currentUser,
-  rosterById,
-  setRoomLabel,
-  setNearby,
-}: {
-  keysRef: { current: Set<string> };
-  posRef: { current: Pos };
-  dirRef: { current: Dir };
-  channelRef: { current: RealtimeChannel | null };
-  lastBroadcastRef: { current: number };
-  lastRoomLabelRef: { current: string };
-  lastNearbyIdRef: { current: string | null };
-  remoteRef: { current: Map<string, RemotePos> };
-  currentUser: CurrentUser;
-  rosterById: Map<string, OfficeRosterEntry>;
-  setRoomLabel: (label: string) => void;
-  setNearby: (entry: OfficeRosterEntry | null) => void;
-}) {
-  const { camera } = useThree();
-  const cameraReadyRef = useRef(false);
-
-  useFrame((_, delta) => {
-    const dt = Math.min(delta, 0.05);
-    const keys = keysRef.current;
-    let vx = 0;
-    let vy = 0;
-    if (keys.has("arrowup") || keys.has("w")) vy -= 1;
-    if (keys.has("arrowdown") || keys.has("s")) vy += 1;
-    if (keys.has("arrowleft") || keys.has("a")) vx -= 1;
-    if (keys.has("arrowright") || keys.has("d")) vx += 1;
-
-    if (vx !== 0 || vy !== 0) {
-      const len = Math.hypot(vx, vy) || 1;
-      const dx = (vx / len) * PLAYER_SPEED * dt;
-      const dy = (vy / len) * PLAYER_SPEED * dt;
-      posRef.current = resolveMove(posRef.current.x, posRef.current.y, dx, dy);
-      dirRef.current = Math.abs(vx) > Math.abs(vy) ? (vx > 0 ? "right" : "left") : vy > 0 ? "down" : "up";
-    }
-
-    const now = performance.now();
-    if (now - lastBroadcastRef.current > BROADCAST_INTERVAL_MS) {
-      lastBroadcastRef.current = now;
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "move",
-        payload: { id: currentUser.id, x: posRef.current.x, y: posRef.current.y, dir: dirRef.current },
-      });
-    }
-
-    const room = getRoomAt(posRef.current.x, posRef.current.y);
-    const label = room?.label ?? "Koridor";
-    if (label !== lastRoomLabelRef.current) {
-      lastRoomLabelRef.current = label;
-      setRoomLabel(label);
-    }
-
-    let closestId: string | null = null;
-    let closestDist = CHAT_PROXIMITY_PX;
-    for (const [id, rp] of remoteRef.current.entries()) {
-      const d = Math.hypot(rp.x - posRef.current.x, rp.y - posRef.current.y);
-      if (d < closestDist) {
-        closestDist = d;
-        closestId = id;
-      }
-    }
-    if (closestId !== lastNearbyIdRef.current) {
-      lastNearbyIdRef.current = closestId;
-      setNearby(closestId ? rosterById.get(closestId) ?? null : null);
-    }
-
-    const [sx, sy, sz] = toScene(posRef.current.x, posRef.current.y);
-    const targetX = sx + CAMERA_OFFSET.x;
-    const targetY = sy + CAMERA_OFFSET.y;
-    const targetZ = sz + CAMERA_OFFSET.z;
-    if (!cameraReadyRef.current) {
-      camera.position.set(targetX, targetY, targetZ);
-      cameraReadyRef.current = true;
-    } else {
-      camera.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.12);
-    }
-    camera.lookAt(sx, sy + 30, sz);
-  });
-
-  return null;
+  return [baseX + offsetX, 0, baseZ + offsetZ + 40];
 }

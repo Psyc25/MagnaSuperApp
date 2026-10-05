@@ -60,6 +60,11 @@ function classifyReply(text: string): "confirm" | "cancel" | null {
   return null;
 }
 
+// Check if AI is available (localhost won't work in production)
+const isLocalhost = NINEROUTER_URL.includes("localhost") || NINEROUTER_URL.includes("127.0.0.1");
+const isProduction = process.env.NODE_ENV === "production";
+const AI_AVAILABLE = !isProduction || !isLocalhost;
+
 export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: string }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -132,7 +137,10 @@ async function callAIWithTools(
     });
   } catch (err) {
     console.error("9Router fetch gagal:", err);
-    throw new Error("Asisten AI tidak merespons, coba lagi sebentar lagi.");
+    if ((err as { name?: string } | null)?.name === "TimeoutError") {
+      throw new Error("Asisten AI tidak merespons, coba lagi sebentar lagi.");
+    }
+    throw new Error("AI tidak tersedia. Pastikan 9Router berjalan di localhost:20128 atau gunakan AI API alternatif.");
   }
 
   if (!response.ok) {
@@ -177,6 +185,13 @@ export async function sendAIMessage(
    * dikompres di klien (maks 1024px, lihat utils/image.ts). */
   imageBase64?: string
 ): Promise<{ message: AIMessage; error?: string } | { message?: undefined; error: string }> {
+  // Check if AI is available
+  if (!AI_AVAILABLE) {
+    return {
+      error: "AI tidak tersedia di production. Untuk menggunakan AI, jalankan aplikasi di local dengan 9Router, atau konfigurasi AI_API_URL di environment variables."
+    };
+  }
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
