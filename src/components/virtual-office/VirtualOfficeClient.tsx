@@ -15,6 +15,7 @@ import type { Division } from "@/lib/supabase/types";
 import type { OfficeRosterEntry } from "@/lib/virtual-office/data";
 import type { OfficeRoom, Prop, Rect } from "@/lib/virtual-office/map";
 import {
+  AGENT_NPC_POSITIONS,
   DIVISION_COLORS,
   OBSTACLES,
   OUTDOOR_MARGIN,
@@ -28,6 +29,7 @@ import {
   getRoomAt,
   resolveMove,
 } from "@/lib/virtual-office/map";
+import { AI_AGENTS, getAgentById, type AIAgent } from "@/lib/ai/agents";
 
 /**
  * Tahap H+ -- "Kantor Virtual" versi 3D (permintaan Owner: "ubah bentuk
@@ -120,6 +122,8 @@ export function VirtualOfficeClient({
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
   const [roomLabel, setRoomLabel] = useState("Koridor");
   const [nearby, setNearby] = useState<OfficeRosterEntry | null>(null);
+  const [nearbyAgent, setNearbyAgent] = useState<AIAgent | null>(null);
+  const lastNearbyAgentIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     onlineIdsRef.current = onlineIds;
@@ -255,6 +259,21 @@ export function VirtualOfficeClient({
               return <RemoteAvatar key={id} id={id} remoteRef={remoteRef} entry={entry} />;
             })}
 
+          {/* AI Agent NPCs */}
+          {AGENT_NPC_POSITIONS.map((npcPos) => {
+            const agent = getAgentById(npcPos.agentId);
+            if (!agent) return null;
+            return (
+              <AgentNPC
+                key={npcPos.agentId}
+                agent={agent}
+                x={npcPos.x}
+                y={npcPos.y}
+                onClick={() => setNearbyAgent(agent)}
+              />
+            );
+          })}
+
           <GameLoop
             keysRef={keysRef}
             posRef={posRef}
@@ -282,6 +301,27 @@ export function VirtualOfficeClient({
               <MessageSquare className="h-3.5 w-3.5" />
               Chat dengan {nearby.fullName.split(" ")[0]}
             </Link>
+          </div>
+        )}
+
+        {nearbyAgent && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2">
+            <Link
+              href={`/dashboard/ai-assistant?agent=${nearbyAgent.id}`}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold text-white shadow-lg transition-transform hover:scale-105",
+                `bg-gradient-to-r ${nearbyAgent.color}`
+              )}
+            >
+              <span>{nearbyAgent.icon}</span>
+              Bicara dengan {nearbyAgent.name}
+            </Link>
+            <button
+              onClick={() => setNearbyAgent(null)}
+              className="grid h-8 w-8 place-items-center rounded-full bg-zinc-800 text-white hover:bg-zinc-700"
+            >
+              ✕
+            </button>
           </div>
         )}
       </div>
@@ -695,6 +735,85 @@ function PropMesh({ prop }: { prop: Prop }) {
     default:
       return null;
   }
+}
+
+/** AI Agent NPC — robot-style avatar with glow effect and agent colors */
+function AgentNPC({ agent, x, y, onClick }: { agent: AIAgent; x: number; y: number; onClick: () => void }) {
+  const groupRef = useRef<THREE.Group | null>(null);
+  const [hovered, setHovered] = useState(false);
+  const [sx, , sz] = toScene(x, y);
+
+  useFrame((_, delta) => {
+    const g = groupRef.current;
+    if (!g) return;
+    g.rotation.y += delta * 0.5;
+  });
+
+  const gradientColors: Record<string, string> = {
+    nova: "#8b5cf6",
+    reno: "#10b981",
+    crea: "#ec4899",
+    fabr: "#f59e0b",
+    finn: "#0ea5e9",
+  };
+  const color = gradientColors[agent.id] ?? "#8b5cf6";
+
+  return (
+    <group
+      position={[sx, 0, sz]}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      onPointerOver={() => setHovered(true)}
+      onPointerOut={() => setHovered(false)}
+    >
+      {/* Base platform with glow */}
+      <mesh position={[0, 2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[18, 24, 24]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 0.8 : 0.4} transparent opacity={0.7} />
+      </mesh>
+
+      {/* Robot body */}
+      <group ref={groupRef}>
+        {/* Torso */}
+        <mesh position={[0, 22, 0]}>
+          <boxGeometry args={[20, 24, 14]} />
+          <meshStandardMaterial color={color} metalness={0.4} roughness={0.3} />
+        </mesh>
+        {/* Head */}
+        <mesh position={[0, 42, 0]}>
+          <boxGeometry args={[16, 14, 12]} />
+          <meshStandardMaterial color="#1f2937" metalness={0.5} roughness={0.2} />
+        </mesh>
+        {/* Visor/Eyes */}
+        <mesh position={[0, 43, 6.5]}>
+          <boxGeometry args={[12, 5, 1]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 1.2 : 0.6} />
+        </mesh>
+        {/* Antenna */}
+        <mesh position={[0, 52, 0]}>
+          <cylinderGeometry args={[1.5, 1.5, 6, 8]} />
+          <meshStandardMaterial color="#374151" />
+        </mesh>
+        <mesh position={[0, 56, 0]}>
+          <sphereGeometry args={[3, 8, 8]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 1.5 : 0.8} />
+        </mesh>
+      </group>
+
+      {/* Agent name label */}
+      <Billboard position={[0, 68, 0]}>
+        <Text
+          fontSize={11}
+          color="#ffffff"
+          outlineWidth={0.8}
+          outlineColor={color}
+          anchorX="center"
+          anchorY="middle"
+        >
+          {agent.icon} {agent.name}
+        </Text>
+      </Billboard>
+    </group>
+  );
 }
 
 const AvatarMesh = forwardRef<THREE.Group, { color: string; label: string; isSelf: boolean }>(function AvatarMesh(

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { sendAIMessage, clearAIHistory, getAIMessages, type AIMessage } from "../actions";
-import { getDefaultAgent } from "../agents";
+import { getDefaultAgent, getAgentById, AI_AGENTS, type AIAgent } from "../agents";
 import { processImageForAI, isValidImageType, formatFileSize } from "../utils/image";
 import type { AIAttachment } from "../types";
 
@@ -11,6 +11,8 @@ export type UseAIChatOptions = {
   loadOnMount?: boolean;
   /** Initial messages (for SSR) */
   initialMessages?: AIMessage[];
+  /** Initial agent ID */
+  initialAgentId?: string;
 };
 
 export type UseAIChatReturn = {
@@ -22,6 +24,8 @@ export type UseAIChatReturn = {
   error: string | null;
   selectedImage: File | null;
   imagePreviewUrl: string | null;
+  selectedAgent: AIAgent;
+  agents: AIAgent[];
 
   // Actions
   setInput: (value: string) => void;
@@ -30,6 +34,7 @@ export type UseAIChatReturn = {
   loadMessages: () => Promise<void>;
   selectImage: (file: File | null) => void;
   removeImage: () => void;
+  selectAgent: (agent: AIAgent) => void;
 
   // Refs
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -38,9 +43,12 @@ export type UseAIChatReturn = {
 };
 
 export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
-  const { loadOnMount = false, initialMessages = [] } = options;
+  const { loadOnMount = false, initialMessages = [], initialAgentId } = options;
 
-  const agent = getDefaultAgent();
+  // Agent state
+  const [selectedAgent, setSelectedAgent] = useState<AIAgent>(
+    initialAgentId ? getAgentById(initialAgentId) ?? getDefaultAgent() : getDefaultAgent()
+  );
 
   // Message state
   const [messages, setMessages] = useState<AIMessage[]>(initialMessages);
@@ -97,7 +105,6 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
   }, [loaded]);
 
   const selectImage = useCallback((file: File | null) => {
-    // Cleanup previous preview
     if (imagePreviewUrl) {
       URL.revokeObjectURL(imagePreviewUrl);
       setImagePreviewUrl(null);
@@ -108,7 +115,6 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
       return;
     }
 
-    // Validate
     if (!isValidImageType(file)) {
       setError("Format gambar tidak didukung. Gunakan JPEG, PNG, atau WebP.");
       return;
@@ -134,6 +140,11 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
       fileInputRef.current.value = "";
     }
   }, [imagePreviewUrl]);
+
+  const selectAgent = useCallback((agent: AIAgent) => {
+    setSelectedAgent(agent);
+    setError(null);
+  }, []);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -169,6 +180,7 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
       role: "user",
       content: text || "(gambar)",
       createdAt: new Date().toISOString(),
+      agentId: selectedAgent.id,
       attachment,
     };
     setMessages((m) => [...m, optimisticMessage]);
@@ -176,8 +188,8 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
     // Clear image after adding to message
     removeImage();
 
-    // Send to AI
-    const res = await sendAIMessage(text, agent.id, imageBase64);
+    // Send to AI with selected agent
+    const res = await sendAIMessage(text, selectedAgent.id, imageBase64);
     setSending(false);
 
     if (res.error) {
@@ -188,10 +200,10 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
       setMessages((m) => [
         ...m.filter((msg) => msg.id !== tempId),
         { ...optimisticMessage, id: `u-${Date.now()}` },
-        res.message,
+        { ...res.message, agentId: selectedAgent.id },
       ]);
     }
-  }, [input, selectedImage, sending, agent.id, removeImage]);
+  }, [input, selectedImage, sending, selectedAgent, removeImage]);
 
   const clear = useCallback(async () => {
     await clearAIHistory();
@@ -208,12 +220,15 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
     error,
     selectedImage,
     imagePreviewUrl,
+    selectedAgent,
+    agents: AI_AGENTS,
     setInput,
     send,
     clear,
     loadMessages,
     selectImage,
     removeImage,
+    selectAgent,
     inputRef,
     endRef,
     fileInputRef,

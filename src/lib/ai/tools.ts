@@ -405,3 +405,33 @@ export const AI_TOOLS: ToolDefinition[] = [...QUERY_TOOLS, ...ACTION_TOOLS];
 export function isActionTool(toolName: string): boolean {
   return ACTION_TOOLS.some((t) => t.function.name === toolName);
 }
+
+/**
+ * Get tools filtered by agent specialty.
+ * NOVA (all) gets all tools, specialized agents get filtered sets.
+ */
+export function getToolsForAgent(agentId: string): ToolDefinition[] {
+  // Tool mappings per specialty
+  const MAGNARENT_TOOLS = ["search_global", "get_bookings", "get_inventory", "check_availability", "create_booking", "update_booking_status"];
+  const MAGNATIVE_TOOLS = ["search_global", "get_clients", "get_projects"];
+  const PRODUCTION_TOOLS = ["search_global", "get_materials", "get_projects"];
+  const FINANCE_TOOLS = ["search_global", "create_event_expense"];
+  const EVENT_TOOLS = ["search_global", "get_events", "update_checklist_progress"];
+
+  const filterByNames = (names: string[]) =>
+    AI_TOOLS.filter((t) => names.includes(t.function.name));
+
+  switch (agentId) {
+    case "reno":
+      return filterByNames(MAGNARENT_TOOLS);
+    case "crea":
+      return filterByNames(MAGNATIVE_TOOLS);
+    case "fabr":
+      return filterByNames([...PRODUCTION_TOOLS, ...EVENT_TOOLS]);
+    case "finn":
+      return filterByNames(FINANCE_TOOLS);
+    case "nova":
+    default:
+      return AI_TOOLS; // NOVA gets all tools
+  }
+}

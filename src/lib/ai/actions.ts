@@ -1,9 +1,10 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { getDefaultAgent, type AIAgent } from "./agents";
-import { buildSystemPrompt, buildUserContext } from "./system-prompt";
-import { AI_TOOLS } from "./tools";
+import { getDefaultAgent, getAgentById, type AIAgent } from "./agents";
+import { buildUserContext } from "./system-prompt";
+import { getAgentPromptBuilder } from "./agent-prompts";
+import { getToolsForAgent } from "./tools";
 import { executeToolCall } from "./tool-handlers";
 import type { UserContext, PendingAction, ToolDefinition, AIAttachment, MessageContent, TextContent, ImageContent } from "./types";
 
@@ -175,8 +176,16 @@ export async function sendAIMessage(
   if (!profile) return { error: "Profile tidak ditemukan" };
 
   const userContext = buildUserContext(profile);
-  const agent = getDefaultAgent();
-  const systemPrompt = buildSystemPrompt(userContext);
+
+  // Get agent (use passed agentId or default to NOVA)
+  const agent = agentId ? getAgentById(agentId) ?? getDefaultAgent() : getDefaultAgent();
+
+  // Get agent-specific prompt
+  const promptBuilder = getAgentPromptBuilder(agent.id);
+  const systemPrompt = promptBuilder ? promptBuilder(userContext) : `Kamu adalah ${agent.name}, asisten AI MagnaSuperApp.`;
+
+  // Get agent-specific tools
+  const agentTools = getToolsForAgent(agent.id);
 
   // Cek apakah ini konfirmasi untuk pending action
   const isConfirmation = text.toLowerCase() === "ya" || text.toLowerCase() === "yes";
@@ -286,7 +295,7 @@ export async function sendAIMessage(
   // Panggil 9Router API
   let aiResponse: { content: string; toolCalls?: ToolCall[] };
   try {
-    aiResponse = await call9RouterAPI(agent, messages, AI_TOOLS);
+    aiResponse = await call9RouterAPI(agent, messages, agentTools);
   } catch (err) {
     await supabase.from("ai_assistant_messages").delete().eq("id", userMsg.id);
     return { error: err instanceof Error ? err.message : "Gagal menghubungi AI" };
