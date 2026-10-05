@@ -32,7 +32,7 @@ export default async function AIAssistantPage() {
         </div>
         <div className="min-w-0">
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-violet-500 dark:text-violet-400">
-            Hermes AI
+            MagnaSuperApp
           </p>
           <h1 className="mt-0.5 text-2xl font-extrabold tracking-tight text-zinc-900 dark:text-white">
             Asisten AI

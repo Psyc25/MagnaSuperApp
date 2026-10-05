@@ -9,7 +9,12 @@ export type UserContext = {
   canAccessMagnarent: boolean;
   canAccessMagnative: boolean;
   canAccessProduction: boolean;
+  /** Lihat daftar event (RLS `events_select`: 3 divisi + finance + akses penuh). */
   canAccessEvents: boolean;
+  /** Lihat item checklist (RLS `event_checklist_items_select`: 3 divisi + akses penuh). */
+  canAccessChecklist: boolean;
+  /** Catat Realisasi Event (RLS `event_expenses_access`: semua kecuali investor). */
+  canAccessExpenses: boolean;
   canAccessAdmin: boolean;
 };
 

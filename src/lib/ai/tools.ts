@@ -3,7 +3,7 @@
  * Format sesuai OpenRouter/OpenAI function calling spec.
  */
 
-import type { ToolDefinition } from "./types";
+import type { ToolDefinition, UserContext } from "./types";
 
 /**
  * Query Tools - Read-only, aman dijalankan tanpa konfirmasi.
@@ -76,9 +76,9 @@ export const QUERY_TOOLS: ToolDefinition[] = [
             type: "string",
             description: "Filter lokasi gudang",
           },
-          lowStock: {
-            type: "boolean",
-            description: "Jika true, hanya tampilkan alat dengan stok menipis",
+          searchName: {
+            type: "string",
+            description: "Cari berdasarkan nama alat",
           },
           limit: {
             type: "number",
@@ -102,7 +102,7 @@ export const QUERY_TOOLS: ToolDefinition[] = [
           },
           status: {
             type: "string",
-            enum: ["Aktif", "Non-Aktif", "Prospek"],
+            enum: ["Prospek", "Aktif", "Selesai", "Tidak Lanjut"],
             description: "Filter status klien",
           },
           searchName: {
@@ -132,7 +132,8 @@ export const QUERY_TOOLS: ToolDefinition[] = [
           },
           status: {
             type: "string",
-            description: "Filter status proyek",
+            description:
+              "Filter status proyek. Magnative: Pitching, Perencanaan, Berjalan, Selesai, Dibatalkan. Production: Desain, Produksi, Finishing, Instalasi, Selesai, Dibatalkan.",
           },
           clientName: {
             type: "string",
@@ -158,6 +159,10 @@ export const QUERY_TOOLS: ToolDefinition[] = [
             type: "string",
             enum: ["Berjalan", "Selesai", "Dibatalkan"],
             description: "Filter status event",
+          },
+          searchName: {
+            type: "string",
+            description: "Cari berdasarkan nama event",
           },
           dateFrom: {
             type: "string",
@@ -186,6 +191,10 @@ export const QUERY_TOOLS: ToolDefinition[] = [
           category: {
             type: "string",
             description: "Filter kategori material",
+          },
+          searchName: {
+            type: "string",
+            description: "Cari berdasarkan nama material",
           },
           lowStock: {
             type: "boolean",
@@ -244,7 +253,11 @@ export const ACTION_TOOLS: ToolDefinition[] = [
         properties: {
           itemId: {
             type: "string",
-            description: "ID alat yang akan dibooking",
+            description: "ID alat yang akan dibooking (dari get_inventory/search_global)",
+          },
+          itemName: {
+            type: "string",
+            description: "Nama alat (untuk ringkasan konfirmasi)",
           },
           namaKlien: {
             type: "string",
@@ -294,7 +307,11 @@ export const ACTION_TOOLS: ToolDefinition[] = [
         properties: {
           bookingId: {
             type: "string",
-            description: "ID booking yang akan diubah",
+            description: "ID booking yang akan diubah (dari get_bookings)",
+          },
+          namaKlien: {
+            type: "string",
+            description: "Nama klien booking (untuk ringkasan konfirmasi)",
           },
           status: {
             type: "string",
@@ -316,7 +333,11 @@ export const ACTION_TOOLS: ToolDefinition[] = [
         properties: {
           eventId: {
             type: "string",
-            description: "ID event terkait",
+            description: "ID event terkait (dari get_events)",
+          },
+          eventName: {
+            type: "string",
+            description: "Nama event (untuk ringkasan konfirmasi)",
           },
           tanggal: {
             type: "string",
@@ -324,7 +345,7 @@ export const ACTION_TOOLS: ToolDefinition[] = [
           },
           kategori: {
             type: "string",
-            enum: ["Sewa Venue", "Transportasi", "Konsumsi", "Dekorasi", "Dokumentasi", "Entertainer", "Lainnya"],
+            enum: ["Sewa Venue", "Dekorasi & Material", "Transportasi", "Konsumsi", "Talent / Vendor", "Percetakan", "Operasional Kantor", "Lain-lain"],
             description: "Kategori pengeluaran",
           },
           keterangan: {
@@ -337,45 +358,14 @@ export const ACTION_TOOLS: ToolDefinition[] = [
           },
           metodeBayar: {
             type: "string",
-            enum: ["Cash", "Transfer", "QRIS", "Kartu Kredit"],
-            description: "Metode pembayaran",
+            description: "Metode pembayaran, mis. Cash, Transfer BCA, Qris, Transfer Jago (default: Cash)",
+          },
+          picName: {
+            type: "string",
+            description: "Nama PIC yang mengeluarkan dana (default: user yang sedang chat)",
           },
         },
         required: ["eventId", "tanggal", "kategori", "keterangan", "jumlah"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "update_checklist_progress",
-      description: "Update progress item checklist event. HARUS konfirmasi dengan user sebelum mengubah.",
-      parameters: {
-        type: "object",
-        properties: {
-          checklistItemId: {
-            type: "string",
-            description: "ID item checklist",
-          },
-          eventId: {
-            type: "string",
-            description: "ID event terkait",
-          },
-          status: {
-            type: "string",
-            enum: ["Belum Mulai", "Sample", "Approval", "Preparation", "Production", "Finish"],
-            description: "Status baru",
-          },
-          picLapangan: {
-            type: "string",
-            description: "PIC Lapangan (opsional)",
-          },
-          picProduksi: {
-            type: "string",
-            description: "PIC Produksi (opsional)",
-          },
-        },
-        required: ["checklistItemId", "eventId", "status"],
       },
     },
   },
@@ -385,6 +375,27 @@ export const ACTION_TOOLS: ToolDefinition[] = [
  * Semua tools yang tersedia untuk AI.
  */
 export const AI_TOOLS: ToolDefinition[] = [...QUERY_TOOLS, ...ACTION_TOOLS];
+
+/**
+ * Tool yang boleh ditawarkan ke AI untuk user ini — tool di luar akses
+ * divisinya tidak dikirim sama sekali, supaya AI tidak mencoba memanggilnya.
+ */
+export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
+  const allowed: Record<string, boolean> = {
+    search_global: true,
+    get_bookings: ctx.canAccessMagnarent,
+    get_inventory: ctx.canAccessMagnarent,
+    check_availability: ctx.canAccessMagnarent,
+    create_booking: ctx.canAccessMagnarent,
+    update_booking_status: ctx.canAccessMagnarent,
+    get_clients: ctx.canAccessMagnative,
+    get_projects: ctx.canAccessMagnative || ctx.canAccessProduction,
+    get_materials: ctx.canAccessProduction,
+    get_events: ctx.canAccessEvents,
+    create_event_expense: ctx.canAccessEvents && ctx.canAccessExpenses,
+  };
+  return AI_TOOLS.filter((t) => allowed[t.function.name]);
+}
 
 /**
  * Cek apakah tool adalah action (butuh konfirmasi).

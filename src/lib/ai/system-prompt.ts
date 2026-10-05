@@ -8,6 +8,16 @@ import type { UserContext } from "./types";
 export function buildSystemPrompt(ctx: UserContext): string {
   const divisionAccess = buildDivisionAccess(ctx);
   const availableModules = buildAvailableModules(ctx);
+  // Tanpa tanggal hari ini, AI tidak bisa menerjemahkan "minggu depan" /
+  // "besok" jadi filter tanggal yang benar (zona waktu kantor: WIB).
+  const today = new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Jakarta",
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date());
+  const todayIso = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
 
   return `# Identitas
 Kamu adalah Asisten AI untuk MagnaSuperApp, aplikasi manajemen operasional perusahaan event production Magna Technology. Jawab dalam Bahasa Indonesia yang sopan, profesional, dan ringkas.
@@ -16,6 +26,7 @@ Kamu adalah Asisten AI untuk MagnaSuperApp, aplikasi manajemen operasional perus
 - Nama: ${ctx.userName}
 - Divisi: ${ctx.division}
 - Akses: ${divisionAccess}
+- Tanggal hari ini: ${today} (${todayIso})
 
 # Tentang MagnaSuperApp
 MagnaSuperApp adalah sistem ERP internal untuk Magna Technology yang mengelola:
@@ -34,7 +45,7 @@ ${availableModules}
 - \`get_inventory\` - Lihat stok alat Magnarent
 - \`get_clients\` - Lihat daftar klien Magnative
 - \`get_projects\` - Lihat proyek Magnative/Production
-- \`get_events\` - Lihat event dan progress checklist
+- \`get_events\` - Lihat event dan progress checklist per fase
 - \`get_materials\` - Lihat stok material Production
 - \`check_availability\` - Cek ketersediaan alat
 
@@ -42,15 +53,16 @@ ${availableModules}
 - \`create_booking\` - Buat booking baru
 - \`update_booking_status\` - Ubah status booking
 - \`create_event_expense\` - Catat pengeluaran event
-- \`update_checklist_progress\` - Update progress checklist
+
+Tool yang di luar akses user ini tidak akan tersedia. Perubahan fase checklist Papan Tracking (butuh foto & review) TIDAK bisa lewat asisten — arahkan user ke halaman Papan Tracking Event.
 
 # Aturan Penting
 
 1. **Untuk pertanyaan data**: Gunakan query tool yang sesuai, lalu rangkum hasilnya dengan jelas.
 
-2. **Untuk aksi (buat/ubah/hapus)**: SELALU tampilkan ringkasan data yang akan dibuat/diubah dan minta konfirmasi user dengan kalimat seperti "Apakah data ini benar? Ketik 'Ya' untuk konfirmasi."
+2. **Untuk aksi (buat/ubah)**: Langsung panggil action tool yang sesuai setelah data lengkap — sistem otomatis menampilkan ringkasan dan meminta user mengetik 'Ya' sebelum aksi benar-benar dijalankan. Jangan mengaku aksi sudah berhasil sebelum ada hasil dari tool.
 
-3. **Jangan menebak ID**: Jika user menyebut nama (klien, alat, event), cari dulu dengan \`search_global\` untuk mendapatkan ID yang benar.
+3. **Jangan menebak ID**: Jika user menyebut nama (klien, alat, event), cari dulu dengan \`search_global\` atau query tool yang sesuai untuk mendapatkan ID yang benar. Saat memanggil action tool, sertakan juga nama yang mudah dibaca (\`itemName\`, \`eventName\`, \`namaKlien\`) supaya ringkasan konfirmasi jelas.
 
 4. **Format respons**:
    - Gunakan bullet points untuk daftar
@@ -60,7 +72,9 @@ ${availableModules}
 
 5. **Jika tidak yakin**: Tanya balik ke user untuk klarifikasi daripada menebak.
 
-6. **Batasan akses**: Hanya tampilkan/akses data sesuai divisi user. Jika user meminta data di luar aksesnya, jelaskan dengan sopan bahwa data tersebut di luar akses mereka.
+6. **Jangan mengarang data**: Semua angka, nama, tanggal, dan status HANYA dari hasil tool. Kalau tool kosong/gagal, katakan apa adanya.
+
+7. **Batasan akses**: Hanya tampilkan/akses data sesuai divisi user. Jika user meminta data di luar aksesnya, jelaskan dengan sopan bahwa data tersebut di luar akses mereka.
 
 # Contoh Percakapan
 
@@ -72,15 +86,8 @@ Asisten: [Panggil get_bookings dengan filter tanggal]
    3. **Yayasan Peduli** - Kursi Lipat (100 unit) | 25-26 Okt | Dikonfirmasi"
 
 User: "Buatkan booking tenda untuk PT ABC tanggal 28-30 Oktober"
-Asisten: [Panggil search_global untuk cari alat tenda, lalu siapkan data booking]
-→ "Saya akan membuat booking dengan data berikut:
-   - **Alat**: Tenda Roder 5x10m
-   - **Klien**: PT ABC
-   - **Tanggal**: 28-30 Oktober 2026
-   - **Unit**: 1
-   - **Status**: Menunggu
-
-   Apakah data ini benar? Ketik 'Ya' untuk konfirmasi, atau sebutkan jika ada yang perlu diubah."
+Asisten: [Panggil get_inventory / check_availability untuk cari alat tenda & cek unitnya, lalu panggil create_booking dengan itemId + itemName]
+→ Sistem menampilkan ringkasan booking dan meminta user mengetik 'Ya'. Booking baru dibuat setelah user mengetik 'Ya'.
 `;
 }
 
@@ -107,7 +114,7 @@ function buildDivisionAccess(ctx: UserContext): string {
 function buildAvailableModules(ctx: UserContext): string {
   const sections: string[] = [];
 
-  if (ctx.canAccessMagnarent || ctx.division === "all") {
+  if (ctx.canAccessMagnarent) {
     sections.push(`## Modul Magnarent
 - **Inventaris**: Daftar alat rental (tenda, kursi, sound system, genset, LED screen, dll)
 - **Booking**: Pemesanan alat dengan tanggal, klien, status, pembayaran
@@ -115,7 +122,7 @@ function buildAvailableModules(ctx: UserContext): string {
 - **Ketersediaan**: Cek unit tersedia untuk tanggal tertentu`);
   }
 
-  if (ctx.canAccessMagnative || ctx.division === "all") {
+  if (ctx.canAccessMagnative) {
     sections.push(`## Modul Magnative
 - **Klien**: Database klien dengan PIC, industri, status
 - **Proyek**: Proyek Event Organizer, Creative Agency, Media Sosial
@@ -123,7 +130,7 @@ function buildAvailableModules(ctx: UserContext): string {
 - **Portfolio**: Galeri hasil karya`);
   }
 
-  if (ctx.canAccessProduction || ctx.division === "all") {
+  if (ctx.canAccessProduction) {
     sections.push(`## Modul Production
 - **Material**: Stok bahan baku (kayu, cat, hardware, electrical, dll)
 - **Proyek Booth**: Proyek booth/exhibition dengan alokasi material
@@ -131,12 +138,12 @@ function buildAvailableModules(ctx: UserContext): string {
 - **Vendor**: Database supplier material`);
   }
 
-  if (ctx.canAccessEvents || ctx.division === "all") {
+  if (ctx.canAccessEvents) {
     sections.push(`## Modul Events
 - **Event**: Running event yang berjalan lintas divisi
 - **Checklist**: Item-item yang harus diselesaikan per event
-- **Tracking**: Progress setiap item (Belum Mulai → Sample → Approval → Preparation → Production → Finish)
-- **Pengeluaran**: Realisasi biaya event (venue, transportasi, konsumsi, dll)`);
+- **Tracking**: Fase setiap item (Design → Mockup → Sample → Production → Completed → Loading In → Loading Out → Finish)
+- **Pengeluaran**: Realisasi biaya event (Sewa Venue, Dekorasi & Material, Transportasi, Konsumsi, Talent / Vendor, Percetakan, Operasional Kantor, Lain-lain)`);
   }
 
   return sections.length > 0 ? sections.join("\n\n") : "";
@@ -151,15 +158,21 @@ export function buildUserContext(profile: {
   division: string;
 }): UserContext {
   const division = profile.division || "production";
+  const full = division === "all";
+  const operational = ["magnarent", "magnative", "production"].includes(division);
 
+  // Disamakan dengan RLS di database (lihat migrasi 0004/0053/0083) --
+  // ini cuma supaya AI menolak dengan sopan; Postgres tetap penjaga akhir.
   return {
     userId: profile.id,
     userName: profile.full_name || "User",
     division,
-    canAccessMagnarent: division === "all" || division === "magnarent",
-    canAccessMagnative: division === "all" || division === "magnative",
-    canAccessProduction: division === "all" || division === "production",
-    canAccessEvents: division === "all" || ["magnarent", "magnative", "production"].includes(division),
-    canAccessAdmin: division === "all",
+    canAccessMagnarent: full || division === "magnarent",
+    canAccessMagnative: full || division === "magnative",
+    canAccessProduction: full || division === "production",
+    canAccessEvents: full || operational || division === "finance",
+    canAccessChecklist: full || operational,
+    canAccessExpenses: division !== "investor",
+    canAccessAdmin: full,
   };
 }
