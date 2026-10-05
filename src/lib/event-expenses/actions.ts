@@ -93,9 +93,10 @@ export async function addEventExpense(
   // best-effort, tidak membatalkan pencatatan pengeluaran ini kalau
   // gagal. Dibungkus SECURITY DEFINER karena modul ini dipakai staf non-
   // Finance juga (lihat komentar fungsinya di migrasi 0052).
-  void supabase.rpc("post_event_expense_journal", { p_expense_id: data.id }).then(({ error: rpcError }) => {
-    if (rpcError) console.error("[event-expenses] post_event_expense_journal gagal:", rpcError.message);
-  });
+  // Di-await (bukan fire-and-forget): di serverless, promise yang tidak
+  // ditunggu bisa terputus begitu respons dikirim -> jurnal tidak terposting.
+  const { error: rpcError } = await supabase.rpc("post_event_expense_journal", { p_expense_id: data.id });
+  if (rpcError) console.error("[event-expenses] post_event_expense_journal gagal:", rpcError.message);
 
   revalidatePath(MODULE_PATH);
   void logActivity({
@@ -157,9 +158,10 @@ export async function updateEventExpense(
   // Re-posting jurnal dari data terbaru (fungsi ini menghapus jurnal lama
   // untuk expense ini dulu sebelum buat yang baru) -- lihat komentar di
   // addEventExpense di atas.
-  void supabase.rpc("post_event_expense_journal", { p_expense_id: id }).then(({ error: rpcError }) => {
-    if (rpcError) console.error("[event-expenses] post_event_expense_journal (update) gagal:", rpcError.message);
-  });
+  // Di-await (bukan fire-and-forget): di serverless, promise yang tidak
+  // ditunggu bisa terputus begitu respons dikirim -> jurnal tidak terposting.
+  const { error: rpcError } = await supabase.rpc("post_event_expense_journal", { p_expense_id: id });
+  if (rpcError) console.error("[event-expenses] post_event_expense_journal (update) gagal:", rpcError.message);
 
   revalidatePath(MODULE_PATH);
   void logActivity({
@@ -202,9 +204,10 @@ export async function deleteEventExpense(id: string): Promise<MutationResult> {
     await supabase.storage.from(BUCKET).remove(paths);
   }
 
-  void supabase.rpc("delete_event_expense_journal", { p_expense_id: id }).then(({ error: rpcError }) => {
-    if (rpcError) console.error("[event-expenses] delete_event_expense_journal gagal:", rpcError.message);
-  });
+  // Di-await (bukan fire-and-forget): di serverless, promise yang tidak
+  // ditunggu bisa terputus begitu respons dikirim -> jurnal tidak terposting.
+  const { error: rpcError } = await supabase.rpc("delete_event_expense_journal", { p_expense_id: id });
+  if (rpcError) console.error("[event-expenses] delete_event_expense_journal gagal:", rpcError.message);
 
   revalidatePath(MODULE_PATH);
   if (expenseRow) {
