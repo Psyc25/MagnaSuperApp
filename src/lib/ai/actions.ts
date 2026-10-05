@@ -3,9 +3,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { getDefaultAgent, type AIAgent } from "./agents";
 import { buildSystemPrompt, buildUserContext } from "./system-prompt";
-import { AI_TOOLS, isActionTool } from "./tools";
+import { AI_TOOLS } from "./tools";
 import { executeToolCall } from "./tool-handlers";
-import type { ToolCall, UserContext, PendingAction } from "./types";
+import type { UserContext, PendingAction, ToolDefinition } from "./types";
 
 export type AIMessage = {
   id: string;
@@ -13,7 +13,6 @@ export type AIMessage = {
   content: string;
   createdAt: string;
   agentId?: string;
-  /** Pending action menunggu konfirmasi user */
   pendingAction?: PendingAction;
 };
 
@@ -24,9 +23,18 @@ type ChatMessage = {
   tool_call_id?: string;
 };
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
-const OPENROUTER_URL = "https://openrouter.ai/api/v1";
-const LOCAL_AI_URL = process.env.AI_API_URL || "http://localhost:20128/v1";
+type ToolCall = {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+};
+
+// 9Router lokal — GRATIS!
+const NINEROUTER_URL = process.env.AI_API_URL || "http://localhost:20128/v1";
+const NINEROUTER_KEY = process.env.AI_API_KEY || "";
 
 export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: string }> {
   const supabase = await createClient();
@@ -62,27 +70,33 @@ export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: 
 }
 
 /**
- * Panggil AI dengan tool calling support.
+ * Convert tool definitions to OpenAI format.
  */
-async function callAIWithTools(
+function convertToolsForAPI(tools: ToolDefinition[]) {
+  return tools.map((t) => ({
+    type: "function",
+    function: {
+      name: t.function.name,
+      description: t.function.description,
+      parameters: t.function.parameters,
+    },
+  }));
+}
+
+/**
+ * Panggil 9Router lokal (OpenAI-compatible API).
+ */
+async function call9RouterAPI(
   agent: AIAgent,
   messages: ChatMessage[],
-  tools: typeof AI_TOOLS
+  tools: ToolDefinition[]
 ): Promise<{ content: string; toolCalls?: ToolCall[] }> {
-  const isLocal = agent.provider === "local";
-  const apiUrl = isLocal ? LOCAL_AI_URL : OPENROUTER_URL;
-
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
 
-  if (!isLocal) {
-    if (!OPENROUTER_API_KEY) {
-      throw new Error("OPENROUTER_API_KEY belum diset di .env.local. Daftar gratis di openrouter.ai/keys");
-    }
-    headers["Authorization"] = `Bearer ${OPENROUTER_API_KEY}`;
-    headers["HTTP-Referer"] = "https://magnasuperapp.vercel.app";
-    headers["X-Title"] = "MagnaSuperApp";
+  if (NINEROUTER_KEY) {
+    headers["Authorization"] = `Bearer ${NINEROUTER_KEY}`;
   }
 
   const body: Record<string, unknown> = {
@@ -92,13 +106,13 @@ async function callAIWithTools(
     max_tokens: agent.maxTokens,
   };
 
-  // Tambahkan tools jika bukan local (local mungkin tidak support)
-  if (!isLocal && tools.length > 0) {
-    body.tools = tools;
+  // Tambahkan tools jika ada
+  if (tools.length > 0) {
+    body.tools = convertToolsForAPI(tools);
     body.tool_choice = "auto";
   }
 
-  const response = await fetch(`${apiUrl}/chat/completions`, {
+  const response = await fetch(`${NINEROUTER_URL}/chat/completions`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -106,12 +120,11 @@ async function callAIWithTools(
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error("AI API error:", response.status, errText);
+    console.error("9Router API error:", response.status, errText);
 
-    if (response.status === 401) throw new Error("API key tidak valid");
-    if (response.status === 402) throw new Error("Kredit habis, top up di openrouter.ai");
-    if (response.status === 429) throw new Error("Rate limit, coba lagi");
-    throw new Error(`Error ${response.status}`);
+    if (response.status === 401) throw new Error("API key tidak valid. Cek AI_API_KEY di .env.local");
+    if (response.status === 429) throw new Error("Rate limit tercapai, coba lagi nanti");
+    throw new Error(`Error ${response.status}: ${errText.slice(0, 200)}`);
   }
 
   const data = await response.json();
@@ -146,6 +159,7 @@ export async function sendAIMessage(
 
   const userContext = buildUserContext(profile);
   const agent = getDefaultAgent();
+  const systemPrompt = buildSystemPrompt(userContext);
 
   // Cek apakah ini konfirmasi untuk pending action
   const isConfirmation = text.toLowerCase() === "ya" || text.toLowerCase() === "yes";
@@ -164,15 +178,12 @@ export async function sendAIMessage(
 
   // Jika konfirmasi dan ada pending action, eksekusi
   if (isConfirmation && pendingAction) {
-    // Simpan pesan user "Ya"
     await supabase
       .from("ai_assistant_messages")
       .insert({ user_id: user.id, role: "user", content: text });
 
-    // Eksekusi action
     const result = await executeToolCall(supabase, userContext, pendingAction.tool, pendingAction.args, true);
 
-    // Buat response
     let responseContent: string;
     if (result.success) {
       responseContent = typeof result.data === "object" && result.data !== null && "message" in result.data
@@ -182,7 +193,6 @@ export async function sendAIMessage(
       responseContent = `Gagal: ${result.error}`;
     }
 
-    // Simpan response (tanpa pending action)
     const { data: assistantMsg, error: assistantErr } = await supabase
       .from("ai_assistant_messages")
       .insert({ user_id: user.id, role: "assistant", content: responseContent, metadata: {} })
@@ -191,7 +201,6 @@ export async function sendAIMessage(
 
     if (assistantErr) return { error: "Gagal menyimpan respons" };
 
-    // Clear pending action dari pesan sebelumnya
     if (lastMessage) {
       await supabase
         .from("ai_assistant_messages")
@@ -232,7 +241,6 @@ export async function sendAIMessage(
     .limit(10);
 
   // Build messages dengan system prompt
-  const systemPrompt = buildSystemPrompt(userContext);
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
     ...((history ?? []).reverse().map((m) => ({
@@ -241,10 +249,10 @@ export async function sendAIMessage(
     }))),
   ];
 
-  // Panggil AI dengan tools
+  // Panggil 9Router API
   let aiResponse: { content: string; toolCalls?: ToolCall[] };
   try {
-    aiResponse = await callAIWithTools(agent, messages, AI_TOOLS);
+    aiResponse = await call9RouterAPI(agent, messages, AI_TOOLS);
   } catch (err) {
     await supabase.from("ai_assistant_messages").delete().eq("id", userMsg.id);
     return { error: err instanceof Error ? err.message : "Gagal menghubungi AI" };
@@ -255,7 +263,7 @@ export async function sendAIMessage(
   let pendingActionToSave: PendingAction | undefined;
 
   if (aiResponse.toolCalls && aiResponse.toolCalls.length > 0) {
-    const toolResults: string[] = [];
+    const toolResults: Array<{ id: string; result: string }> = [];
 
     for (const toolCall of aiResponse.toolCalls) {
       const toolName = toolCall.function.name;
@@ -266,18 +274,21 @@ export async function sendAIMessage(
         args = {};
       }
 
-      // Eksekusi tool
       const result = await executeToolCall(supabase, userContext, toolName, args, false);
 
       if (result.requiresConfirmation) {
-        // Simpan pending action, jangan eksekusi dulu
         pendingActionToSave = result.pendingAction;
         finalContent = result.confirmationMessage || "Konfirmasi diperlukan";
       } else if (result.success) {
-        // Format hasil untuk AI
-        toolResults.push(`Tool ${toolName}: ${JSON.stringify(result.data)}`);
+        toolResults.push({
+          id: toolCall.id,
+          result: JSON.stringify(result.data),
+        });
       } else {
-        toolResults.push(`Tool ${toolName} error: ${result.error}`);
+        toolResults.push({
+          id: toolCall.id,
+          result: `Error: ${result.error}`,
+        });
       }
     }
 
@@ -285,19 +296,23 @@ export async function sendAIMessage(
     if (!pendingActionToSave && toolResults.length > 0) {
       const followUpMessages: ChatMessage[] = [
         ...messages,
-        { role: "assistant", content: "", tool_calls: aiResponse.toolCalls },
-        ...toolResults.map((r, i) => ({
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: aiResponse.toolCalls,
+        },
+        ...toolResults.map((tr) => ({
           role: "tool" as const,
-          content: r,
-          tool_call_id: aiResponse.toolCalls![i].id,
+          content: tr.result,
+          tool_call_id: tr.id,
         })),
       ];
 
       try {
-        const followUp = await callAIWithTools(agent, followUpMessages, []);
+        const followUp = await call9RouterAPI(agent, followUpMessages, []);
         finalContent = followUp.content || "Berikut hasilnya.";
       } catch {
-        finalContent = toolResults.join("\n\n");
+        finalContent = toolResults.map((r) => r.result).join("\n\n");
       }
     }
   }
