@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Loader2, Send, Trash2 } from "lucide-react";
-import { sendAIMessage, clearAIHistory, type AIMessage } from "@/lib/ai/actions";
-import { getDefaultAgent } from "@/lib/ai/agents";
+import { useEffect } from "react";
+import { Loader2, Send, Trash2, ImagePlus, X } from "lucide-react";
+import { type AIMessage } from "@/lib/ai/actions";
+import { useAIChat, formatFileSize } from "@/lib/ai/hooks/useAIChat";
 import { AI_BRANDING } from "@/lib/ai/constants";
 import { cn } from "@/lib/cn";
 
@@ -14,50 +14,31 @@ export function AIAssistantClient({
   initialMessages: AIMessage[];
   userName: string;
 }) {
-  const [messages, setMessages] = useState<AIMessage[]>(initialMessages);
-  const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    messages,
+    input,
+    sending,
+    error,
+    selectedImage,
+    imagePreviewUrl,
+    setInput,
+    send,
+    clear,
+    selectImage,
+    removeImage,
+    inputRef,
+    endRef,
+    fileInputRef,
+  } = useAIChat({ initialMessages });
 
-  // Internal agent (tidak ditampilkan ke user)
-  const agent = getDefaultAgent();
-
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const endRef = useRef<HTMLDivElement>(null);
-
+  // Auto scroll
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, sending]);
+  }, [messages.length, sending, endRef]);
 
-  async function send() {
-    const text = input.trim();
-    if (!text || sending) return;
-
-    setSending(true);
-    setError(null);
-    setInput("");
-
-    const tempId = `temp-${Date.now()}`;
-    setMessages((m) => [...m, { id: tempId, role: "user", content: text, createdAt: new Date().toISOString() }]);
-
-    const res = await sendAIMessage(text, agent.id);
-    setSending(false);
-
-    if (res.error) {
-      setError(res.error);
-      setMessages((m) => m.filter((msg) => msg.id !== tempId));
-      setInput(text);
-    } else if (res.message) {
-      setMessages((m) => [...m.filter((msg) => msg.id !== tempId),
-        { id: `u-${Date.now()}`, role: "user", content: text, createdAt: new Date().toISOString() },
-        res.message
-      ]);
-    }
-  }
-
-  async function clear() {
-    await clearAIHistory();
-    setMessages([]);
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) selectImage(file);
   }
 
   return (
@@ -85,6 +66,7 @@ export function AIAssistantClient({
             <span className="text-6xl">{AI_BRANDING.icon}</span>
             <p className="mt-3 font-medium text-zinc-600 dark:text-zinc-300">Halo {userName}!</p>
             <p className="text-sm text-zinc-400">Saya {AI_BRANDING.name}. {AI_BRANDING.shortDescription}</p>
+            <p className="mt-3 text-xs text-zinc-400">📷 Kirim foto struk/nota untuk input otomatis ke sistem</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -102,6 +84,15 @@ export function AIAssistantClient({
                     ? "bg-indigo-500 text-white"
                     : "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"
                 )}>
+                  {/* Show image attachment if present */}
+                  {m.attachment?.type === "image" && (
+                    // eslint-disable-next-line @next/next/no-img-element -- data URL base64/blob lokal, bukan aset yang bisa dioptimasi next/image
+                    <img
+                      src={m.attachment.url}
+                      alt={m.attachment.name || "Gambar"}
+                      className="mb-2 max-h-48 rounded-lg object-contain"
+                    />
+                  )}
                   <div className="whitespace-pre-wrap">{m.content}</div>
                 </div>
               </div>
@@ -127,22 +118,59 @@ export function AIAssistantClient({
       {/* Error */}
       {error && <p className="border-t bg-rose-50 px-4 py-2 text-xs text-rose-600 dark:bg-rose-900/20">{error}</p>}
 
+      {/* Image Preview */}
+      {selectedImage && imagePreviewUrl && (
+        <div className="border-t border-zinc-100 px-4 py-3 dark:border-zinc-800">
+          <div className="flex items-center gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-700">
+            {/* eslint-disable-next-line @next/next/no-img-element -- data URL base64/blob lokal, bukan aset yang bisa dioptimasi next/image */}
+            <img src={imagePreviewUrl} alt="" className="h-12 w-12 rounded-lg object-cover" />
+            <div className="flex-1 min-w-0">
+              <p className="truncate text-sm font-medium">{selectedImage.name}</p>
+              <p className="text-xs text-zinc-400">{formatFileSize(selectedImage.size)}</p>
+            </div>
+            <button onClick={removeImage} className="rounded-lg p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800">
+              <X className="h-4 w-4 text-zinc-400" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input */}
       <div className="border-t border-zinc-100 p-3 dark:border-zinc-800">
         <div className="flex gap-3">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+
+          {/* Image button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending}
+            className="flex h-12 w-12 items-center justify-center rounded-xl border border-zinc-200 text-zinc-500 transition hover:bg-zinc-50 hover:text-violet-500 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            title="Kirim gambar (struk, nota, dll)"
+          >
+            <ImagePlus className="h-5 w-5" />
+          </button>
+
           <textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder={`Tanya ${AI_BRANDING.name}...`}
+            placeholder={selectedImage ? "Tambah keterangan..." : `Tanya ${AI_BRANDING.name}...`}
             rows={1}
             disabled={sending}
             className="flex-1 resize-none rounded-xl border border-zinc-200 bg-transparent px-4 py-3 text-sm outline-none focus:border-violet-400 disabled:opacity-50 dark:border-zinc-700"
           />
           <button
             onClick={send}
-            disabled={!input.trim() || sending}
+            disabled={(!input.trim() && !selectedImage) || sending}
             className={cn(
               "flex h-12 w-12 items-center justify-center rounded-xl text-white transition disabled:opacity-50",
               `bg-gradient-to-br ${AI_BRANDING.color}`

@@ -5,7 +5,7 @@ import { getDefaultAgent, type AIAgent } from "./agents";
 import { buildSystemPrompt, buildUserContext } from "./system-prompt";
 import { getToolsForUser } from "./tools";
 import { executeToolCall } from "./tool-handlers";
-import type { PendingAction, ToolCall, ToolDefinition } from "./types";
+import type { AIAttachment, ImageContent, MessageContent, PendingAction, TextContent, ToolCall, ToolDefinition } from "./types";
 
 export type AIMessage = {
   id: string;
@@ -15,11 +15,12 @@ export type AIMessage = {
   agentId?: string;
   /** Pending action menunggu konfirmasi user */
   pendingAction?: PendingAction;
+  attachment?: AIAttachment;
 };
 
 type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: MessageContent; // string atau array multimodal (teks + gambar)
   tool_calls?: ToolCall[];
   tool_call_id?: string;
 };
@@ -154,8 +155,10 @@ export async function sendAIMessage(
   userMessage: string,
   // Dipertahankan untuk kompatibilitas pemanggil lama (UI dulu punya model
   // picker); model sekarang selalu dari getDefaultAgent().
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _agentId?: string
+  _agentId?: string,
+  /** Gambar (struk/nota/screenshot) sebagai data URL base64 yang sudah
+   * dikompres di klien (maks 1024px, lihat utils/image.ts). */
+  imageBase64?: string
 ): Promise<{ message: AIMessage; error?: string } | { message?: undefined; error: string }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -163,7 +166,12 @@ export async function sendAIMessage(
   if (!user) return { error: "Tidak terautentikasi" };
 
   const text = userMessage.trim();
-  if (!text || text.length > 8000) return { error: "Pesan kosong atau terlalu panjang" };
+  // Teks boleh kosong kalau ada gambar.
+  if (!text && !imageBase64) return { error: "Pesan kosong" };
+  if (text.length > 8000) return { error: "Pesan terlalu panjang" };
+  if (imageBase64 && !/^data:image\/(png|jpe?g|webp|gif);base64,/.test(imageBase64)) {
+    return { error: "Format gambar tidak didukung." };
+  }
 
   // Ambil profile untuk konteks
   const { data: profile } = await supabase
@@ -178,8 +186,10 @@ export async function sendAIMessage(
   const agent = getDefaultAgent();
 
   const reply = normalizeReply(text);
-  const isConfirmation = CONFIRM_WORDS.has(reply);
-  const isCancel = CANCEL_WORDS.has(reply);
+  // Pesan yang membawa gambar selalu diproses sebagai pesan baru, bukan
+  // jawaban "Ya"/"Batal" untuk aksi yang menunggu konfirmasi.
+  const isConfirmation = !imageBase64 && CONFIRM_WORDS.has(reply);
+  const isCancel = !imageBase64 && CANCEL_WORDS.has(reply);
 
   // Ambil pesan terakhir untuk cek pending action
   const { data: lastMessages } = await supabase
@@ -266,10 +276,11 @@ export async function sendAIMessage(
     };
   }
 
-  // Simpan pesan user
+  // Simpan pesan user (gambar tidak disimpan, cuma penandanya di metadata)
+  const userMsgMetadata = imageBase64 ? { hasImage: true } : {};
   const { data: userMsg, error: userErr } = await supabase
     .from("ai_assistant_messages")
-    .insert({ user_id: user.id, role: "user", content: text })
+    .insert({ user_id: user.id, role: "user", content: text || "(gambar)", metadata: userMsgMetadata })
     .select("id, role, content, created_at")
     .single();
 
@@ -290,13 +301,26 @@ export async function sendAIMessage(
 
   // Build messages dengan system prompt
   const systemPrompt = buildSystemPrompt(userContext);
+  // Histori TANPA pesan terbaru (baris yang baru disimpan di atas) -- pesan
+  // terbaru ditambahkan terpisah supaya bisa membawa gambar (multimodal).
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
-    ...((history ?? []).reverse().map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    }))),
+    ...(history ?? [])
+      .reverse()
+      .slice(0, -1)
+      .map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
   ];
+  if (imageBase64) {
+    const contentParts: (TextContent | ImageContent)[] = [];
+    if (text) contentParts.push({ type: "text", text });
+    contentParts.push({ type: "image_url", image_url: { url: imageBase64, detail: "auto" } });
+    messages.push({ role: "user", content: contentParts });
+  } else {
+    messages.push({ role: "user", content: text });
+  }
 
   const tools = getToolsForUser(userContext);
   let finalContent = "";

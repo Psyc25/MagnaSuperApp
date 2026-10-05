@@ -2,6 +2,18 @@
  * TypeScript types untuk AI tool calling system.
  */
 
+// Multimodal content types for vision support
+export type TextContent = { type: "text"; text: string };
+export type ImageContent = { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } };
+export type MessageContent = string | (TextContent | ImageContent)[];
+
+// Attachment for AI messages
+export type AIAttachment = {
+  type: "image";
+  url: string; // base64 data URL
+  name?: string;
+};
+
 export type UserContext = {
   userId: string;
   userName: string;
@@ -60,7 +72,7 @@ export type PendingAction = {
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: MessageContent; // string or multimodal array
   tool_call_id?: string;
   tool_calls?: ToolCall[];
 };
