@@ -142,7 +142,9 @@ export function MaterialManager() {
     };
 
     setSubmitting(true);
-    const result = editingId ? await updateMaterial(editingId, payload) : await addMaterial(payload);
+    // Stok saat form dibuka -- server menolak kalau stok sudah berubah sejak itu.
+    const loadedStock = editingId ? materials.find((m) => m.id === editingId)?.stock : undefined;
+    const result = editingId ? await updateMaterial(editingId, payload, loadedStock) : await addMaterial(payload);
     setSubmitting(false);
 
     if (!result.ok) {

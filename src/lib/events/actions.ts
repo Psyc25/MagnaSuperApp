@@ -479,12 +479,23 @@ export async function deleteEvent(id: string): Promise<MutationResult> {
     return { ok: false, error: GENERIC_ERROR };
   }
 
-  for (const link of links ?? []) {
+  // Pengeluaran yang dicatat LANGSUNG ke event ini (opsi "Event (Lintas
+  // Divisi)" di Realisasi Event) + pengeluaran milik booking/proyek yang
+  // dikaitkan. event_links menamai proyek booth 'production_booth_project',
+  // sedangkan event_expenses memakai 'production_booth'.
+  const expenseSources = [
+    { source_type: "event_tracking", source_id: id },
+    ...(links ?? []).map((link) => ({
+      source_type: link.source_type === "production_booth_project" ? "production_booth" : link.source_type,
+      source_id: link.source_id,
+    })),
+  ];
+  for (const source of expenseSources) {
     const { count, error: expenseError } = await supabase
       .from("event_expenses")
       .select("id", { count: "exact", head: true })
-      .eq("source_type", link.source_type)
-      .eq("source_id", link.source_id);
+      .eq("source_type", source.source_type)
+      .eq("source_id", source.source_id);
 
     if (expenseError) {
       console.error("[events] deleteEvent: gagal cek pengeluaran:", expenseError.message);

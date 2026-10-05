@@ -15,7 +15,7 @@ type ProductionDataContextValue = {
   purchaseOrders: PurchaseOrder[];
 
   addMaterial: (input: Omit<MaterialItem, "id">) => Promise<MutationResult>;
-  updateMaterial: (id: string, input: Omit<MaterialItem, "id">) => Promise<MutationResult>;
+  updateMaterial: (id: string, input: Omit<MaterialItem, "id">, expectedStock?: number) => Promise<MutationResult>;
   deleteMaterial: (id: string) => Promise<MutationResult>;
   getActiveProjectsForMaterial: (materialId: string) => BoothProject[];
   getAvailableStockFor: (materialId: string, excludeProjectId?: string) => number;
@@ -57,7 +57,8 @@ export function ProductionDataProvider({
 }) {
   const addMaterial = useCallback((input: Omit<MaterialItem, "id">) => actions.addMaterial(input), []);
   const updateMaterial = useCallback(
-    (id: string, input: Omit<MaterialItem, "id">) => actions.updateMaterial(id, input),
+    (id: string, input: Omit<MaterialItem, "id">, expectedStock?: number) =>
+      actions.updateMaterial(id, input, expectedStock),
     []
   );
   const deleteMaterial = useCallback((id: string) => actions.deleteMaterial(id), []);

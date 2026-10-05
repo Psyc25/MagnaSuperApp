@@ -79,12 +79,22 @@ export async function addMaterial(input: Omit<MaterialItem, "id">): Promise<Muta
   return { ok: true };
 }
 
-export async function updateMaterial(id: string, input: Omit<MaterialItem, "id">): Promise<MutationResult> {
+/**
+ * `expectedStock` = stok yang tampil saat form edit dibuka. Update bersyarat
+ * pada nilai itu: kalau sementara itu stok berubah (penerimaan PO, transfer
+ * gudang oleh staf lain), simpan DITOLAK -- dulu angka lama dari halaman
+ * menimpa stok terbaru dan barang yang baru diterima "hilang" tanpa jejak.
+ */
+export async function updateMaterial(
+  id: string,
+  input: Omit<MaterialItem, "id">,
+  expectedStock?: number
+): Promise<MutationResult> {
   const validationError = validateMaterialInput(input);
   if (validationError) return { ok: false, error: validationError };
 
   const supabase = await createClient();
-  const { error } = await supabase
+  let query = supabase
     .from("production_materials")
     .update({
       name: input.name,
@@ -96,10 +106,19 @@ export async function updateMaterial(id: string, input: Omit<MaterialItem, "id">
       price_per_unit: input.pricePerUnit,
     })
     .eq("id", id);
+  if (expectedStock !== undefined) query = query.eq("stock", expectedStock);
+  const { data: updated, error } = await query.select("id");
 
   if (error) {
     console.error("[production] updateMaterial gagal:", error.message);
     return { ok: false, error: GENERIC_ERROR };
+  }
+  if (!updated || updated.length === 0) {
+    return {
+      ok: false,
+      error:
+        "Stok material ini sudah berubah sejak halaman dibuka (mis. ada penerimaan PO atau transfer gudang). Muat ulang halaman, lalu ulangi perubahan.",
+    };
   }
   revalidatePath(MODULE_PATH);
   void logActivity({ module: "production", action: "update", entityType: "material", entityLabel: input.name });
@@ -277,7 +296,9 @@ export async function addProject(input: NewBoothProjectInput): Promise<SaveBooth
     p_tanggal_instalasi: input.tanggalInstalasi,
     p_budget: input.budget,
     p_status_pembayaran: input.statusPembayaran,
-    p_dp_amount: input.dpAmount ?? 0,
+    // DP hanya bermakna untuk status "DP" -- nilai lama yang tertinggal saat
+    // status diganti membuat piutang terhitung lebih kecil dari seharusnya.
+    p_dp_amount: input.statusPembayaran === "DP" ? (input.dpAmount ?? 0) : 0,
     p_materials: input.materials,
     p_catatan: input.catatan ?? null,
     p_tanggal_bongkar_estimasi: input.tanggalBongkarEstimasi || null,
@@ -344,7 +365,9 @@ export async function updateProject(id: string, input: NewBoothProjectInput): Pr
     p_tanggal_instalasi: input.tanggalInstalasi,
     p_budget: input.budget,
     p_status_pembayaran: input.statusPembayaran,
-    p_dp_amount: input.dpAmount ?? 0,
+    // DP hanya bermakna untuk status "DP" -- nilai lama yang tertinggal saat
+    // status diganti membuat piutang terhitung lebih kecil dari seharusnya.
+    p_dp_amount: input.statusPembayaran === "DP" ? (input.dpAmount ?? 0) : 0,
     p_materials: input.materials,
     p_catatan: input.catatan ?? null,
     p_tanggal_bongkar_estimasi: input.tanggalBongkarEstimasi || null,

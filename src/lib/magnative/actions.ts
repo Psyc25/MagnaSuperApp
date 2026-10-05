@@ -183,7 +183,8 @@ export async function addProject(input: Omit<Project, "id">): Promise<MutationRe
     budget: input.budget,
     status: input.status,
     status_pembayaran: input.statusPembayaran,
-    dp_amount: input.dpAmount ?? 0,
+    // DP hanya bermakna untuk status "DP" (lihat catatan di magnarent/actions.ts).
+    dp_amount: input.statusPembayaran === "DP" ? (input.dpAmount ?? 0) : 0,
     catatan: input.catatan ?? null,
     alasan_kalah: input.alasanKalah?.trim() || null,
     pipeline_stage: input.pipelineStage ?? null,
@@ -231,7 +232,8 @@ export async function updateProject(id: string, input: Omit<Project, "id">): Pro
       budget: input.budget,
       status: input.status,
       status_pembayaran: input.statusPembayaran,
-      dp_amount: input.dpAmount ?? 0,
+      // DP hanya bermakna untuk status "DP" (lihat catatan di magnarent/actions.ts).
+      dp_amount: input.statusPembayaran === "DP" ? (input.dpAmount ?? 0) : 0,
       catatan: input.catatan ?? null,
       alasan_kalah: input.alasanKalah?.trim() || null,
       pipeline_stage: input.pipelineStage ?? null,
