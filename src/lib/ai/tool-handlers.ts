@@ -23,7 +23,9 @@ import type { BookingStatus, PaymentStatus } from "@/lib/magnarent/types";
 import { addEventExpense } from "@/lib/event-expenses/actions";
 import {
   EXPENSE_CATEGORIES,
+  REIMBURSEMENT_STATUSES,
   type ExpenseCategory,
+  type ReimbursementStatus,
   type ExpenseDivision,
   type ExpenseSourceType,
 } from "@/lib/event-expenses/types";
@@ -543,7 +545,9 @@ async function handleCreateEventExpense(supabase: SupabaseClient, ctx: UserConte
     amount,
     picName: str(args.picName) ?? ctx.userName,
     paymentMethod: str(args.paymentMethod) ?? "Cash",
-    reimbursementStatus: "Tidak Perlu",
+    reimbursementStatus: REIMBURSEMENT_STATUSES.includes(args.reimbursementStatus as ReimbursementStatus)
+      ? (args.reimbursementStatus as ReimbursementStatus)
+      : "Dibayar Perusahaan",
     notes: str(args.notes),
   });
   if (!result.ok) return { success: false, error: result.error };
@@ -583,6 +587,7 @@ function buildConfirmationResponse(toolName: string, args: Args, ctx: UserContex
         `- Jumlah: ${rupiah(a.amount)}`,
         `- PIC: ${str(a.picName) ?? ctx.userName}`,
         `- Metode bayar: ${str(a.paymentMethod) ?? "Cash"}`,
+        `- Dibayar oleh: ${str(a.reimbursementStatus) ?? "Dibayar Perusahaan"}`,
         `- Catatan: ${str(a.notes) ?? "-"}`,
       ].join("\n"),
   };

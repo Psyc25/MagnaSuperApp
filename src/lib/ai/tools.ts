@@ -372,6 +372,12 @@ export const ACTION_TOOLS: ToolDefinition[] = [
             type: "string",
             description: "Metode pembayaran, mis. Cash, Transfer BCA, Qris (default: Cash)",
           },
+          reimbursementStatus: {
+            type: "string",
+            enum: ["Dibayar Perusahaan", "Belum Diganti", "Sudah Diganti", "Tidak Perlu"],
+            description:
+              "Siapa yang membayar. Dibayar Perusahaan = langsung dari kas/rekening perusahaan (default); Belum Diganti = PIC menalangi & belum diganti; Sudah Diganti = PIC menalangi & sudah diganti; Tidak Perlu = PIC bayar pribadi & tidak mengklaim. Tanyakan kalau user menyebut 'pakai uang pribadi' / 'nalangin'.",
+          },
           notes: {
             type: "string",
             description: "Catatan/keterangan tambahan",

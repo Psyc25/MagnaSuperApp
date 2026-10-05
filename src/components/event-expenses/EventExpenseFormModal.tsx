@@ -10,6 +10,7 @@ import {
   EXPENSE_DIVISION_LABELS,
   PAYMENT_METHOD_SUGGESTIONS,
   REIMBURSEMENT_STATUSES,
+  REIMBURSEMENT_STATUS_HINTS,
   type EventExpense,
   type ExpenseProof,
   type ExpenseSourceOption,
@@ -350,6 +351,9 @@ export function EventExpenseFormModal({
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+              {REIMBURSEMENT_STATUS_HINTS[form.reimbursementStatus]}
+            </p>
           </div>
         </div>
 

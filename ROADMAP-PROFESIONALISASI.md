@@ -139,11 +139,10 @@ production (±1.250 objek), ke dua arah:
 **Masih menunggu**:
 - Migrasi 0087 (hapus `ping_test_fn*`) dijalankan manual di SQL Editor.
   Tool migrasi menolak DROP; fungsinya sudah tidak bisa dipanggil siapa pun.
-- **Keputusan Owner (akuntansi)**: di production, pengeluaran berstatus
-  reimbursement "Tidak Perlu" dikredit ke Modal Pemilik (3-1000), tidak ke
-  Kas/Bank (migrasi 0058a). Padahal "Tidak Perlu" adalah pilihan DEFAULT di
-  form Realisasi Event, termasuk untuk pengeluaran yang dibayar dari
-  rekening perusahaan. Akibatnya saldo Kas/Bank tidak berkurang untuk
-  pengeluaran itu. Belum ada data yang terdampak (0 pengeluaran). Perlu
-  diputuskan: apakah default diganti, atau ditambah pilihan "Dibayar
-  perusahaan" yang mengkredit Kas/Bank.
+- ~~Keputusan Owner (akuntansi) soal "Tidak Perlu"~~ → **selesai (migrasi
+  0090)**: status baru "Dibayar Perusahaan" (dijurnal ke Kas Kecil/Bank
+  Operasional sesuai metode bayar) jadi default form, biaya proyek Magnativ,
+  dan Asisten AI. "Tidak Perlu" tetap berarti PIC bayar pribadi & tidak
+  mengklaim (Modal Pemilik). Form kini menampilkan penjelasan tiap status.
+  Diuji di database hasil rebuild: Transfer BCA → Bank Operasional,
+  Cash → Kas Kecil, Tidak Perlu → Modal Pemilik.

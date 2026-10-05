@@ -16,6 +16,7 @@ import { GLASS_BORDER, GLASS_INPUT, GLASS_SURFACE } from "@/lib/glass";
 const GRADIENT = "linear-gradient(135deg, #4C1D95 0%, #7C3AED 100%)";
 
 const REIMBURSE_BADGE: Record<string, string> = {
+  "Dibayar Perusahaan": "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300",
   "Tidak Perlu": "bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-zinc-300",
   "Belum Diganti": "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300",
   "Sudah Diganti": "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300",
