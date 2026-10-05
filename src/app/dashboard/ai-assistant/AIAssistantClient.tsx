@@ -64,9 +64,8 @@ export function AIAssistantClient({
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
             <span className="text-6xl">{AI_BRANDING.icon}</span>
-            <p className="mt-3 font-medium text-zinc-600 dark:text-zinc-300">Halo {userName}!</p>
+            <p className="mt-3 text-lg font-semibold text-zinc-700 dark:text-zinc-200">Halo {userName}!</p>
             <p className="text-sm text-zinc-400">Saya {AI_BRANDING.name}. {AI_BRANDING.shortDescription}</p>
-            <p className="mt-3 text-xs text-zinc-400">📷 Kirim foto struk/nota untuk input otomatis ke sistem</p>
           </div>
         ) : (
           <div className="space-y-4">
