@@ -10,6 +10,13 @@ import {
 } from "./mappers";
 import type { EventExpense, ExpenseSourceOption } from "./types";
 
+/** Baris ringkas dari `public.events` (modul Tracking Progress Event,
+ * migrasi 0053) — cuma kolom yang dipakai untuk membangun opsi "Event/
+ * Proyek Terkait" di sini, bukan tipe `EventSummary` penuh milik modul itu
+ * (src/lib/events/types.ts), supaya data.ts ini tidak ikut terseret
+ * dependensi tipe modul lain yang tidak dipakai. */
+type EventRow = { id: string; name: string; client_name: string | null; status: string };
+
 /**
  * Data untuk halaman "Realisasi Event" — dipanggil dari page.tsx (Server
  * Component). Dibatasi 500 baris terbaru (Tahap 14 — batasi query yang bisa
@@ -32,7 +39,7 @@ export async function getEventExpensesPageData(): Promise<{
   hasMore: boolean;
 }> {
   const supabase = await createClient();
-  const [expensesRes, proofsRes, bookingsRes, projectsRes, boothRes] = await Promise.all([
+  const [expensesRes, proofsRes, bookingsRes, projectsRes, boothRes, eventsRes] = await Promise.all([
     supabase
       .from("event_expenses")
       .select("*")
@@ -43,6 +50,15 @@ export async function getEventExpensesPageData(): Promise<{
     supabase.from("magnarent_bookings").select("*").returns<BookingRow[]>(),
     supabase.from("magnative_projects").select("*").returns<ProjectRow[]>(),
     supabase.from("production_booth_projects").select("*").returns<BoothProjectRow[]>(),
+    // Tambahan migrasi 0082 — event umum lintas-divisi (modul Tracking
+    // Progress Event, migrasi 0053) ikut jadi opsi "Event/Proyek Terkait"
+    // supaya pengeluaran seperti bon/nota untuk event ini bisa dikaitkan
+    // langsung, bukan cuma lewat booking/proyek per-divisi.
+    supabase
+      .from("events")
+      .select("id, name, client_name, status")
+      .neq("status", "Dibatalkan")
+      .returns<EventRow[]>(),
   ]);
 
   const proofsByExpense = new Map<string, EventExpenseProofRow[]>();
@@ -64,6 +80,7 @@ export async function getEventExpensesPageData(): Promise<{
   const bookings = (bookingsRes.data ?? []).map(rowToBooking);
   const projects = (projectsRes.data ?? []).map(rowToProject);
   const boothProjects = (boothRes.data ?? []).map(rowToBoothProject);
+  const events = eventsRes.data ?? [];
 
   const sourceOptions: ExpenseSourceOption[] = [
     { sourceType: "umum", sourceId: null, division: "finance", label: "Finance / Umum (tidak terikat event)" },
@@ -97,6 +114,14 @@ export async function getEventExpensesPageData(): Promise<{
           label: p.name,
         })
       ),
+    ...events.map(
+      (e): ExpenseSourceOption => ({
+        sourceType: "event_tracking",
+        sourceId: e.id,
+        division: "event",
+        label: e.client_name ? `${e.name} — ${e.client_name}` : e.name,
+      })
+    ),
   ];
 
   return { expenses, sourceOptions, hasMore: expenses.length === 500 };

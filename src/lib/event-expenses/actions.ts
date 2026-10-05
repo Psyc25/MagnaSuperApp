@@ -26,11 +26,12 @@ const LOAD_MORE_BATCH = 200;
 
 export type MutationResult = { ok: true } | { ok: false; error: string };
 
-/** activity_log.module (migrasi 0008) belum mengenal "finance" — dipetakan
- * ke "admin" sebagai kategori terdekat, sekadar label log, tidak memengaruhi
- * akses/RLS event_expenses itu sendiri. */
+/** activity_log.module (migrasi 0008) belum mengenal "finance" maupun
+ * "event" (migrasi 0082) — keduanya dipetakan ke "admin" sebagai kategori
+ * terdekat, sekadar label log, tidak memengaruhi akses/RLS event_expenses
+ * itu sendiri. */
 function toActivityModule(division: ExpenseDivision): ActivityModule {
-  return division === "finance" ? "admin" : division;
+  return division === "finance" || division === "event" ? "admin" : division;
 }
 
 export type AddEventExpenseInput = {

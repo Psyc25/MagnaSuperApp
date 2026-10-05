@@ -4,16 +4,25 @@
  * Umum untuk pengeluaran operasional yang tidak terikat event tertentu.
  */
 
-export type ExpenseDivision = "magnarent" | "magnative" | "production" | "finance";
+export type ExpenseDivision = "magnarent" | "magnative" | "production" | "finance" | "event";
 
 export const EXPENSE_DIVISION_LABELS: Record<ExpenseDivision, string> = {
   magnarent: "Magnarent",
   magnative: "Magnativ",
   production: "Production",
   finance: "Finance / Umum",
+  // Label baru (migrasi 0082) — dipakai pengeluaran yang dikaitkan ke event
+  // umum lintas-divisi dari modul Tracking Progress Event ("Papan Tracking
+  // Event", migrasi 0053), BUKAN booking/proyek spesifik satu divisi.
+  event: "Event (Lintas Divisi)",
 };
 
-export type ExpenseSourceType = "magnarent_booking" | "magnative_project" | "production_booth" | "umum";
+export type ExpenseSourceType =
+  | "magnarent_booking"
+  | "magnative_project"
+  | "production_booth"
+  | "umum"
+  | "event_tracking";
 
 export type ExpenseCategory =
   | "Sewa Venue"
@@ -73,7 +82,10 @@ export type EventExpense = {
 /** Opsi "Event/Proyek Terkait" di form — dibangun dari booking Magnarent,
  * proyek Magnative, dan booth project Production yang sudah ada (pola sama
  * seperti `InvoiceSourceOption` di src/lib/invoices/types.ts), plus satu
- * opsi tetap "Finance/Umum" untuk pengeluaran yang tidak terikat event. */
+ * opsi tetap "Finance/Umum" untuk pengeluaran yang tidak terikat event, dan
+ * (migrasi 0082) satu opsi per event umum lintas-divisi dari modul Tracking
+ * Progress Event (tabel `public.events`) supaya pengeluaran terkait event
+ * seperti "GRAB X KOMDIGI" bisa langsung dikaitkan di sini juga. */
 export type ExpenseSourceOption = {
   sourceType: ExpenseSourceType;
   sourceId: string | null;
