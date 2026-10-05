@@ -49,7 +49,12 @@ export async function executeToolCall(
   confirmed = false
 ): Promise<ToolResult> {
   if (isActionTool(toolName) && !confirmed) {
-    return buildConfirmationResponse(toolName, args, ctx);
+    try {
+      return await buildConfirmationResponse(supabase, toolName, args, ctx);
+    } catch (err) {
+      console.error(`[ai] konfirmasi ${toolName} gagal:`, err);
+      return { success: false, error: "Gagal menyiapkan ringkasan aksi, coba lagi." };
+    }
   }
 
   try {
@@ -76,7 +81,7 @@ export async function executeToolCall(
       case "create_booking":
         return await handleCreateBooking(ctx, args);
       case "update_booking_status":
-        return await handleUpdateBookingStatus(ctx, args);
+        return await handleUpdateBookingStatus(supabase, ctx, args);
       case "create_event_expense":
         return await handleCreateEventExpense(supabase, ctx, args);
 
@@ -221,7 +226,16 @@ async function handleGetClients(supabase: SupabaseClient, ctx: UserContext, args
 }
 
 async function handleGetProjects(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
-  const projectModule = str(args.module) === "production" ? "production" : "magnative";
+  // Tanpa `module`, pilih modul yang memang bisa diakses user -- staf
+  // Production yang bertanya "proyek apa saja" tidak boleh dijawab "tidak
+  // punya akses Magnativ".
+  const requestedModule = str(args.module);
+  const projectModule =
+    requestedModule === "production" || requestedModule === "magnative"
+      ? requestedModule
+      : ctx.canAccessMagnative
+        ? "magnative"
+        : "production";
   const limit = limitOf(args);
   const status = str(args.status);
   const clientName = str(args.clientName);
@@ -272,7 +286,9 @@ async function handleGetEvents(supabase: SupabaseClient, ctx: UserContext, args:
   if (status) query = query.eq("status", status);
   const dateFrom = isoDate(args.dateFrom);
   const dateTo = isoDate(args.dateTo);
-  if (dateFrom) query = query.gte("end_date", dateFrom);
+  // Event tanpa tanggal selesai (end_date null, boleh di form) dinilai dari
+  // tanggal mulainya -- tanpa ini event seperti itu hilang dari filter.
+  if (dateFrom) query = query.or(`end_date.gte.${dateFrom},and(end_date.is.null,start_date.gte.${dateFrom})`);
   if (dateTo) query = query.lte("start_date", dateTo);
   const search = str(args.searchName);
   if (search) query = query.ilike("name", likePattern(search));
@@ -456,19 +472,70 @@ async function handleCreateBooking(ctx: UserContext, args: Args): Promise<ToolRe
   return { success: true, data: { message: `Booking untuk ${namaKlien} berhasil dibuat (status: Menunggu).` } };
 }
 
-async function handleUpdateBookingStatus(ctx: UserContext, args: Args): Promise<ToolResult> {
+/**
+ * Transisi status yang boleh lewat asisten. Membuka lagi booking yang sudah
+ * Dibatalkan/Selesai SENGAJA tidak diizinkan: updateBookingStatus adalah
+ * UPDATE polos tanpa cek kapasitas, jadi bisa menimbulkan overbooking --
+ * pembukaan ulang harus lewat form booking (save_booking_checked).
+ */
+const BOOKING_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
+  Menunggu: ["Dikonfirmasi", "Dibatalkan"],
+  Dikonfirmasi: ["Selesai", "Dibatalkan"],
+  Selesai: [],
+  Dibatalkan: [],
+};
+
+type BookingForStatus = {
+  id: string;
+  nama_klien: string;
+  status: BookingStatus;
+  tanggal_mulai: string;
+  tanggal_selesai: string;
+  item: { name: string } | null;
+};
+
+async function loadBookingForStatusChange(
+  supabase: SupabaseClient,
+  bookingId: string | undefined,
+  status: string | undefined
+): Promise<{ booking: BookingForStatus } | { error: string }> {
+  if (!bookingId || !status || !BOOKING_STATUSES.includes(status as BookingStatus)) {
+    return { error: "ID booking atau status tidak valid." };
+  }
+  const { data: booking } = await supabase
+    .from("magnarent_bookings")
+    .select("id, nama_klien, status, tanggal_mulai, tanggal_selesai, item:magnarent_inventory(name)")
+    .eq("id", bookingId)
+    .maybeSingle<BookingForStatus>();
+  if (!booking) return { error: "Booking tidak ditemukan." };
+  if (booking.status === status) return { error: `Booking ini sudah berstatus "${status}".` };
+  if (!BOOKING_TRANSITIONS[booking.status].includes(status as BookingStatus)) {
+    return {
+      error:
+        booking.status === "Dibatalkan" || booking.status === "Selesai"
+          ? `Booking berstatus "${booking.status}" tidak bisa dibuka lagi lewat asisten -- buka lewat halaman Booking supaya ketersediaan alat dicek ulang.`
+          : `Status "${booking.status}" tidak bisa langsung diubah ke "${status}".`,
+    };
+  }
+  return { booking };
+}
+
+async function handleUpdateBookingStatus(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
   if (!ctx.canAccessMagnarent) return denied("Magnarent");
 
-  const bookingId = str(args.bookingId);
-  const status = str(args.status) as BookingStatus | undefined;
-  if (!bookingId || !status || !BOOKING_STATUSES.includes(status)) {
-    return { success: false, error: "ID booking atau status tidak valid." };
-  }
+  // Dicek ulang saat eksekusi -- status bisa berubah (atau booking dihapus)
+  // di antara ringkasan konfirmasi dan user mengetik "Ya".
+  const check = await loadBookingForStatusChange(supabase, str(args.bookingId), str(args.status));
+  if ("error" in check) return { success: false, error: check.error };
+  const status = args.status as BookingStatus;
 
-  const result = await updateBookingStatus(bookingId, status);
+  const result = await updateBookingStatus(check.booking.id, status);
   if (!result.ok) return { success: false, error: result.error };
 
-  return { success: true, data: { message: `Status booking berhasil diubah ke "${status}".` } };
+  return {
+    success: true,
+    data: { message: `Status booking ${check.booking.nama_klien} berhasil diubah dari "${check.booking.status}" ke "${status}".` },
+  };
 }
 
 /** Sumber pengeluaran -> tabel untuk validasi, kolom nama, dan divisi pemiliknya. */
@@ -564,36 +631,73 @@ async function handleCreateEventExpense(supabase: SupabaseClient, ctx: UserConte
 // KONFIRMASI
 // ============================================================================
 
-function buildConfirmationResponse(toolName: string, args: Args, ctx: UserContext): ToolResult {
+/**
+ * Ringkasan yang ditampilkan sebelum user mengetik "Ya". Nama alat/booking/
+ * sumber pengeluaran DIAMBIL DARI DATABASE berdasarkan ID yang benar-benar
+ * akan dieksekusi -- bukan dari nama yang dikirim model (itemName/namaKlien/
+ * sourceName), yang bisa saja tidak cocok dengan ID-nya (mis. model memilih
+ * baris booking yang salah tapi menulis nama klien yang benar).
+ */
+async function buildConfirmationResponse(
+  supabase: SupabaseClient,
+  toolName: string,
+  args: Args,
+  ctx: UserContext
+): Promise<ToolResult> {
   const rupiah = (v: unknown) => `Rp ${Math.round(num(v) ?? 0).toLocaleString("id-ID")}`;
-  const descriptions: Record<string, (a: Args) => string> = {
-    create_booking: (a) =>
-      [
-        "Buat booking:",
-        `- Alat: ${str(a.itemName) ?? a.itemId}`,
-        `- Klien: ${a.namaKlien}`,
-        `- Tanggal: ${a.tanggalMulai} s/d ${a.tanggalSelesai}`,
-        `- Unit: ${a.jumlahUnit}`,
-        `- Pembayaran: ${str(a.statusPembayaran) ?? "Belum Bayar"}${a.statusPembayaran === "DP" ? ` (${rupiah(a.jumlahDp)})` : ""}`,
-      ].join("\n"),
-    update_booking_status: (a) =>
-      `Ubah status booking ${str(a.namaKlien) ? `"${a.namaKlien}" ` : ""}menjadi "${a.status}"`,
-    create_event_expense: (a) =>
-      [
-        "Catat pengeluaran:",
-        `- Terkait: ${str(a.sourceName) ?? (str(a.sourceType) && a.sourceType !== "umum" ? a.sourceId : "Umum (tanpa event/proyek)")}`,
-        `- Tanggal: ${isoDate(a.expenseDate) ?? `${todayJakarta()} (hari ini)`}`,
-        `- Kategori: ${a.category}`,
-        `- Jumlah: ${rupiah(a.amount)}`,
-        `- PIC: ${str(a.picName) ?? ctx.userName}`,
-        `- Metode bayar: ${str(a.paymentMethod) ?? "Cash"}`,
-        `- Dibayar oleh: ${str(a.reimbursementStatus) ?? "Dibayar Perusahaan"}`,
-        `- Catatan: ${str(a.notes) ?? "-"}`,
-      ].join("\n"),
-  };
+  let description: string;
 
-  const descFn = descriptions[toolName];
-  const description = descFn ? descFn(args) : `Jalankan ${toolName}`;
+  if (toolName === "create_booking") {
+    const itemId = str(args.itemId);
+    const { data: item } = itemId
+      ? await supabase.from("magnarent_inventory").select("name").eq("id", itemId).maybeSingle<{ name: string }>()
+      : { data: null };
+    if (!item) return { success: false, error: "Alat tidak ditemukan. Cari dulu ID alat yang benar." };
+    description = [
+      "Buat booking:",
+      `- Alat: ${item.name}`,
+      `- Klien: ${args.namaKlien}`,
+      `- Tanggal: ${args.tanggalMulai} s/d ${args.tanggalSelesai}`,
+      `- Unit: ${args.jumlahUnit}`,
+      `- Pembayaran: ${str(args.statusPembayaran) ?? "Belum Bayar"}${args.statusPembayaran === "DP" ? ` (${rupiah(args.jumlahDp)})` : ""}`,
+    ].join("\n");
+  } else if (toolName === "update_booking_status") {
+    const check = await loadBookingForStatusChange(supabase, str(args.bookingId), str(args.status));
+    if ("error" in check) return { success: false, error: check.error };
+    const b = check.booking;
+    description = [
+      "Ubah status booking:",
+      `- Klien: ${b.nama_klien}`,
+      `- Alat: ${b.item?.name ?? "—"}`,
+      `- Tanggal: ${b.tanggal_mulai} s/d ${b.tanggal_selesai}`,
+      `- Status: ${b.status} → ${args.status}`,
+    ].join("\n");
+  } else if (toolName === "create_event_expense") {
+    const sourceType = str(args.sourceType) ?? "umum";
+    let sourceLabel = "Umum (tanpa event/proyek)";
+    if (sourceType in EXPENSE_SOURCES) {
+      const source = EXPENSE_SOURCES[sourceType as Exclude<ExpenseSourceType, "umum">];
+      const sourceId = str(args.sourceId);
+      const { data: row } = sourceId
+        ? await supabase.from(source.table).select(source.nameColumn).eq("id", sourceId).maybeSingle<Record<string, string>>()
+        : { data: null };
+      if (!row) return { success: false, error: "Event/booking/proyek terkait tidak ditemukan." };
+      sourceLabel = row[source.nameColumn] ?? sourceLabel;
+    }
+    description = [
+      "Catat pengeluaran:",
+      `- Terkait: ${sourceLabel}`,
+      `- Tanggal: ${isoDate(args.expenseDate) ?? `${todayJakarta()} (hari ini)`}`,
+      `- Kategori: ${args.category}`,
+      `- Jumlah: ${rupiah(args.amount)}`,
+      `- PIC: ${str(args.picName) ?? ctx.userName}`,
+      `- Metode bayar: ${str(args.paymentMethod) ?? "Cash"}`,
+      `- Dibayar oleh: ${str(args.reimbursementStatus) ?? "Dibayar Perusahaan"}`,
+      `- Catatan: ${str(args.notes) ?? "-"}`,
+    ].join("\n");
+  } else {
+    description = `Jalankan ${toolName}`;
+  }
 
   return {
     success: true,

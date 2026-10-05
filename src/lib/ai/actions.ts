@@ -36,11 +36,28 @@ const AI_TIMEOUT_MS = 45_000;
 /** Suhu rendah untuk tool calling — jawaban data harus konsisten, bukan kreatif. */
 const TOOL_TEMPERATURE = 0.3;
 
-const CONFIRM_WORDS = new Set(["ya", "iya", "yes", "y", "ok", "oke", "okay", "lanjut", "konfirmasi", "setuju", "benar"]);
-const CANCEL_WORDS = new Set(["batal", "tidak", "gak", "nggak", "no", "cancel", "jangan", "batalkan"]);
+const CONFIRM_WORDS = new Set([
+  "ya", "iya", "yes", "y", "ok", "oke", "okay", "okey", "lanjut", "lanjutkan", "konfirmasi", "setuju", "benar",
+  "betul", "simpan", "boleh", "silakan", "siap", "sip", "gas", "yup", "yap",
+]);
+const CANCEL_WORDS = new Set(["batal", "batalkan", "tidak", "gak", "nggak", "enggak", "no", "cancel", "jangan"]);
+/** Kata pelengkap yang boleh menyertai jawaban ya/batal ("ya simpan saja",
+ * "tidak jadi", "oke deh"). */
+const FILLER_WORDS = new Set(["saja", "aja", "usah", "dong", "deh", "kok", "jadi", "sudah", "udah", "kak", "min", "please", "tolong"]);
 
-function normalizeReply(text: string): string {
-  return text.toLowerCase().replace(/[^a-z\s]/g, "").trim();
+/**
+ * "ya lanjut" / "oke simpan aja" = konfirmasi; "tidak jadi" = batal. Dulu cuma
+ * satu kata persis yang dikenali, jadi "Ya, lanjut" diam-diam MEMBUANG aksi
+ * yang sedang menunggu konfirmasi. Kalimat yang mengandung hal lain (mis.
+ * "ya tapi tanggalnya ganti") tetap diteruskan ke AI.
+ */
+function classifyReply(text: string): "confirm" | "cancel" | null {
+  const words = text.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 5) return null;
+  const onlyFrom = (set: Set<string>) => words.every((w) => set.has(w) || FILLER_WORDS.has(w));
+  if (words.some((w) => CANCEL_WORDS.has(w)) && onlyFrom(CANCEL_WORDS)) return "cancel";
+  if (words.some((w) => CONFIRM_WORDS.has(w)) && onlyFrom(CONFIRM_WORDS)) return "confirm";
+  return null;
 }
 
 export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: string }> {
@@ -185,11 +202,11 @@ export async function sendAIMessage(
   const userContext = buildUserContext(profile);
   const agent = (agentId && getAgentById(agentId)) || getDefaultAgent();
 
-  const reply = normalizeReply(text);
+  const reply = classifyReply(text);
   // Pesan yang membawa gambar selalu diproses sebagai pesan baru, bukan
   // jawaban "Ya"/"Batal" untuk aksi yang menunggu konfirmasi.
-  const isConfirmation = !imageBase64 && CONFIRM_WORDS.has(reply);
-  const isCancel = !imageBase64 && CANCEL_WORDS.has(reply);
+  const isConfirmation = !imageBase64 && reply === "confirm";
+  const isCancel = !imageBase64 && reply === "cancel";
 
   // Ambil pesan terakhir untuk cek pending action
   const { data: lastMessages } = await supabase

@@ -378,7 +378,10 @@ export function EventExpenseManager({
             return exists ? prev.map((item) => (item.id === expense.id ? expense : item)) : [expense, ...prev];
           });
           showToast(editTarget ? "Pengeluaran berhasil diperbarui." : "Pengeluaran berhasil dicatat.");
-          setEditTarget(null);
+          // editTarget TIDAK dikosongkan di sini: kalau ada bukti yang gagal
+          // diunggah, modal tetap terbuka menampilkan peringatan -- mengosongkan
+          // editTarget saat itu mengubah form jadi form tambah kosong dan
+          // peringatannya hilang. onClose yang mengosongkannya.
         }}
       />
 
