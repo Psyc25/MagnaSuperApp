@@ -113,3 +113,37 @@ menunggu diskusi.
   fire-and-forget yang bisa terputus di serverless.
 - **Realisasi Event**: pengeluaran yang terkait booking/proyek/event yang
   kemudian dibatalkan tidak lagi tampil "—" atau kehilangan kaitannya.
+
+## Audit Migrasi Database — 5 Oktober 2026
+
+Seluruh 88 file migrasi dicocokkan objek demi objek dengan database
+production (±1.250 objek), ke dua arah:
+
+- **Production kurang dari repo** → sudah diterapkan: 0021 (19 CHECK
+  constraint integritas data yang tidak pernah terpasang) dan komentar
+  kolom 0081.
+- **Repo kurang dari production** → 6 migrasi yang dulu diterapkan langsung
+  di production tanpa file kini dipulihkan VERBATIM dari
+  `supabase_migrations.schema_migrations` (diverifikasi md5):
+  0044a, 0058a–0058d, 0077a. Ditambah 0089 yang mencatat perubahan
+  `handle_new_user` + trigger `on_auth_user_created` (dulu lewat SQL Editor).
+- **Bug urutan di file lama** diperbaiki supaya bisa dijalankan dari nol:
+  0026 (UPDATE sebelum constraint lama dihapus), 0086 (revoke fungsi
+  `ping_test_fn*` yang tidak pernah ada di repo, kini kondisional).
+- **Bukti**: `supabase/verify/rebuild.sh` menerapkan ke-95 file berurutan
+  ke Postgres kosong tanpa error, dan sidik skema hasilnya
+  (`schema_fingerprint.sql`) identik dengan production di semua kategori.
+  Satu-satunya selisih: komentar di dalam body
+  `post_capital_request_journal` (logika sama).
+
+**Masih menunggu**:
+- Migrasi 0087 (hapus `ping_test_fn*`) dijalankan manual di SQL Editor.
+  Tool migrasi menolak DROP; fungsinya sudah tidak bisa dipanggil siapa pun.
+- **Keputusan Owner (akuntansi)**: di production, pengeluaran berstatus
+  reimbursement "Tidak Perlu" dikredit ke Modal Pemilik (3-1000), tidak ke
+  Kas/Bank (migrasi 0058a). Padahal "Tidak Perlu" adalah pilihan DEFAULT di
+  form Realisasi Event, termasuk untuk pengeluaran yang dibayar dari
+  rekening perusahaan. Akibatnya saldo Kas/Bank tidak berkurang untuk
+  pengeluaran itu. Belum ada data yang terdampak (0 pengeluaran). Perlu
+  diputuskan: apakah default diganti, atau ditambah pilihan "Dibayar
+  perusahaan" yang mengkredit Kas/Bank.

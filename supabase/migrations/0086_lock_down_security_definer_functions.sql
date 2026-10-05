@@ -47,12 +47,20 @@ grant execute on function public.delete_event_expense_journal(uuid) to authentic
 grant execute on function public.transfer_material_stock(uuid, integer, text, text) to authenticated;
 grant execute on function public.save_booth_project_checked(uuid, text, uuid, text, text, text, date, date, integer, text, integer, jsonb, text, date) to authenticated;
 
-revoke execute on function public.ping_test_fn() from public, anon, authenticated;
-revoke execute on function public.ping_test_fn3() from public, anon, authenticated;
-revoke execute on function public.ping_test_fn4() from public, anon, authenticated;
-revoke execute on function public.ping_test_fn5(uuid) from public, anon, authenticated;
-revoke execute on function public.ping_test_fn6(uuid) from public, anon, authenticated;
-revoke execute on function public.ping_test_fn7(uuid) from public, anon, authenticated;
-revoke execute on function public.ping_test_fn9(uuid) from public, anon, authenticated;
-revoke execute on function public.ping_test_fn11(uuid) from public, anon, authenticated;
-revoke execute on function public.ping_test_fn12(uuid) from public, anon, authenticated;
+-- ping_test_fn* cuma pernah ada di production (dibuat ad hoc, tidak lewat
+-- file migrasi), jadi dicabut secara kondisional supaya file ini tetap bisa
+-- dijalankan saat database dibangun ulang dari repo.
+do $$
+declare
+  fn text;
+begin
+  foreach fn in array array[
+    'public.ping_test_fn()', 'public.ping_test_fn3()', 'public.ping_test_fn4()',
+    'public.ping_test_fn5(uuid)', 'public.ping_test_fn6(uuid)', 'public.ping_test_fn7(uuid)',
+    'public.ping_test_fn9(uuid)', 'public.ping_test_fn11(uuid)', 'public.ping_test_fn12(uuid)'
+  ] loop
+    if to_regprocedure(fn) is not null then
+      execute format('revoke execute on function %s from public, anon, authenticated', fn);
+    end if;
+  end loop;
+end $$;
