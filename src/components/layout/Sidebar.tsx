@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { LayoutGrid } from "lucide-react";
 import {
   ADMIN_LINKS,
+  AI_ASSISTANT_LINK,
   CHAT_LINK,
   DIVISION_REPORT_LINKS,
   FINANCE_LINKS,
@@ -56,6 +57,9 @@ export function Sidebar({ division }: { division?: Division | null }) {
   const isVirtualOfficeActive =
     pathname === VIRTUAL_OFFICE_LINK.href || pathname.startsWith(`${VIRTUAL_OFFICE_LINK.href}/`);
   const VirtualOfficeIcon = VIRTUAL_OFFICE_LINK.icon;
+  const isAIAssistantActive =
+    pathname === AI_ASSISTANT_LINK.href || pathname.startsWith(`${AI_ASSISTANT_LINK.href}/`);
+  const AIAssistantIcon = AI_ASSISTANT_LINK.icon;
 
   return (
     <aside
@@ -176,9 +180,9 @@ export function Sidebar({ division }: { division?: Division | null }) {
           </div>
         )}
 
-        {/* Kantor Virtual (modul baru) -- SENGAJA tidak dibungkus showChat/
-            isInvestor seperti tiga link di atas, karena modul ini justru
-            harus kelihatan buat SEMUA divisi termasuk investor. */}
+        {/* Kantor Virtual & Asisten AI -- SENGAJA tidak dibungkus showChat/
+            isInvestor, karena modul ini justru harus kelihatan buat SEMUA
+            divisi termasuk investor. */}
         <div className="pt-5">
           <ul className="space-y-1">
             <li>
@@ -193,6 +197,20 @@ export function Sidebar({ division }: { division?: Division | null }) {
               >
                 <VirtualOfficeIcon className="h-[18px] w-[18px]" />
                 {t(VIRTUAL_OFFICE_LINK.label)}
+              </Link>
+            </li>
+            <li>
+              <Link
+                href={AI_ASSISTANT_LINK.href}
+                className={cn(
+                  "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors",
+                  isAIAssistantActive
+                    ? "bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
+                    : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-white"
+                )}
+              >
+                <AIAssistantIcon className="h-[18px] w-[18px]" />
+                {t(AI_ASSISTANT_LINK.label)}
               </Link>
             </li>
           </ul>

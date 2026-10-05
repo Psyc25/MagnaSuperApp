@@ -6,6 +6,7 @@ import { MaintenanceBanner } from "./MaintenanceBanner";
 import { ImportantNotificationBanner } from "@/components/notifications/ImportantNotificationBanner";
 import { PullToRefresh } from "./PullToRefresh";
 import { WelcomeSplash } from "./WelcomeSplash";
+import { AIFloatingChat } from "@/components/ai/AIFloatingChat";
 import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
 import { formatDisplayName } from "@/lib/shared/utils";
 import type { Profile } from "@/lib/supabase/types";
@@ -55,6 +56,8 @@ export function AppShell({
           </main>
         </div>
       </div>
+      {/* Floating AI Chat Widget — tersedia di SEMUA halaman dashboard */}
+      <AIFloatingChat />
     </LocaleProvider>
   );
 }

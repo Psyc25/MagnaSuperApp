@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { LayoutGrid, Menu, X } from "lucide-react";
 import {
   ADMIN_LINKS,
+  AI_ASSISTANT_LINK,
   CHAT_LINK,
   DIVISION_REPORT_LINKS,
   FINANCE_LINKS,
@@ -97,6 +98,9 @@ export function MobileNav({ division }: { division?: Division | null }) {
   const isVirtualOfficeActive =
     pathname === VIRTUAL_OFFICE_LINK.href || pathname.startsWith(`${VIRTUAL_OFFICE_LINK.href}/`);
   const VirtualOfficeIcon = VIRTUAL_OFFICE_LINK.icon;
+  const isAIAssistantActive =
+    pathname === AI_ASSISTANT_LINK.href || pathname.startsWith(`${AI_ASSISTANT_LINK.href}/`);
+  const AIAssistantIcon = AI_ASSISTANT_LINK.icon;
   const currentLabel =
     pathname === HUB_HREF
       ? t("Dashboard Hub")
@@ -110,6 +114,7 @@ export function MobileNav({ division }: { division?: Division | null }) {
             (isRealisasiEventActive ? REALISASI_EVENT_LINK.label : undefined) ??
             (isTrackingEventActive ? TRACKING_EVENT_LINK.label : undefined) ??
             (isVirtualOfficeActive ? VIRTUAL_OFFICE_LINK.label : undefined) ??
+            (isAIAssistantActive ? AI_ASSISTANT_LINK.label : undefined) ??
             "Menu"
         );
 
@@ -255,7 +260,7 @@ export function MobileNav({ division }: { division?: Division | null }) {
                 </div>
               )}
 
-              {/* Kantor Virtual (modul baru) -- SENGAJA tidak dibungkus
+              {/* Kantor Virtual & Asisten AI -- SENGAJA tidak dibungkus
                   showChat/isInvestor, karena modul ini harus kelihatan buat
                   SEMUA divisi termasuk investor. */}
               <div className="pt-5">
@@ -270,6 +275,18 @@ export function MobileNav({ division }: { division?: Division | null }) {
                     >
                       <VirtualOfficeIcon className="h-[18px] w-[18px]" />
                       {t(VIRTUAL_OFFICE_LINK.label)}
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      href={AI_ASSISTANT_LINK.href}
+                      className={linkClass(
+                        isAIAssistantActive,
+                        "bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
+                      )}
+                    >
+                      <AIAssistantIcon className="h-[18px] w-[18px]" />
+                      {t(AI_ASSISTANT_LINK.label)}
                     </Link>
                   </li>
                 </ul>

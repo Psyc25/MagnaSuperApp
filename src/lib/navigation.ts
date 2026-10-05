@@ -4,6 +4,7 @@ import {
   BarChart3,
   BellRing,
   BookOpenText,
+  Bot,
   Boxes,
   CalendarClock,
   ClipboardList,
@@ -238,6 +239,19 @@ export const VIRTUAL_OFFICE_LINK: QuickLink = {
   label: "Kantor Virtual",
   shortLabel: "Kantor",
   icon: Gamepad2,
+};
+
+/**
+ * Tautan "Asisten AI" (Tahap 80) — terkoneksi ke 9Router/Hermes, gateway AI
+ * self-hosted milik Magna. SENGAJA terbuka untuk SEMUA divisi TERMASUK
+ * investor (beda dari Chat tim yang menutup investor) — percakapan bersifat
+ * PRIBADI per-user, tidak ada akses lintas-user.
+ */
+export const AI_ASSISTANT_LINK: QuickLink = {
+  href: "/dashboard/ai-assistant",
+  label: "Asisten AI",
+  shortLabel: "AI",
+  icon: Bot,
 };
 
 /** Tautan halaman Investor (division "investor" atau "all") — sama alasannya dengan ADMIN_LINKS di atas. */
