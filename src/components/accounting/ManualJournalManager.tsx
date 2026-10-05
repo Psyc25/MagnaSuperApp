@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, BookText, CheckCircle2, Loader2, Plus, Trash2 } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
@@ -12,6 +12,7 @@ import { DIVISION_LABELS, type Account, type JournalEntry, type ManualJournalDiv
 import { formatDateID, formatRupiah, todayISO } from "@/lib/shared/utils";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { useSyncedState } from "@/lib/shared/use-synced-state";
 
 type Side = "Debit" | "Kredit";
 type LineRow = { accountCode: string; side: Side; amount: string; notes: string };
@@ -47,8 +48,7 @@ export function ManualJournalManager({
 }) {
   const router = useRouter();
   const { showToast } = useToast();
-  const [entries, setEntries] = useState(initialEntries);
-  useEffect(() => setEntries(initialEntries), [initialEntries]);
+  const [entries, setEntries] = useSyncedState(initialEntries);
 
   const activeAccounts = useMemo(
     () => [...accounts].filter((a) => a.isActive).sort((a, b) => a.code.localeCompare(b.code)),

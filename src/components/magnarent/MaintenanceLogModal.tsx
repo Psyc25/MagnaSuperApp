@@ -12,6 +12,7 @@ import {
   getMaintenanceLogs,
 } from "@/lib/magnarent/extras-actions";
 import { MAINTENANCE_JENIS, type MaintenanceJenis, type MaintenanceLog } from "@/lib/magnarent/extras-types";
+import { useResetOnChange } from "@/lib/shared/use-synced-state";
 
 const EMPTY_FORM = { tanggal: todayISO(), jenis: "Servis Rutin" as MaintenanceJenis, keterangan: "", biaya: "0" };
 
@@ -40,11 +41,21 @@ export function MaintenanceLogModal({
   const [submitting, setSubmitting] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
+  useResetOnChange(open ? itemId : null, (key) => {
+    if (key === null) return;
     setForm(EMPTY_FORM);
     setError(null);
-    getMaintenanceLogs(itemId).then(setLogs);
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    getMaintenanceLogs(itemId).then((rows) => {
+      if (!cancelled) setLogs(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [open, itemId]);
 
   async function handleSubmit(e: FormEvent) {

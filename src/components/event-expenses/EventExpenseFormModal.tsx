@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { Plus, Receipt, Trash2, Upload, X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { todayISO } from "@/lib/shared/utils";
@@ -14,6 +14,7 @@ import {
   type ExpenseProof,
   type ExpenseSourceOption,
 } from "@/lib/event-expenses/types";
+import { useResetOnChange } from "@/lib/shared/use-synced-state";
 
 const GRADIENT = "linear-gradient(135deg, #4C1D95 0%, #7C3AED 100%)";
 
@@ -89,15 +90,14 @@ export function EventExpenseFormModal({
 
   // Prefill/reset form setiap kali modal dibuka — baik mode tambah (form
   // kosong) maupun mode edit (form terisi dari `editing`).
-  useEffect(() => {
-    if (!open) return;
+  useResetOnChange(open ? (editing?.id ?? "new") : null, (key) => {
+    if (key === null) return;
     setForm(editing ? formFromExpense(editing) : emptyForm());
     setExistingProofs(editing?.proofs ?? []);
     setFiles([]);
     setError(null);
     setUploadWarning(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, editing?.id]);
+  });
 
   const sourceByKey = useMemo(() => {
     const map = new Map<string, ExpenseSourceOption>();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import NextLink from "next/link";
 import {
@@ -51,6 +51,8 @@ import {
   type VendorOption,
 } from "@/lib/events/types";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { loadXlsx } from "@/lib/shared/xlsx";
+import { useSyncedState } from "@/lib/shared/use-synced-state";
 
 function emptyItemForm() {
   return {
@@ -99,10 +101,8 @@ export function EventDetailManager({
   const router = useRouter();
   const { showToast } = useToast();
 
-  const [checklistItems, setChecklistItems] = useState(initialChecklistItems);
-  useEffect(() => setChecklistItems(initialChecklistItems), [initialChecklistItems]);
-  const [links, setLinks] = useState(initialLinks);
-  useEffect(() => setLinks(initialLinks), [initialLinks]);
+  const [checklistItems, setChecklistItems] = useSyncedState(initialChecklistItems);
+  const [links, setLinks] = useSyncedState(initialLinks);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [deleteEventConfirmOpen, setDeleteEventConfirmOpen] = useState(false);
   const [deletingEvent, setDeletingEvent] = useState(false);
@@ -254,8 +254,7 @@ export function EventDetailManager({
     setImportParsing(true);
     setImportFileName(file.name);
     try {
-      const xlsxModule: any = await import("xlsx");
-      const XLSX = xlsxModule.default ?? xlsxModule;
+      const XLSX = await loadXlsx();
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(new Uint8Array(buffer), { type: "array" });
       const firstSheetName = workbook.SheetNames[0];
@@ -831,9 +830,9 @@ export function EventDetailManager({
               className="w-full rounded-xl border border-zinc-300 bg-transparent px-3.5 py-2.5 text-sm outline-none file:mr-3 file:rounded-full file:border-0 file:bg-violet-50 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-violet-700 dark:border-zinc-700 dark:file:bg-violet-500/10 dark:file:text-violet-300"
             />
             <p className="mt-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
-              Mendukung file dengan kolom "Kategori" eksplisit, ATAU checklist dengan baris judul kategori tersendiri
-              (mis. "A. VENUE") diikuti baris-baris item -- persis seperti contoh checklist Owner. Kolom Status/PIC
-              di file sumber dilewati -- semua item baru masuk dengan status "Belum Mulai".
+              Mendukung file dengan kolom &ldquo;Kategori&rdquo; eksplisit, ATAU checklist dengan baris judul kategori tersendiri
+              (mis. &ldquo;A. VENUE&rdquo;) diikuti baris-baris item -- persis seperti contoh checklist Owner. Kolom Status/PIC
+              di file sumber dilewati -- semua item baru masuk dengan status &ldquo;Belum Mulai&rdquo;.
             </p>
           </div>
 

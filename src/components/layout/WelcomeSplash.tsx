@@ -22,12 +22,14 @@ export function WelcomeSplash({ name }: { name: string }) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
-  const [phase, setPhase] = useState<"hidden" | "visible" | "leaving">("hidden");
+  // Langsung "visible" di render pertama kalau datang dari login -- bukan
+  // setState di dalam effect (render berantai + sekilas kosong).
+  const [phase, setPhase] = useState<"hidden" | "visible" | "leaving">(() =>
+    searchParams.get("welcome") === "1" ? "visible" : "hidden"
+  );
 
   useEffect(() => {
     if (searchParams.get("welcome") !== "1") return;
-
-    setPhase("visible");
 
     const params = new URLSearchParams(searchParams);
     params.delete("welcome");

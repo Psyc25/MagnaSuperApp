@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { loadXlsx } from "@/lib/shared/xlsx";
 
 export type ExportSheet = {
   /** Nama tab di file Excel — dipotong ke 31 karakter (batas format .xlsx). */
@@ -55,8 +56,7 @@ export function ExportButton({
     setBusy(true);
     setError(null);
     try {
-      const xlsxModule: any = await import("xlsx");
-      const XLSX = xlsxModule.default ?? xlsxModule;
+      const XLSX = await loadXlsx();
       const workbook = XLSX.utils.book_new();
 
       const usedNames = new Set<string>();

@@ -117,6 +117,7 @@ function ContractDocument({
     <Document>
       <Page size="A4" style={styles.page}>
         <View style={styles.headerRow}>
+          {/* eslint-disable-next-line jsx-a11y/alt-text -- <Image> @react-pdf/renderer tidak punya atribut alt (bukan <img> HTML) */}
           {logoBuffer && <Image src={{ data: logoBuffer, format: "png" }} style={styles.logo} />}
           <View>
             <Text style={styles.docTitle}>SURAT PERJANJIAN SEWA ALAT</Text>

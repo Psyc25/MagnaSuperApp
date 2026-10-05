@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarClock, X } from "lucide-react";
 import { listUnreadImportantNotifications, markNotificationRead } from "@/lib/notifications/actions";
@@ -34,16 +34,19 @@ export function ImportantNotificationBanner() {
   const router = useRouter();
   const [items, setItems] = useState<AppNotification[]>([]);
 
-  const refresh = useCallback(async () => {
-    const fetched = await listUnreadImportantNotifications();
-    setItems(fetched);
-  }, []);
-
   useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, POLL_MS);
-    return () => clearInterval(interval);
-  }, [refresh]);
+    let cancelled = false;
+    const load = () =>
+      listUnreadImportantNotifications().then((fetched) => {
+        if (!cancelled) setItems(fetched);
+      });
+    load();
+    const interval = setInterval(load, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   const current = items[0];
   if (!current) return null;

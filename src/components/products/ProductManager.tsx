@@ -35,6 +35,7 @@ import {
 } from "@/lib/products/actions";
 import type { ImportSummary, Product, ProductDivision, ProductImportRow } from "@/lib/products/types";
 import { GLASS_BORDER, GLASS_INPUT, GLASS_SURFACE } from "@/lib/glass";
+import { loadXlsx } from "@/lib/shared/xlsx";
 
 const GRADIENT = "linear-gradient(135deg, #14B8A6 0%, #22D3EE 100%)";
 
@@ -426,16 +427,8 @@ export function ProductManager({ products }: { products: Product[] }) {
     setImportParsing(true);
     setImportFileName(file.name);
     try {
-      // Import dinamis supaya "xlsx" tidak ikut ke bundle awal halaman ini
-      // (cuma dipakai saat user benar-benar buka modal import). Di-typing
-      // `any` dengan sengaja: "xlsx" paket CommonJS, dan versi TypeScript
-      // yang dipakai Vercel (build kemarin sempat gagal type-check karena
-      // ini) tidak konsisten soal bentuk `default` di hasil dynamic import
-      // CJS — `.default` di-fallback ke modul itu sendiri di RUNTIME, dan
-      // `any` di sini menghindari TypeScript memvonis salah satu bentuk
-      // sebagai satu-satunya yang benar.
-      const xlsxModule: any = await import("xlsx");
-      const XLSX = xlsxModule.default ?? xlsxModule;
+      // Import dinamis -- lihat komentar di src/lib/shared/xlsx.ts.
+      const XLSX = await loadXlsx();
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(new Uint8Array(buffer), { type: "array" });
       const firstSheetName = workbook.SheetNames[0];
@@ -931,8 +924,8 @@ export function ProductManager({ products }: { products: Product[] }) {
             />
             <p className="mt-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
               Kolom yang dikenali: Nama, Divisi, Kategori, SKU, Harga, Satuan, Stok, Supplier, Catatan, FotoURL
-              (urutan bebas, tidak semua wajib diisi — cuma "Nama" yang wajib). Kolom Divisi boleh diisi lebih dari
-              satu divisi dipisah koma atau titik-koma (mis. "magnarent;production") kalau produknya memang dipakai
+              (urutan bebas, tidak semua wajib diisi — cuma &ldquo;Nama&rdquo; yang wajib). Kolom Divisi boleh diisi lebih dari
+              satu divisi dipisah koma atau titik-koma (mis. &ldquo;magnarent;production&rdquo;) kalau produknya memang dipakai
               lintas divisi. Kolom FotoURL boleh diisi lebih dari satu link foto, dipisah koma atau titik-koma — foto
               ditambahkan ke galeri, tidak menggantikan foto yang sudah ada.
             </p>

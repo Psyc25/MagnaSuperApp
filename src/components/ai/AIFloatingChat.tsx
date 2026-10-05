@@ -12,7 +12,6 @@ export function AIFloatingChat() {
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -22,18 +21,15 @@ export function AIFloatingChat() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  // Load messages saat pertama kali buka
+  // Riwayat dimuat saat pertama kali dibuka -- "sedang memuat" diturunkan
+  // langsung dari open && !loaded, bukan state terpisah yang di-set di effect.
+  const loading = open && !loaded;
   useEffect(() => {
-    if (open && !loaded) {
-      setLoading(true);
-      getAIMessages()
-        .then(({ messages: m }) => setMessages(m))
-        .catch(() => setError("Gagal memuat riwayat"))
-        .finally(() => {
-          setLoading(false);
-          setLoaded(true);
-        });
-    }
+    if (!open || loaded) return;
+    getAIMessages()
+      .then(({ messages: m }) => setMessages(m))
+      .catch(() => setError("Gagal memuat riwayat"))
+      .finally(() => setLoaded(true));
   }, [open, loaded]);
 
   // Auto scroll

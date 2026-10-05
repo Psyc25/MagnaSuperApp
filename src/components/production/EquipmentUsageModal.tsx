@@ -13,6 +13,7 @@ import {
   markEquipmentUsageReturned,
 } from "@/lib/production/extras-actions";
 import type { EquipmentUsage } from "@/lib/production/extras-types";
+import { useResetOnChange } from "@/lib/shared/use-synced-state";
 
 const EMPTY_FORM = { projectId: "", digunakanOleh: "", tanggalPinjam: todayISO(), catatan: "" };
 
@@ -42,11 +43,21 @@ export function EquipmentUsageModal({
   const [submitting, setSubmitting] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
+  useResetOnChange(open ? equipmentId : null, (key) => {
+    if (key === null) return;
     setForm(EMPTY_FORM);
     setError(null);
-    getEquipmentUsage(equipmentId).then(setLogs);
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    getEquipmentUsage(equipmentId).then((rows) => {
+      if (!cancelled) setLogs(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [open, equipmentId]);
 
   function reload() {

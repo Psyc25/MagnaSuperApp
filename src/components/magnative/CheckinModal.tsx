@@ -38,8 +38,15 @@ export function CheckinModal({ project, onClose }: { project: Project; onClose: 
   }
 
   useEffect(() => {
-    reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    Promise.all([listCheckinLinks(project.id), getCheckinStats(project.id)]).then(([linkRows, statRows]) => {
+      if (cancelled) return;
+      setLinks(linkRows);
+      setStats(statRows);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [project.id]);
 
   async function handleCreate() {

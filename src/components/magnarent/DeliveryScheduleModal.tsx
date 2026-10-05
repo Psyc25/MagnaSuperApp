@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/ToastProvider";
 import { cn } from "@/lib/cn";
 import { getDeliveries, getOrCreateTrackingLink, saveDelivery } from "@/lib/magnarent/extras-actions";
 import { DELIVERY_STATUS, type Delivery, type DeliveryStage, type DeliveryStatus } from "@/lib/magnarent/extras-types";
+import { useResetOnChange } from "@/lib/shared/use-synced-state";
 
 /** Format "X menit/jam lalu" sederhana, tanpa library eksternal. */
 function timeAgo(iso: string): string {
@@ -102,15 +103,15 @@ function StagePanel({
   const [submitting, setSubmitting] = useState(false);
   const Icon = STAGE_ICON[stage];
 
-  useEffect(() => {
+  useResetOnChange(delivery, (d) => {
     setForm({
-      driverName: delivery?.driverName ?? "",
-      jadwalTanggal: delivery?.jadwalTanggal ?? "",
-      jadwalJam: delivery?.jadwalJam ?? "",
-      status: delivery?.status ?? "Belum Dijadwalkan",
-      catatan: delivery?.catatan ?? "",
+      driverName: d?.driverName ?? "",
+      jadwalTanggal: d?.jadwalTanggal ?? "",
+      jadwalJam: d?.jadwalJam ?? "",
+      status: d?.status ?? "Belum Dijadwalkan",
+      catatan: d?.catatan ?? "",
     });
-  }, [delivery]);
+  });
 
   async function handleSave() {
     setSubmitting(true);

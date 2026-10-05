@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Loader2, Pencil, Plus, Receipt, Search, Trash2 } from "lucide-react";
 import { EventExpenseFormModal } from "./EventExpenseFormModal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -84,9 +84,10 @@ export function EventExpenseManager({
     return map;
   }, [sourceOptions]);
 
-  function labelFor(expense: EventExpense) {
-    return sourceLabelByKey.get(`${expense.sourceType}::${expense.sourceId ?? "umum"}`) ?? "—";
-  }
+  const labelFor = useCallback(
+    (expense: EventExpense) => sourceLabelByKey.get(`${expense.sourceType}::${expense.sourceId ?? "umum"}`) ?? "—",
+    [sourceLabelByKey]
+  );
 
   const filtered = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -100,7 +101,7 @@ export function EventExpenseManager({
         labelFor(e).toLowerCase().includes(term)
       );
     });
-  }, [expenses, divisionFilter, categoryFilter, searchTerm]);
+  }, [expenses, divisionFilter, categoryFilter, searchTerm, labelFor]);
 
   const total = useMemo(() => filtered.reduce((sum, e) => sum + e.amount, 0), [filtered]);
 
@@ -172,7 +173,7 @@ export function EventExpenseManager({
         })),
       },
     ];
-  }, [filtered]);
+  }, [filtered, labelFor]);
 
   async function confirmDelete() {
     if (!deleteTarget) return;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Loader2, PackageSearch, Users } from "lucide-react";
 import { useProductionData } from "./ProductionDataProvider";
 import { getProjectCrewForProjects } from "@/lib/production/extras-actions";
@@ -23,15 +23,15 @@ import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
  */
 export function AutoscheduleConflictsPanel() {
   const { projects, materials } = useProductionData();
-  const [crewConflicts, setCrewConflicts] = useState<CrewScheduleConflict[] | null>(null);
+  const [fetchedCrewConflicts, setCrewConflicts] = useState<CrewScheduleConflict[] | null>(null);
   const materialPressure: MaterialPressure[] = findMaterialPressure(projects, materials);
+  const activeIds = useMemo(() => rankActiveProjectsByPriority(projects).map((p) => p.id), [projects]);
+  // Tanpa proyek aktif tidak ada yang perlu diambil -- langsung "tidak ada
+  // bentrok", bukan setState di dalam effect.
+  const crewConflicts = activeIds.length === 0 ? [] : fetchedCrewConflicts;
 
   useEffect(() => {
-    const activeIds = rankActiveProjectsByPriority(projects).map((p) => p.id);
-    if (activeIds.length === 0) {
-      setCrewConflicts([]);
-      return;
-    }
+    if (activeIds.length === 0) return;
     let cancelled = false;
     getProjectCrewForProjects(activeIds).then((crew) => {
       if (cancelled) return;
@@ -41,7 +41,7 @@ export function AutoscheduleConflictsPanel() {
     return () => {
       cancelled = true;
     };
-  }, [projects]);
+  }, [projects, activeIds]);
 
   const hasCrewIssue = (crewConflicts?.length ?? 0) > 0;
   const hasMaterialIssue = materialPressure.length > 0;

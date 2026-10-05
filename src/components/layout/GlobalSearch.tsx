@@ -58,10 +58,8 @@ export function GlobalSearch() {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
     const trimmed = query.trim();
-    if (trimmed.length < MIN_QUERY_LENGTH) {
-      setResults([]);
-      return;
-    }
+    // Hasil dikosongkan di onChange (event handler), bukan di sini.
+    if (trimmed.length < MIN_QUERY_LENGTH) return;
 
     debounceRef.current = setTimeout(() => {
       startTransition(async () => {
@@ -115,7 +113,10 @@ export function GlobalSearch() {
                 ref={inputRef}
                 type="text"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  if (e.target.value.trim().length < MIN_QUERY_LENGTH) setResults([]);
+                }}
                 onKeyDown={handleKeyDown}
                 placeholder={t("Cari booking, klien, invoice, dll…")}
                 className="w-full bg-transparent text-sm text-zinc-800 outline-none placeholder:text-zinc-400 dark:text-zinc-100"

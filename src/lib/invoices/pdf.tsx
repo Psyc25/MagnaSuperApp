@@ -258,6 +258,7 @@ function InvoiceDocument({ invoice }: { invoice: Invoice }) {
       <Page size="A4" style={styles.page}>
         <View style={styles.headerRow}>
           <View style={styles.brandCol}>
+            {/* eslint-disable-next-line jsx-a11y/alt-text -- <Image> @react-pdf/renderer tidak punya atribut alt (bukan <img> HTML) */}
             {logoBuffer && <Image src={{ data: logoBuffer, format: "png" }} style={styles.logo} />}
             <Text style={styles.brandSub}>{division.tagline}</Text>
           </View>
@@ -440,6 +441,7 @@ function InvoiceDocument({ invoice }: { invoice: Invoice }) {
           <Text style={styles.signatureDivision}>{division.label}</Text>
           {signatureBuffer ? (
             <>
+              {/* eslint-disable-next-line jsx-a11y/alt-text -- <Image> @react-pdf/renderer tidak punya atribut alt (bukan <img> HTML) */}
               <Image src={{ data: signatureBuffer, format: "png" }} style={styles.signatureImage} />
               <Text style={styles.signaturePic}>{invoice.picName}</Text>
             </>

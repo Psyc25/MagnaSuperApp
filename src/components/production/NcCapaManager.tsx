@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type FormEvent } from "react";
 import { Building2, CheckCircle2, Plus, Search, ShieldAlert, Trash2, UserRound } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -88,7 +88,7 @@ export function NcCapaManager({ ncReports, vendors }: { ncReports: NcReport[]; v
   const [statusFilter, setStatusFilter] = useState<string>(ALL_FILTER);
   const [severityFilter, setSeverityFilter] = useState<string>(ALL_FILTER);
 
-  const vendorName = (id: string | null) => vendors.find((v) => v.id === id)?.name ?? null;
+  const vendorName = useCallback((id: string | null) => vendors.find((v) => v.id === id)?.name ?? null, [vendors]);
   const projectName = (id: string | null) => projects.find((p) => p.id === id)?.name ?? null;
 
   const filtered = useMemo(() => {
@@ -104,7 +104,7 @@ export function NcCapaManager({ ncReports, vendors }: { ncReports: NcReport[]; v
       const matchesSeverity = severityFilter === ALL_FILTER || r.severity === severityFilter;
       return matchesSearch && matchesStatus && matchesSeverity;
     });
-  }, [ncReports, searchTerm, statusFilter, severityFilter, vendors, projects]);
+  }, [ncReports, searchTerm, statusFilter, severityFilter, vendorName]);
 
   /** Ringkasan riwayat kualitas per vendor -- murni agregasi hitung, non-AI. */
   const vendorSummary = useMemo(() => {
@@ -118,7 +118,7 @@ export function NcCapaManager({ ncReports, vendors }: { ncReports: NcReport[]; v
       map.set(r.vendorId, entry);
     }
     return Array.from(map.values()).sort((a, b) => b.open - a.open || b.total - a.total);
-  }, [ncReports, vendors]);
+  }, [ncReports, vendorName]);
 
   /** Ringkasan riwayat kualitas per PIC/kru (teks bebas, sama pola dengan `ProjectCrew.nama`). */
   const picSummary = useMemo(() => {

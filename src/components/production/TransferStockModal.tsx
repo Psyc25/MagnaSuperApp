@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/ToastProvider";
 import { getMaterialTransfers, transferMaterialStock } from "@/lib/production/extras-actions";
 import type { MaterialTransfer } from "@/lib/production/extras-types";
 import type { MaterialItem } from "@/lib/production/types";
+import { useResetOnChange } from "@/lib/shared/use-synced-state";
 
 const EMPTY_FORM = { qty: "", toLocation: "", catatan: "" };
 
@@ -55,11 +56,21 @@ export function TransferStockModal({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
+  useResetOnChange(open ? material.id : null, (key) => {
+    if (key === null) return;
     setForm(EMPTY_FORM);
     setError(null);
-    getMaterialTransfers(material.id).then(setTransfers);
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    getMaterialTransfers(material.id).then((rows) => {
+      if (!cancelled) setTransfers(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [open, material.id]);
 
   async function handleSubmit(e: FormEvent) {

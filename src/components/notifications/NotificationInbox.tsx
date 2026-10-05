@@ -53,10 +53,20 @@ export function NotificationInbox() {
   }, []);
 
   useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, POLL_MS);
-    return () => clearInterval(interval);
-  }, [refresh]);
+    let cancelled = false;
+    const load = () =>
+      listMyNotifications().then(({ items: fetched, unreadCount: unread }) => {
+        if (cancelled) return;
+        setItems(fetched);
+        setUnreadCount(unread);
+      });
+    load();
+    const interval = setInterval(load, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
