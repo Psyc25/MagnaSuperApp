@@ -41,7 +41,6 @@ export function AutoscheduleConflictsPanel() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects]);
 
   const hasCrewIssue = (crewConflicts?.length ?? 0) > 0;

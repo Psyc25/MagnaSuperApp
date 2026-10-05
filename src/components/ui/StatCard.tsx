@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
@@ -20,8 +20,6 @@ export type StatCardRatio = {
  */
 function useCountUp(target: number, durationMs = 700): number {
   const [value, setValue] = useState(0);
-  const targetRef = useRef(target);
-  targetRef.current = target;
 
   useEffect(() => {
     let raf: number;
@@ -30,7 +28,7 @@ function useCountUp(target: number, durationMs = 700): number {
     function tick(now: number) {
       const progress = Math.min((now - start) / durationMs, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
-      setValue(Math.round(targetRef.current * eased));
+      setValue(Math.round(target * eased));
       if (progress < 1) raf = requestAnimationFrame(tick);
     }
 

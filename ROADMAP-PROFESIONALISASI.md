@@ -29,7 +29,7 @@ seperti Tahap 1-11 sebelumnya — bukan sekaligus dalam satu commit raksasa.
 
 ---
 
-## Tahap 12 — Jaring pengaman & rapikan yang berulang (SEDANG DIKERJAKAN)
+## Tahap 12 — Jaring pengaman & rapikan yang berulang (SELESAI)
 
 Risiko paling rendah, dampak paling terasa. Semua item ini murah untuk
 saya kerjakan dan tidak mengubah cara kerja fitur yang sudah ada:
@@ -51,7 +51,7 @@ saya kerjakan dan tidak mengubah cara kerja fitur yang sudah ada:
   terpisah — kalau nambah menu baru dan lupa update salah satu, tampilan
   HP & laptop bisa beda sendiri. Disatukan jadi satu sumber.
 
-## Tahap 13 — Rapikan kode yang berulang (belum dikerjakan)
+## Tahap 13 — Rapikan kode yang berulang (SELESAI)
 
 - Satukan warna badge status (Menunggu/Disetujui/Lunas/dst) yang saat ini
   ditulis ulang di 14 file berbeda jadi satu file bersama — supaya kalau
@@ -60,7 +60,7 @@ saya kerjakan dan tidak mengubah cara kerja fitur yang sudah ada:
   (`window.confirm`, tampilannya polos & beda dari kotak konfirmasi
   aplikasi) ke komponen konfirmasi yang sudah dipakai di 13 tempat lain.
 
-## Tahap 14 — Batasi query yang bisa membengkak (belum dikerjakan)
+## Tahap 14 — Batasi query yang bisa membengkak (SELESAI)
 
 - Tambah batas jumlah data yang diambil sekaligus untuk tabel yang
   paling berpotensi tumbuh besar (booking, invoice, log aktivitas) —
@@ -86,6 +86,30 @@ waktu lebih lama:
 
 ---
 
-Saya mulai dari **Tahap 12** sekarang. Setiap tahap tetap saya verifikasi
-lewat log server Vercel + saya coba langsung sebelum lapor selesai, sama
-seperti proses sebelumnya.
+Status (5 Oktober 2026): Tahap 12–14 sudah selesai. Tahap 15+ masih
+menunggu diskusi.
+
+## QC Menyeluruh — 5 Oktober 2026
+
+- **Asisten AI**: hampir semua tool memakai nama kolom yang tidak ada di
+  database (mis. `nama`/`kategori`, padahal `name`/`category`), jadi setiap
+  pertanyaan data gagal. Ditulis ulang mengikuti skema asli. Aksi
+  (buat booking, ubah status, catat pengeluaran) sekarang lewat Server
+  Action yang sama dengan form: cek bentrok jadwal, jurnal otomatis, dan
+  log aktivitas ikut berlaku. Tool dipilih sesuai divisi user, bisa
+  beberapa langkah dalam satu pesan, ada tanggal hari ini, dan bisa
+  dibatalkan dengan "Batal".
+- **Konfirmasi "Ya" ganda** (migrasi 0085): tabel pesan AI tidak punya izin
+  UPDATE, jadi aksi yang sudah dikonfirmasi bisa jalan dua kali.
+- **Keamanan** (migrasi 0086): fungsi jurnal bisa dipanggil tanpa login
+  memakai anon key publik (termasuk hapus jurnal dana investor). Hak
+  aksesnya dicabut dari pengguna anonim. Fungsi sisa uji coba
+  `ping_test_fn*` dinonaktifkan; migrasi 0087 (hapus total) perlu
+  dijalankan manual di SQL Editor.
+- **Akuntansi**: laporan Laba-Rugi/Neraca/Arus Kas sekarang mengambil data
+  per halaman. Sebelumnya angkanya bisa salah tanpa error begitu jurnal
+  melewati ±1000 baris.
+- **Jurnal otomatis** sekarang ditunggu (`await`) sampai selesai, bukan
+  fire-and-forget yang bisa terputus di serverless.
+- **Realisasi Event**: pengeluaran yang terkait booking/proyek/event yang
+  kemudian dibatalkan tidak lagi tampil "—" atau kehilangan kaitannya.

@@ -16,7 +16,6 @@ import {
   Trash2,
   Truck,
   Users,
-  X as XIcon,
 } from "lucide-react";
 import { useMagnarentData, type BookingConflict } from "./MagnarentDataProvider";
 import { BookingConditionModal } from "./BookingConditionModal";
