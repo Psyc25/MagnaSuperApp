@@ -1,4 +1,4 @@
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClientSafe } from "@/lib/supabase/admin";
 import type { Division } from "@/lib/supabase/types";
 
 export type OfficeRosterEntry = {
@@ -21,22 +21,34 @@ export type OfficeRosterEntry = {
  * (tidak pernah sampai ke browser).
  */
 export async function getOfficeRoster(): Promise<OfficeRosterEntry[]> {
-  const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("profiles")
-    .select("id, full_name, username, division, avatar_url")
-    .order("full_name", { ascending: true });
+  const admin = createAdminClientSafe();
 
-  if (error) {
-    console.error("[virtual-office] getOfficeRoster gagal:", error.message);
+  // Graceful fallback jika admin client tidak tersedia
+  if (!admin) {
+    console.warn("[virtual-office] Admin client tidak tersedia, roster kosong");
     return [];
   }
 
-  return (data ?? []).map((row) => ({
-    id: row.id as string,
-    fullName: row.full_name as string,
-    username: (row.username as string | null) ?? null,
-    division: row.division as Division,
-    avatarUrl: (row.avatar_url as string | null) ?? null,
-  }));
+  try {
+    const { data, error } = await admin
+      .from("profiles")
+      .select("id, full_name, username, division, avatar_url")
+      .order("full_name", { ascending: true });
+
+    if (error) {
+      console.error("[virtual-office] getOfficeRoster gagal:", error.message);
+      return [];
+    }
+
+    return (data ?? []).map((row) => ({
+      id: row.id as string,
+      fullName: row.full_name as string,
+      username: (row.username as string | null) ?? null,
+      division: row.division as Division,
+      avatarUrl: (row.avatar_url as string | null) ?? null,
+    }));
+  } catch (err) {
+    console.error("[virtual-office] getOfficeRoster error:", err);
+    return [];
+  }
 }
