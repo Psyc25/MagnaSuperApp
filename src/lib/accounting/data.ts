@@ -514,6 +514,12 @@ export async function getCashFlowStatement(startDate: string, endDate: string): 
     if (cashAccountIds.includes(counter.id)) return "Lainnya"; // transfer internal Kas <-> Bank
     if (counter.account_subtype === "Aset Tetap") return "Investasi";
     if (counter.account_type === "Modal") return "Pendanaan";
+    // Dana investor (migrasi 0084) dibukukan sebagai utang (akun 2-1300),
+    // bukan Modal -- tapi secara arus kas ini tetap aktivitas Pendanaan,
+    // bukan Operasional. Dicek per kode akun (bukan account_type "Kewajiban"
+    // secara umum) supaya utang operasional biasa (Hutang Usaha/
+    // Reimbursement/Pajak) tetap benar masuk Operasional seperti sebelumnya.
+    if (counter.account_code === "2-1300") return "Pendanaan";
     return "Operasional";
   }
 

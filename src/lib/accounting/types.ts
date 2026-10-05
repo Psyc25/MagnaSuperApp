@@ -40,6 +40,12 @@ export const DIVISION_LABELS: Record<string, string> = {
   magnative: "Magnativ",
   production: "Production",
   finance: "Finance/Umum",
+  // Jurnal dari Realisasi Event yang terkait event umum lintas-divisi
+  // (migrasi 0082) & Pengajuan Modal/dana investor (migrasi 0084) --
+  // tanpa baris ini, keduanya tetap ikut ke rincian per divisi (fallback
+  // `DIVISION_LABELS[key] ?? key` di accounting/data.ts), cuma tampil
+  // sebagai teks mentah "event" alih-alih label yang rapi.
+  event: "Event (Lintas Divisi)",
   "": "Tanpa Divisi (Jurnal Manual)",
 };
 
