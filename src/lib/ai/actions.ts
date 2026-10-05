@@ -5,7 +5,7 @@ import { getDefaultAgent, type AIAgent } from "./agents";
 import { buildSystemPrompt, buildUserContext } from "./system-prompt";
 import { AI_TOOLS } from "./tools";
 import { executeToolCall } from "./tool-handlers";
-import type { UserContext, PendingAction, ToolDefinition } from "./types";
+import type { UserContext, PendingAction, ToolDefinition, AIAttachment, MessageContent, TextContent, ImageContent } from "./types";
 
 export type AIMessage = {
   id: string;
@@ -14,11 +14,12 @@ export type AIMessage = {
   createdAt: string;
   agentId?: string;
   pendingAction?: PendingAction;
+  attachment?: AIAttachment;
 };
 
 type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: MessageContent; // string or multimodal array
   tool_calls?: ToolCall[];
   tool_call_id?: string;
 };
@@ -151,7 +152,8 @@ async function call9RouterAPI(
 
 export async function sendAIMessage(
   userMessage: string,
-  agentId?: string
+  agentId?: string,
+  imageBase64?: string
 ): Promise<{ message: AIMessage; error?: string } | { message?: undefined; error: string }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -159,7 +161,9 @@ export async function sendAIMessage(
   if (!user) return { error: "Tidak terautentikasi" };
 
   const text = userMessage.trim();
-  if (!text || text.length > 8000) return { error: "Pesan kosong atau terlalu panjang" };
+  // Allow empty text if there's an image
+  if (!text && !imageBase64) return { error: "Pesan kosong" };
+  if (text.length > 8000) return { error: "Pesan terlalu panjang" };
 
   // Ambil profile untuk konteks
   const { data: profile } = await supabase
@@ -231,10 +235,11 @@ export async function sendAIMessage(
     };
   }
 
-  // Simpan pesan user
+  // Simpan pesan user (dengan metadata gambar jika ada)
+  const userMsgMetadata = imageBase64 ? { hasImage: true } : {};
   const { data: userMsg, error: userErr } = await supabase
     .from("ai_assistant_messages")
-    .insert({ user_id: user.id, role: "user", content: text })
+    .insert({ user_id: user.id, role: "user", content: text || "(gambar)", metadata: userMsgMetadata })
     .select("id, role, content, created_at")
     .single();
 
@@ -256,11 +261,27 @@ export async function sendAIMessage(
   // Build messages dengan system prompt
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt },
-    ...((history ?? []).reverse().map((m) => ({
+    ...((history ?? []).reverse().slice(0, -1).map((m) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     }))),
   ];
+
+  // Add current user message (potentially with image)
+  if (imageBase64) {
+    // Multimodal content with image
+    const contentParts: (TextContent | ImageContent)[] = [];
+    if (text) {
+      contentParts.push({ type: "text", text });
+    }
+    contentParts.push({
+      type: "image_url",
+      image_url: { url: imageBase64, detail: "auto" },
+    });
+    messages.push({ role: "user", content: contentParts });
+  } else {
+    messages.push({ role: "user", content: text });
+  }
 
   // Panggil 9Router API
   let aiResponse: { content: string; toolCalls?: ToolCall[] };

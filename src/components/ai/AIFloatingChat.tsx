@@ -1,81 +1,46 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Loader2, Send, X } from "lucide-react";
-import { sendAIMessage, clearAIHistory, getAIMessages, type AIMessage } from "@/lib/ai/actions";
-import { getDefaultAgent } from "@/lib/ai/agents";
+import { Loader2, Send, X, ImagePlus } from "lucide-react";
+import { useAIChat, formatFileSize } from "@/lib/ai/hooks/useAIChat";
 import { AI_BRANDING } from "@/lib/ai/constants";
 import { cn } from "@/lib/cn";
+import { useEffect, useState } from "react";
 
 export function AIFloatingChat() {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<AIMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
 
-  // Internal agent (tidak ditampilkan ke user)
-  const agent = getDefaultAgent();
+  const {
+    messages,
+    input,
+    sending,
+    loading,
+    error,
+    selectedImage,
+    imagePreviewUrl,
+    setInput,
+    send,
+    clear,
+    loadMessages,
+    selectImage,
+    removeImage,
+    inputRef,
+    endRef,
+    fileInputRef,
+  } = useAIChat();
 
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const endRef = useRef<HTMLDivElement>(null);
-
-  // Load messages saat pertama kali buka
+  // Load messages when first opened
   useEffect(() => {
-    if (open && !loaded) {
-      setLoading(true);
-      getAIMessages()
-        .then(({ messages: m }) => setMessages(m))
-        .catch(() => setError("Gagal memuat riwayat"))
-        .finally(() => {
-          setLoading(false);
-          setLoaded(true);
-        });
-    }
-  }, [open, loaded]);
+    if (open) loadMessages();
+  }, [open, loadMessages]);
 
-  // Auto scroll
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, sending]);
-
-  // Focus input saat buka
+  // Focus input when opened
   useEffect(() => {
     if (open) inputRef.current?.focus();
-  }, [open]);
+  }, [open, inputRef]);
 
-  async function send() {
-    const text = input.trim();
-    if (!text || sending) return;
-
-    setSending(true);
-    setError(null);
-    setInput("");
-
-    // Optimistic add
-    const tempId = `temp-${Date.now()}`;
-    setMessages((m) => [...m, { id: tempId, role: "user", content: text, createdAt: new Date().toISOString() }]);
-
-    const res = await sendAIMessage(text, agent.id);
-    setSending(false);
-
-    if (res.error) {
-      setError(res.error);
-      setMessages((m) => m.filter((msg) => msg.id !== tempId));
-      setInput(text);
-    } else if (res.message) {
-      setMessages((m) => [...m.filter((msg) => msg.id !== tempId),
-        { id: `u-${Date.now()}`, role: "user", content: text, createdAt: new Date().toISOString() },
-        res.message
-      ]);
-    }
-  }
-
-  async function clear() {
-    await clearAIHistory();
-    setMessages([]);
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) selectImage(file);
   }
 
   if (!open) {
@@ -127,6 +92,7 @@ export function AIFloatingChat() {
             <span className="text-4xl">{AI_BRANDING.icon}</span>
             <p className="mt-2 text-sm text-zinc-500">Halo! Saya {AI_BRANDING.name}</p>
             <p className="text-xs text-zinc-400">{AI_BRANDING.shortDescription}</p>
+            <p className="mt-2 text-[10px] text-zinc-400">📷 Bisa kirim foto struk untuk input otomatis</p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -144,6 +110,14 @@ export function AIFloatingChat() {
                     ? "bg-indigo-500 text-white"
                     : "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"
                 )}>
+                  {/* Show image attachment if present */}
+                  {m.attachment?.type === "image" && (
+                    <img
+                      src={m.attachment.url}
+                      alt={m.attachment.name || "Gambar"}
+                      className="mb-1 max-h-32 rounded-lg object-contain"
+                    />
+                  )}
                   <div className="whitespace-pre-wrap">{m.content}</div>
                 </div>
               </div>
@@ -166,22 +140,58 @@ export function AIFloatingChat() {
       {/* Error */}
       {error && <p className="border-t bg-rose-50 px-3 py-1.5 text-[10px] text-rose-600 dark:bg-rose-900/20">{error}</p>}
 
+      {/* Image Preview */}
+      {selectedImage && imagePreviewUrl && (
+        <div className="border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
+          <div className="flex items-center gap-2 rounded-lg border border-zinc-200 p-2 dark:border-zinc-700">
+            <img src={imagePreviewUrl} alt="" className="h-10 w-10 rounded object-cover" />
+            <div className="flex-1 min-w-0">
+              <p className="truncate text-xs font-medium">{selectedImage.name}</p>
+              <p className="text-[10px] text-zinc-400">{formatFileSize(selectedImage.size)}</p>
+            </div>
+            <button onClick={removeImage} className="rounded p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800">
+              <X className="h-3.5 w-3.5 text-zinc-400" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input */}
       <div className="border-t border-zinc-100 p-2 dark:border-zinc-800">
         <div className="flex gap-2">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+
+          {/* Image button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-500 transition hover:bg-zinc-50 hover:text-violet-500 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            title="Kirim gambar"
+          >
+            <ImagePlus className="h-4 w-4" />
+          </button>
+
           <textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder={`Tanya ${AI_BRANDING.name}...`}
+            placeholder={selectedImage ? "Tambah keterangan..." : `Tanya ${AI_BRANDING.name}...`}
             rows={1}
             disabled={sending}
             className="flex-1 resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-xs outline-none focus:border-violet-400 disabled:opacity-50 dark:border-zinc-700"
           />
           <button
             onClick={send}
-            disabled={!input.trim() || sending}
+            disabled={(!input.trim() && !selectedImage) || sending}
             className={cn(
               "flex h-9 w-9 items-center justify-center rounded-lg text-white transition disabled:opacity-50",
               `bg-gradient-to-br ${AI_BRANDING.color}`
