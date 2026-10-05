@@ -327,45 +327,57 @@ export const ACTION_TOOLS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "create_event_expense",
-      description: "Catat pengeluaran event baru. HARUS konfirmasi dengan user sebelum mencatat.",
+      description:
+        "Catat pengeluaran (Realisasi Event) — untuk event, booking, proyek, booth, atau operasional umum. Cukup kategori & jumlah; tanggal, PIC, dan metode bayar punya default. Sistem otomatis meminta konfirmasi user sebelum menyimpan.",
       parameters: {
         type: "object",
         properties: {
-          eventId: {
-            type: "string",
-            description: "ID event terkait (dari get_events)",
-          },
-          eventName: {
-            type: "string",
-            description: "Nama event (untuk ringkasan konfirmasi)",
-          },
-          tanggal: {
-            type: "string",
-            description: "Tanggal pengeluaran (format: YYYY-MM-DD)",
-          },
-          kategori: {
+          category: {
             type: "string",
             enum: ["Sewa Venue", "Dekorasi & Material", "Transportasi", "Konsumsi", "Talent / Vendor", "Percetakan", "Operasional Kantor", "Lain-lain"],
             description: "Kategori pengeluaran",
           },
-          keterangan: {
-            type: "string",
-            description: "Deskripsi pengeluaran",
-          },
-          jumlah: {
+          amount: {
             type: "number",
             description: "Jumlah pengeluaran (Rupiah)",
           },
-          metodeBayar: {
+          sourceType: {
             type: "string",
-            description: "Metode pembayaran, mis. Cash, Transfer BCA, Qris, Transfer Jago (default: Cash)",
+            enum: ["event_tracking", "magnarent_booking", "magnative_project", "production_booth", "umum"],
+            description:
+              "Terkait apa: event (event_tracking), booking Magnarent, proyek Magnativ, booth Production, atau 'umum' (operasional tanpa event/proyek). Default: umum",
+          },
+          sourceId: {
+            type: "string",
+            description: "ID event/booking/proyek terkait (wajib kalau sourceType bukan 'umum'; cari dulu lewat query tool)",
+          },
+          sourceName: {
+            type: "string",
+            description: "Nama event/booking/proyek terkait (untuk ringkasan konfirmasi)",
+          },
+          division: {
+            type: "string",
+            enum: ["magnarent", "magnative", "production", "finance"],
+            description: "Divisi pemilik pengeluaran 'umum' (default: divisi user, atau finance)",
+          },
+          expenseDate: {
+            type: "string",
+            description: "Tanggal pengeluaran (YYYY-MM-DD, default: hari ini)",
           },
           picName: {
             type: "string",
             description: "Nama PIC yang mengeluarkan dana (default: user yang sedang chat)",
           },
+          paymentMethod: {
+            type: "string",
+            description: "Metode pembayaran, mis. Cash, Transfer BCA, Qris (default: Cash)",
+          },
+          notes: {
+            type: "string",
+            description: "Catatan/keterangan tambahan",
+          },
         },
-        required: ["eventId", "tanggal", "kategori", "keterangan", "jumlah"],
+        required: ["category", "amount"],
       },
     },
   },
@@ -392,7 +404,7 @@ export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
     get_projects: ctx.canAccessMagnative || ctx.canAccessProduction,
     get_materials: ctx.canAccessProduction,
     get_events: ctx.canAccessEvents,
-    create_event_expense: ctx.canAccessEvents && ctx.canAccessExpenses,
+    create_event_expense: ctx.canAccessExpenses,
   };
   return AI_TOOLS.filter((t) => allowed[t.function.name]);
 }

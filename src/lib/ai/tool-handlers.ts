@@ -21,7 +21,12 @@ import { getAvailableUnitsInRange } from "@/lib/magnarent/availability";
 import { rowToBooking, rowToInventory, type BookingRow, type InventoryRow } from "@/lib/magnarent/mappers";
 import type { BookingStatus, PaymentStatus } from "@/lib/magnarent/types";
 import { addEventExpense } from "@/lib/event-expenses/actions";
-import { EXPENSE_CATEGORIES, type ExpenseCategory } from "@/lib/event-expenses/types";
+import {
+  EXPENSE_CATEGORIES,
+  type ExpenseCategory,
+  type ExpenseDivision,
+  type ExpenseSourceType,
+} from "@/lib/event-expenses/types";
 import { CHECKLIST_PHASE_LABELS, type ChecklistPhase } from "@/lib/events/types";
 
 type Args = Record<string, unknown>;
@@ -42,7 +47,7 @@ export async function executeToolCall(
   confirmed = false
 ): Promise<ToolResult> {
   if (isActionTool(toolName) && !confirmed) {
-    return buildConfirmationResponse(toolName, args);
+    return buildConfirmationResponse(toolName, args, ctx);
   }
 
   try {
@@ -464,43 +469,90 @@ async function handleUpdateBookingStatus(ctx: UserContext, args: Args): Promise<
   return { success: true, data: { message: `Status booking berhasil diubah ke "${status}".` } };
 }
 
+/** Sumber pengeluaran -> tabel untuk validasi, kolom nama, dan divisi pemiliknya. */
+const EXPENSE_SOURCES: Record<
+  Exclude<ExpenseSourceType, "umum">,
+  { table: string; nameColumn: string; division: ExpenseDivision }
+> = {
+  event_tracking: { table: "events", nameColumn: "name", division: "event" },
+  magnarent_booking: { table: "magnarent_bookings", nameColumn: "nama_klien", division: "magnarent" },
+  magnative_project: { table: "magnative_projects", nameColumn: "name", division: "magnative" },
+  production_booth: { table: "production_booth_projects", nameColumn: "name", division: "production" },
+};
+const UMUM_DIVISIONS: ExpenseDivision[] = ["magnarent", "magnative", "production", "finance"];
+
+function todayJakarta(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
+}
+
+/**
+ * Desain fleksibel (dari main, 26ce311): cukup kategori + jumlah, sisanya
+ * default (tanggal hari ini WIB, PIC = user, Cash, 'umum'). Tetap lewat
+ * addEventExpense supaya validasi, posting jurnal otomatis & log aktivitas
+ * ikut jalan -- insert langsung ke tabel melewati semua itu. Divisi selalu
+ * diturunkan ke nilai yang diizinkan CHECK constraint (bukan 'all'/'investor'
+ * dari profil user, yang akan ditolak database).
+ */
 async function handleCreateEventExpense(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
   if (!ctx.canAccessExpenses) return denied("Realisasi Event");
 
-  const eventId = str(args.eventId);
-  const tanggal = isoDate(args.tanggal);
-  const jumlah = num(args.jumlah);
-  const kategori = str(args.kategori) as ExpenseCategory | undefined;
-  if (!eventId || !tanggal || jumlah === undefined) {
-    return { success: false, error: "Data pengeluaran belum lengkap (event, tanggal, jumlah)." };
-  }
-  if (!kategori || !EXPENSE_CATEGORIES.includes(kategori)) {
+  const category = str(args.category) as ExpenseCategory | undefined;
+  if (!category || !EXPENSE_CATEGORIES.includes(category)) {
     return { success: false, error: `Kategori tidak valid. Pilihan: ${EXPENSE_CATEGORIES.join(", ")}.` };
   }
+  const amount = num(args.amount);
+  if (amount === undefined || amount <= 0) {
+    return { success: false, error: "Jumlah pengeluaran harus lebih dari 0." };
+  }
 
-  // Pastikan event-nya ada & terlihat oleh user ini sebelum dicatat.
-  const { data: event } = await supabase.from("events").select("id, name").eq("id", eventId).maybeSingle();
-  if (!event) return { success: false, error: "Event tidak ditemukan." };
+  const rawSourceType = str(args.sourceType) ?? "umum";
+  const sourceType = (rawSourceType in EXPENSE_SOURCES ? rawSourceType : "umum") as ExpenseSourceType;
+  let sourceId: string | null = null;
+  let sourceLabel = "Umum (tanpa event/proyek)";
+  let division: ExpenseDivision;
 
-  // Sama dengan UI Realisasi Event saat dikaitkan ke event Papan Tracking:
-  // divisi "event" + source_type "event_tracking" (migrasi 0082).
+  if (sourceType === "umum") {
+    const requested = str(args.division) as ExpenseDivision | undefined;
+    division =
+      requested && UMUM_DIVISIONS.includes(requested)
+        ? requested
+        : UMUM_DIVISIONS.includes(ctx.division as ExpenseDivision)
+          ? (ctx.division as ExpenseDivision)
+          : "finance";
+  } else {
+    const source = EXPENSE_SOURCES[sourceType];
+    sourceId = str(args.sourceId) ?? null;
+    if (!sourceId) return { success: false, error: "ID event/booking/proyek terkait belum diisi." };
+    // Pastikan sumbernya ada & terlihat oleh user ini (RLS) sebelum dicatat.
+    const { data: row } = await supabase
+      .from(source.table)
+      .select(`id, ${source.nameColumn}`)
+      .eq("id", sourceId)
+      .maybeSingle<Record<string, string>>();
+    if (!row) return { success: false, error: "Event/booking/proyek terkait tidak ditemukan." };
+    sourceLabel = row[source.nameColumn] ?? sourceLabel;
+    division = source.division;
+  }
+
   const result = await addEventExpense({
-    expenseDate: tanggal,
-    division: "event",
-    sourceType: "event_tracking",
-    sourceId: event.id,
-    category: kategori,
-    amount: jumlah,
+    expenseDate: isoDate(args.expenseDate) ?? todayJakarta(),
+    division,
+    sourceType,
+    sourceId,
+    category,
+    amount,
     picName: str(args.picName) ?? ctx.userName,
-    paymentMethod: str(args.metodeBayar) ?? "Cash",
+    paymentMethod: str(args.paymentMethod) ?? "Cash",
     reimbursementStatus: "Tidak Perlu",
-    notes: str(args.keterangan),
+    notes: str(args.notes),
   });
   if (!result.ok) return { success: false, error: result.error };
 
   return {
     success: true,
-    data: { message: `Pengeluaran ${kategori} Rp ${Math.round(jumlah).toLocaleString("id-ID")} untuk event "${event.name}" berhasil dicatat.` },
+    data: {
+      message: `Pengeluaran ${category} Rp ${Math.round(amount).toLocaleString("id-ID")} (${sourceLabel}) berhasil dicatat.`,
+    },
   };
 }
 
@@ -508,7 +560,7 @@ async function handleCreateEventExpense(supabase: SupabaseClient, ctx: UserConte
 // KONFIRMASI
 // ============================================================================
 
-function buildConfirmationResponse(toolName: string, args: Args): ToolResult {
+function buildConfirmationResponse(toolName: string, args: Args, ctx: UserContext): ToolResult {
   const rupiah = (v: unknown) => `Rp ${Math.round(num(v) ?? 0).toLocaleString("id-ID")}`;
   const descriptions: Record<string, (a: Args) => string> = {
     create_booking: (a) =>
@@ -525,12 +577,13 @@ function buildConfirmationResponse(toolName: string, args: Args): ToolResult {
     create_event_expense: (a) =>
       [
         "Catat pengeluaran:",
-        `- Event: ${str(a.eventName) ?? a.eventId}`,
-        `- Tanggal: ${a.tanggal}`,
-        `- Kategori: ${a.kategori}`,
-        `- Jumlah: ${rupiah(a.jumlah)}`,
-        `- Metode bayar: ${str(a.metodeBayar) ?? "Cash"}`,
-        `- Keterangan: ${a.keterangan ?? "-"}`,
+        `- Terkait: ${str(a.sourceName) ?? (str(a.sourceType) && a.sourceType !== "umum" ? a.sourceId : "Umum (tanpa event/proyek)")}`,
+        `- Tanggal: ${isoDate(a.expenseDate) ?? `${todayJakarta()} (hari ini)`}`,
+        `- Kategori: ${a.category}`,
+        `- Jumlah: ${rupiah(a.amount)}`,
+        `- PIC: ${str(a.picName) ?? ctx.userName}`,
+        `- Metode bayar: ${str(a.paymentMethod) ?? "Cash"}`,
+        `- Catatan: ${str(a.notes) ?? "-"}`,
       ].join("\n"),
   };
 
