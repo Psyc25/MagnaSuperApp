@@ -107,14 +107,16 @@ export function EventExpenseFormModal({
 
   const grouped = useMemo(() => {
     const byDivision = new Map<string, ExpenseSourceOption[]>();
+    const editingKey = editing ? `${editing.sourceType}::${editing.sourceId ?? "umum"}` : null;
     for (const opt of sourceOptions) {
       if (opt.sourceType === "umum") continue;
+      if (opt.cancelled && sourceKeyOf(opt) !== editingKey) continue;
       const list = byDivision.get(opt.division) ?? [];
       list.push(opt);
       byDivision.set(opt.division, list);
     }
     return byDivision;
-  }, [sourceOptions]);
+  }, [sourceOptions, editing]);
 
   const umumOption = sourceOptions.find((o) => o.sourceType === "umum");
 

@@ -118,9 +118,12 @@ export function EventExpenseManager({
    */
   const exportSheets = useMemo<ExportSheet[]>(() => {
     const sorted = [...filtered].sort((a, b) => a.expenseDate.localeCompare(b.expenseDate));
-    let running = 0;
+    // Total berjalan dihitung dulu sebagai array (bukan `let` yang diubah
+    // di dalam callback .map) -- aturan React Compiler `immutability`.
+    const runningTotals: number[] = [];
+    for (const e of sorted) runningTotals.push((runningTotals.at(-1) ?? 0) + e.amount);
     const detailRows = sorted.map((e, i) => {
-      running += e.amount;
+      const running = runningTotals[i];
       return {
         "No.": i + 1,
         Tanggal: formatDateID(e.expenseDate),

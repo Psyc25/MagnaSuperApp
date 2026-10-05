@@ -91,4 +91,8 @@ export type ExpenseSourceOption = {
   sourceId: string | null;
   division: ExpenseDivision;
   label: string;
+  /** Sumbernya sudah "Dibatalkan" -- tetap dikirim supaya label pengeluaran
+   * lama tidak jadi "—", tapi form tidak menawarkannya untuk pilihan baru
+   * (kecuali sumber yang sedang dipakai pengeluaran yang diedit). */
+  cancelled?: boolean;
 };
