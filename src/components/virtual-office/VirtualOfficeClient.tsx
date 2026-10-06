@@ -108,9 +108,13 @@ export function VirtualOfficeClient({
       config: { presence: { key: currentUser.id } },
     });
 
+    // Kunci presence dipilih klien sendiri, jadi hanya id yang ada di roster
+    // yang dihitung -- kunci karangan tidak lagi menggelembungkan jumlah
+    // "online".
+    const rosterIds = new Set(roster.map((r) => r.id));
     channel.on("presence", { event: "sync" }, () => {
       const state = channel.presenceState();
-      const ids = Object.keys(state);
+      const ids = Object.keys(state).filter((id) => rosterIds.has(id));
       setOnlineIds(ids);
 
       const newPresenceMap = new Map<string, RemotePresence>();
@@ -138,7 +142,7 @@ export function VirtualOfficeClient({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentUser.id]);
+  }, [currentUser.id, roster]);
 
   // Build room data with occupants
   const roomsData = useMemo<RoomData[]>(() => {
@@ -611,6 +615,8 @@ function IsometricScene({
   selectedRoom: OfficeRoom | null;
 }) {
   const targetRef = useRef(new THREE.Vector3());
+  // Dipakai ulang tiap frame (dulu new Vector3 dialokasikan 60-120x/detik).
+  const desiredPosRef = useRef(new THREE.Vector3());
 
   // Smooth camera movement -- kamera diambil dari argumen useFrame (bukan
   // nilai kembalian useThree) supaya boleh dimutasi (aturan React Compiler).
@@ -621,7 +627,7 @@ function IsometricScene({
 
     // Smooth interpolation
     camera.position.lerp(
-      new THREE.Vector3(
+      desiredPosRef.current.set(
         targetX + 400 * cameraTarget.zoom,
         500 * cameraTarget.zoom,
         targetZ + 400 * cameraTarget.zoom
@@ -631,9 +637,13 @@ function IsometricScene({
     camera.lookAt(targetRef.current);
 
     if (camera instanceof THREE.OrthographicCamera) {
-      const targetZoom = 0.5 / cameraTarget.zoom;
-      camera.zoom = THREE.MathUtils.lerp(camera.zoom, targetZoom, 0.05);
-      camera.updateProjectionMatrix();
+      // Kamera ortografis: zoom LEBIH BESAR = objek lebih besar. Dulu rumusnya
+      // terbalik (0.5 / zoom) sehingga klik ruangan malah memperkecil kantor.
+      const targetZoom = 0.625 * (cameraTarget.zoom / CAMERA_ZOOM);
+      if (Math.abs(camera.zoom - targetZoom) > 1e-4) {
+        camera.zoom = THREE.MathUtils.lerp(camera.zoom, targetZoom, 0.05);
+        camera.updateProjectionMatrix();
+      }
     }
   });
 

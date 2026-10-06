@@ -49,6 +49,23 @@ export function Topbar({ user }: { user: (Profile & { email: string }) | null })
   const displayName = formatDisplayName(user?.full_name, user?.email) || t("Pengguna");
   const email = user?.email ?? "";
 
+
+  // Berhenti berlangganan Web Push di perangkat ini sebelum keluar, supaya
+  // notifikasi akun ini tidak terus muncul untuk orang berikutnya.
+  async function handleSignOut() {
+    const formData = new FormData();
+    try {
+      const registration = await navigator.serviceWorker?.getRegistration();
+      const subscription = await registration?.pushManager.getSubscription();
+      if (subscription) {
+        formData.set("pushEndpoint", subscription.endpoint);
+        await subscription.unsubscribe();
+      }
+    } catch {
+      // Push tidak didukung/gagal dilepas -- tetap lanjut keluar.
+    }
+    await signOut(formData);
+  }
   return (
     <header
       className={cn(
@@ -121,7 +138,7 @@ export function Topbar({ user }: { user: (Profile & { email: string }) | null })
             >
               {t("Pengaturan")}
             </Link>
-            <form action={signOut}>
+            <form action={handleSignOut}>
               <button
                 type="submit"
                 className={cn(
