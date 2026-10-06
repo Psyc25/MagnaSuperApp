@@ -34,10 +34,19 @@ type ChatMessage = {
  * - AI_API_URL: Base URL API (default: localhost:20128/v1)
  * - AI_API_KEY: API key untuk provider
  * - AI_PROVIDER: "9router" | "openai" | "groq" | "together" (optional, auto-detect)
+ * - AI_MODEL: Override model semua agent (mis. "groq/llama-3.3-70b-versatile"
+ *   kalau AI_API_URL menunjuk ke 9Router yang baru di-setting provider
+ *   Groq/OpenRouter-nya) -- kosong = pakai default per-agent di agents.ts.
  */
 const AI_API_URL = process.env.AI_API_URL || "http://localhost:20128/v1";
 const AI_API_KEY = process.env.AI_API_KEY || "";
 const AI_PROVIDER = process.env.AI_PROVIDER || "auto";
+/** Override model per-agent (agents.ts) lewat env var -- supaya ganti model
+ * atau provider di 9Router (mis. dari GitHub Models ke Groq/OpenRouter)
+ * tidak perlu deploy ulang kode, cukup ubah AI_MODEL di Vercel lalu
+ * redeploy. Kosong (default) = pakai model hardcode masing-masing agent
+ * seperti sebelumnya (dipakai saat dev lokal tanpa env var ini diisi). */
+const AI_MODEL_OVERRIDE = process.env.AI_MODEL || "";
 
 // Provider-specific configurations
 const PROVIDER_CONFIGS: Record<string, { baseUrl: string; modelMap: Record<string, string> }> = {
@@ -222,8 +231,10 @@ async function callAIWithTools(
     headers["Authorization"] = `Bearer ${AI_CONFIG.apiKey}`;
   }
 
-  // Map model name for the provider
-  const model = mapModelForProvider(agent.model, AI_CONFIG.provider);
+  // Map model name for the provider -- AI_MODEL_OVERRIDE (env var) menang
+  // kalau diisi, supaya pindah model/provider di 9Router tidak perlu ganti
+  // kode (lihat komentar AI_MODEL_OVERRIDE di atas).
+  const model = mapModelForProvider(AI_MODEL_OVERRIDE || agent.model, AI_CONFIG.provider);
 
   const body: Record<string, unknown> = {
     model,
