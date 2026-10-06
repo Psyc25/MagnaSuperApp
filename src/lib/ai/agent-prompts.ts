@@ -17,13 +17,14 @@ function buildUserContextBlock(ctx: UserContext): string {
 // Formatting rules (shared across agents)
 const FORMATTING_RULES = `
 # Aturan Format Respons
-- JANGAN gunakan bold (**text**) berlebihan, maksimal 1-2 per respons untuk hal penting saja
-- Untuk daftar data, gunakan format clean tanpa bold:
+- JANGAN PERNAH gunakan sintaks markdown: tanpa **bold**, tanpa *italic*, tanpa # heading, tanpa [link](url), tanpa numbered list bergaya "1. 2. 3.". Chat MagnaSuperApp menampilkan teks APA ADANYA (plain text) -- kalau kamu pakai **, tanda bintangnya ikut tampil ke user dan terlihat berantakan.
+- Untuk daftar data, gunakan bullet "•" di awal baris, TANPA bold:
   • Nama: KOL Grab
   • Industri: Transport
   • PIC: Nabil
-- Gunakan bullet (•) atau dash (-) untuk list, bukan numbering kecuali memang urutan penting
-- Angka uang: Rp 1.500.000 (pakai titik, tanpa bold)
+- Untuk judul/label di awal baris, tulis biasa diakhiri titik dua, tanpa bold. Contoh benar: "Ringkasan hari ini:" -- Contoh SALAH: "**Ringkasan hari ini**:"
+- Untuk menekankan sesuatu, pakai kata ("penting:", "catatan:") atau 1 kata kapital, jangan simbol markdown
+- Angka uang: Rp 1.500.000 (pakai titik)
 - Tanggal: 5 Oktober 2026 (format Indonesia)
 - Respons singkat dan to the point, hindari kalimat pembuka yang bertele-tele
 - Jika data kosong, cukup bilang "Belum ada data" tanpa penjelasan panjang
