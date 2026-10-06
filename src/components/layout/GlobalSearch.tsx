@@ -6,7 +6,7 @@ import { Loader2, Search } from "lucide-react";
 import { searchGlobal, type SearchResult } from "@/lib/search/actions";
 import { useT } from "@/lib/i18n/LocaleProvider";
 import { cn } from "@/lib/cn";
-import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { DROPDOWN_SURFACE, GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
 
 const MODULE_LABEL: Record<string, string> = {
   magnarent: "Magnarent",
@@ -105,7 +105,7 @@ export function GlobalSearch() {
       </button>
 
       {open && (
-        <div className={cn("animate-fade-in fixed inset-x-4 top-[4.5rem] z-40 overflow-hidden rounded-2xl border shadow-xl shadow-black/10 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:z-auto sm:mt-2 sm:w-96", GLASS_SURFACE, GLASS_BORDER)}>
+        <div className={cn("animate-fade-in fixed inset-x-4 top-[4.5rem] z-50 overflow-hidden rounded-2xl border shadow-xl shadow-black/10 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:z-50 sm:mt-2 sm:w-96", DROPDOWN_SURFACE, GLASS_BORDER)}>
           <div className="border-b border-black/5 p-3 dark:border-white/10">
             <div className="flex items-center gap-2 rounded-xl border border-black/5 bg-zinc-50 px-3 py-2 dark:border-white/10 dark:bg-white/5">
               <Search className="h-4 w-4 shrink-0 text-zinc-400" />
