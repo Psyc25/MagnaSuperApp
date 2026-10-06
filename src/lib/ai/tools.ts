@@ -237,6 +237,88 @@ export const QUERY_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_invoices",
+      description: "Ambil daftar faktur/invoice beserta total, status, dan jatuh tempo. Pakai overdueOnly untuk faktur yang lewat jatuh tempo dan belum lunas (piutang terlambat).",
+      parameters: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["Draft", "Terkirim", "Lunas"], description: "Filter status faktur" },
+          overdueOnly: { type: "boolean", description: "Hanya faktur belum lunas yang sudah lewat jatuh tempo" },
+          division: { type: "string", enum: ["magnarent", "magnative", "production"], description: "Filter divisi" },
+          clientName: { type: "string", description: "Filter nama klien (partial match)" },
+          limit: { type: "number", description: "Jumlah maksimal hasil (default: 20)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_event_detail",
+      description: "Detail lengkap satu event: progres checklist per fase, item yang belum selesai (termasuk yang lewat tenggat), total pengeluaran per kategori, faktur dari booking/proyek yang terkait, dan perkiraan laba. Cari dengan eventId atau nama event.",
+      parameters: {
+        type: "object",
+        properties: {
+          eventId: { type: "string", description: "ID event (dari get_events)" },
+          searchName: { type: "string", description: "Nama event (partial match) kalau ID belum diketahui" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_capital_requests",
+      description: "Ambil daftar pengajuan modal event: estimasi tagihan, estimasi modal, status keputusan investor, dan catatan investor.",
+      parameters: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["Menunggu", "Disetujui", "Ditolak"], description: "Filter status" },
+          limit: { type: "number", description: "Jumlah maksimal hasil (default: 20)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_purchase_orders",
+      description: "Ambil daftar purchase order material Production: supplier, qty, harga, status, tanggal pesan & perkiraan datang.",
+      parameters: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["Dipesan", "Diterima", "Dibatalkan"], description: "Filter status PO" },
+          limit: { type: "number", description: "Jumlah maksimal hasil (default: 20)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_expenses",
+      description: "Rekap pengeluaran (Realisasi Event & operasional) dalam rentang tanggal: total, per kategori, per divisi, dan daftar reimbursement yang belum diganti.",
+      parameters: {
+        type: "object",
+        properties: {
+          dateFrom: { type: "string", description: "Tanggal mulai (YYYY-MM-DD). Default: awal bulan ini" },
+          dateTo: { type: "string", description: "Tanggal akhir (YYYY-MM-DD). Default: hari ini" },
+          division: { type: "string", enum: ["magnarent", "magnative", "production", "finance", "event"], description: "Filter divisi" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_daily_summary",
+      description: "Ringkasan operasional hari ini (WIB) sesuai akses pengguna: booking keluar & kembali hari ini, event berjalan, faktur jatuh tempo & terlambat, material di bawah stok minimum, PO yang dijadwalkan datang, pengajuan modal yang menunggu.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
 ];
 
 /**
@@ -410,7 +492,13 @@ export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
     get_projects: ctx.canAccessMagnative || ctx.canAccessProduction,
     get_materials: ctx.canAccessProduction,
     get_events: ctx.canAccessEvents,
+    get_event_detail: ctx.canAccessEvents,
     create_event_expense: ctx.canAccessExpenses,
+    get_invoices: ctx.canAccessInvoices,
+    get_capital_requests: ctx.canAccessCapital,
+    get_purchase_orders: ctx.canAccessPurchaseOrders,
+    get_expenses: ctx.canAccessExpenses,
+    get_daily_summary: true,
   };
   return AI_TOOLS.filter((t) => allowed[t.function.name]);
 }
@@ -428,11 +516,12 @@ export function isActionTool(toolName: string): boolean {
  */
 export function getToolsForAgent(agentId: string): ToolDefinition[] {
   // Tool mappings per specialty
-  const MAGNARENT_TOOLS = ["search_global", "get_bookings", "get_inventory", "check_availability", "create_booking", "update_booking_status"];
-  const MAGNATIVE_TOOLS = ["search_global", "get_clients", "get_projects"];
-  const PRODUCTION_TOOLS = ["search_global", "get_materials", "get_projects"];
-  const FINANCE_TOOLS = ["search_global", "create_event_expense"];
-  const EVENT_TOOLS = ["search_global", "get_events", "update_checklist_progress"];
+  const COMMON_TOOLS = ["search_global", "get_daily_summary", "get_events", "get_event_detail"];
+  const MAGNARENT_TOOLS = [...COMMON_TOOLS, "get_bookings", "get_inventory", "check_availability", "create_booking", "update_booking_status"];
+  const MAGNATIVE_TOOLS = [...COMMON_TOOLS, "get_clients", "get_projects"];
+  const PRODUCTION_TOOLS = [...COMMON_TOOLS, "get_materials", "get_projects", "get_purchase_orders"];
+  const FINANCE_TOOLS = [...COMMON_TOOLS, "create_event_expense", "get_invoices", "get_expenses", "get_capital_requests"];
+  const EVENT_TOOLS = [...COMMON_TOOLS, "create_event_expense"];
 
   const filterByNames = (names: string[]) =>
     AI_TOOLS.filter((t) => names.includes(t.function.name));

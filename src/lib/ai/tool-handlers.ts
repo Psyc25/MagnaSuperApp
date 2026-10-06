@@ -31,6 +31,14 @@ import {
   type ExpenseSourceType,
 } from "@/lib/event-expenses/types";
 import { CHECKLIST_PHASE_LABELS, type ChecklistPhase } from "@/lib/events/types";
+import {
+  handleGetCapitalRequests,
+  handleGetDailySummary,
+  handleGetEventDetail,
+  handleGetExpenses,
+  handleGetInvoices,
+  handleGetPurchaseOrders,
+} from "./report-tools";
 
 type Args = Record<string, unknown>;
 
@@ -77,6 +85,18 @@ export async function executeToolCall(
         return await handleGetMaterials(supabase, ctx, args);
       case "check_availability":
         return await handleCheckAvailability(supabase, ctx, args);
+      case "get_invoices":
+        return await handleGetInvoices(supabase, ctx, args);
+      case "get_event_detail":
+        return await handleGetEventDetail(supabase, ctx, args);
+      case "get_capital_requests":
+        return await handleGetCapitalRequests(supabase, ctx, args);
+      case "get_purchase_orders":
+        return await handleGetPurchaseOrders(supabase, ctx, args);
+      case "get_expenses":
+        return await handleGetExpenses(supabase, ctx, args);
+      case "get_daily_summary":
+        return await handleGetDailySummary(supabase, ctx);
 
       // Action tools (sudah dikonfirmasi)
       case "create_booking":

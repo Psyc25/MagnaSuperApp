@@ -28,6 +28,12 @@ export type UserContext = {
   /** Catat Realisasi Event (RLS `event_expenses_access`: semua kecuali investor). */
   canAccessExpenses: boolean;
   canAccessAdmin: boolean;
+  /** Faktur & piutang (RLS `invoices_select`: akses penuh, investor, finance). */
+  canAccessInvoices: boolean;
+  /** Pengajuan modal (RLS `capital_requests_select`: akses penuh, investor). */
+  canAccessCapital: boolean;
+  /** Purchase order Production (RLS: divisi production/akses penuh, investor). */
+  canAccessPurchaseOrders: boolean;
 };
 
 export type ToolDefinition = {
