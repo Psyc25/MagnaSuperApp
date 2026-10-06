@@ -52,7 +52,13 @@ import {
   type RoomId,
 } from "@/lib/virtual-office/house";
 import { getAgentById, type AIAgent } from "@/lib/ai/agents";
-import { EMOTE_DURATION_MS, QUICK_EMOTES } from "@/lib/virtual-office/presence";
+import {
+  EMOTE_DURATION_MS,
+  QUICK_EMOTES,
+  STATUS_COLORS,
+  STATUS_LABELS,
+  type PresenceStatus,
+} from "@/lib/virtual-office/presence";
 import { HouseScene, toScene } from "./HouseScene";
 import { AgentNPC, DeskAvatar, PlayerAvatar, RemoteAvatar, SleeperAvatar, type Dir, type RemotePos } from "./Avatars";
 import { CharacterEditor } from "./CharacterEditor";
@@ -103,7 +109,7 @@ export function VirtualOfficeClient({
     [roster]
   );
 
-  const { onlineIds, presenceMeta, remoteRef, remoteEmoteRef, broadcastMove, broadcastEmote, updatePresence } =
+  const { onlineIds, presenceMeta, remoteRef, remoteEmoteRef, broadcastMove, broadcastEmote, myStatus, updatePresence } =
     useVirtualOfficePresence();
 
   const posRef = useRef<Pos>({ ...SPAWN });
@@ -121,6 +127,10 @@ export function VirtualOfficeClient({
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [emoteDraft, setEmoteDraft] = useState("");
   const myEmoteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [statusPickerOpen, setStatusPickerOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevNearbyIdRef = useRef<string | null>(null);
 
   // Begitu halaman Kantor Virtual dibuka, tandai presence sendiri
   // "inOffice: true" (avatar ikut berjalan live di peta semua orang) --
@@ -194,6 +204,28 @@ export function VirtualOfficeClient({
     };
   }, []);
 
+  // Toast "X mendekat" -- numpang pada deteksi `nearby` yang sudah ada di
+  // GameLoop (jarak terdekat ke rekan di peta), cuma muncul sekali per
+  // transisi null->seseorang atau ganti orang, bukan tiap re-render.
+  useEffect(() => {
+    if (nearby) {
+      if (nearby.id !== prevNearbyIdRef.current) {
+        prevNearbyIdRef.current = nearby.id;
+        setToast(`${firstName(nearby.fullName)} mendekat`);
+        if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = setTimeout(() => setToast(null), 3000);
+      }
+    } else {
+      prevNearbyIdRef.current = null;
+    }
+  }, [nearby]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    };
+  }, []);
+
   const handleSaved = useCallback(
     (next: AvatarLook) => {
       setLook(next);
@@ -249,14 +281,44 @@ export function VirtualOfficeClient({
             </Link>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => setEditing((v) => !v)}
-          className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-violet-600 px-3.5 py-1.5 text-sm font-semibold text-white shadow hover:bg-violet-500"
-        >
-          <Palette className="h-4 w-4" />
-          Ubah Karakter
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setStatusPickerOpen((v) => !v)}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-800/80 px-3.5 py-1.5 text-sm font-medium text-white"
+            >
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: STATUS_COLORS[myStatus] }} />
+              {STATUS_LABELS[myStatus]}
+            </button>
+            {statusPickerOpen && (
+              <div className="absolute left-0 top-full z-10 mt-1 flex flex-col gap-0.5 rounded-lg border border-white/10 bg-slate-900/95 p-1.5 shadow-xl">
+                {(Object.keys(STATUS_LABELS) as PresenceStatus[]).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => {
+                      updatePresence({ status: s });
+                      setStatusPickerOpen(false);
+                    }}
+                    className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-white hover:bg-slate-800"
+                  >
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: STATUS_COLORS[s] }} />
+                    {STATUS_LABELS[s]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setEditing((v) => !v)}
+            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-violet-600 px-3.5 py-1.5 text-sm font-semibold text-white shadow hover:bg-violet-500"
+          >
+            <Palette className="h-4 w-4" />
+            Ubah Karakter
+          </button>
+        </div>
       </div>
 
       {editing && (
@@ -279,6 +341,7 @@ export function VirtualOfficeClient({
             look={look}
             label={`${firstName(currentUser.fullName)} (Kamu)`}
             emote={myEmote}
+            status={myStatus}
           />
 
           {othersInOffice.map((id) => {
@@ -292,6 +355,7 @@ export function VirtualOfficeClient({
                 remoteEmoteRef={remoteEmoteRef}
                 look={lookFor(entry)}
                 label={firstName(entry.fullName)}
+                status={presenceMeta.get(id)?.status}
               />
             );
           })}
@@ -300,7 +364,16 @@ export function VirtualOfficeClient({
             const entry = rosterById.get(id);
             if (!entry) return null;
             const desk = deskForDivision(entry.division);
-            return <DeskAvatar key={id} x={desk.x} y={desk.y} look={lookFor(entry)} label={firstName(entry.fullName)} />;
+            return (
+              <DeskAvatar
+                key={id}
+                x={desk.x}
+                y={desk.y}
+                look={lookFor(entry)}
+                label={firstName(entry.fullName)}
+                status={presenceMeta.get(id)?.status}
+              />
+            );
           })}
 
           {sleepers.map((entry, i) => {
@@ -419,6 +492,12 @@ export function VirtualOfficeClient({
         </div>
 
         <Minimap posRef={posRef} remoteRef={remoteRef} othersInOffice={othersInOffice} />
+
+        {toast && (
+          <div className="pointer-events-none absolute inset-x-0 top-3 flex justify-center">
+            <span className="rounded-full bg-black/70 px-4 py-1.5 text-xs font-semibold text-white shadow-lg">{toast}</span>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center justify-center gap-2 sm:hidden">

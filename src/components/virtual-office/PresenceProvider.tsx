@@ -46,7 +46,7 @@ type ContextValue = {
   remoteEmoteRef: { current: Map<string, { content: string; at: number }> };
   broadcastEmote: (content: string) => void;
   myLook: AvatarLook;
-  myStatus: PresenceStatus | null;
+  myStatus: PresenceStatus;
   /** Gabungkan field ke presence milik sendiri lalu track() ulang --
    * dipakai utk pindah inOffice, ganti status, simpan karakter baru. */
   updatePresence: (patch: Partial<Pick<PresenceMeta, "look" | "inOffice" | "status">>) => void;
@@ -69,7 +69,7 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
   const [presenceMeta, setPresenceMeta] = useState<Map<string, ResolvedPresence>>(new Map());
   const [myLook, setMyLook] = useState<AvatarLook>(() => defaultLook(userId));
-  const [myStatus, setMyStatus] = useState<PresenceStatus | null>(null);
+  const [myStatus, setMyStatus] = useState<PresenceStatus>("available");
 
   useEffect(() => {
     let cancelled = false;
@@ -99,7 +99,7 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
         meta.set(id, {
           look: sanitizeLook(m?.look, id),
           inOffice: m?.inOffice === true,
-          status: m?.status ?? null,
+          status: m?.status ?? "available",
         });
       }
       setOnlineIds(ids);
@@ -151,7 +151,7 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
     (patch: Partial<Pick<PresenceMeta, "look" | "inOffice" | "status">>) => {
       trackedRef.current = { ...trackedRef.current, ...patch };
       if (patch.look) setMyLook(sanitizeLook(patch.look, userId));
-      if ("status" in patch) setMyStatus(patch.status ?? null);
+      if (patch.status) setMyStatus(patch.status);
       channelRef.current?.track({ onlineAt: new Date().toISOString(), ...trackedRef.current });
     },
     [userId]

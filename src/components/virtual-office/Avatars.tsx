@@ -7,7 +7,7 @@ import * as THREE from "three";
 import type { AIAgent } from "@/lib/ai/agents";
 import type { AvatarLook } from "@/lib/virtual-office/avatar-look";
 import { SPAWN, type Dir, type Pos, type RemotePos } from "@/lib/virtual-office/house";
-import { EMOTE_DURATION_MS } from "@/lib/virtual-office/presence";
+import { EMOTE_DURATION_MS, STATUS_COLORS, type PresenceStatus } from "@/lib/virtual-office/presence";
 import { toScene } from "./HouseScene";
 
 // Re-export supaya kode lama yang mengimpor Dir/RemotePos dari "./Avatars"
@@ -121,11 +121,20 @@ function Accessory({ look }: { look: AvatarLook }) {
 
 /** Karakter chibi. `sleeping`: rebah telentang (dipakai di Kamar Staff).
  * `emote`: teks/emoji ephemeral yang numpang tampil di atas kepala (lihat
- * presence.ts EMOTE_DURATION_MS) -- null/undefined = tidak ada bubble. */
+ * presence.ts EMOTE_DURATION_MS) -- null/undefined = tidak ada bubble.
+ * `status`: dot warna available/meeting/fokus di bahu kanan -- tidak
+ * tampil kalau sleeping (offline tidak punya status). */
 export const ChibiAvatar = forwardRef<
   THREE.Group,
-  { look: AvatarLook; label: string; isSelf?: boolean; sleeping?: boolean; emote?: string | null }
->(function ChibiAvatar({ look, label, isSelf = false, sleeping = false, emote = null }, ref) {
+  {
+    look: AvatarLook;
+    label: string;
+    isSelf?: boolean;
+    sleeping?: boolean;
+    emote?: string | null;
+    status?: PresenceStatus | null;
+  }
+>(function ChibiAvatar({ look, label, isSelf = false, sleeping = false, emote = null, status = null }, ref) {
   return (
     <group ref={ref}>
       <group rotation={sleeping ? [-Math.PI / 2, 0, 0] : [0, 0, 0]} position={sleeping ? [0, 6, 20] : [0, 0, 0]}>
@@ -178,6 +187,12 @@ export const ChibiAvatar = forwardRef<
         </mesh>
         <Hair look={look} />
         <Accessory look={look} />
+        {status && !sleeping && (
+          <mesh position={[9, 42, 9]}>
+            <sphereGeometry args={[2.4, 10, 10]} />
+            <meshStandardMaterial color={STATUS_COLORS[status]} emissive={STATUS_COLORS[status]} emissiveIntensity={0.5} />
+          </mesh>
+        )}
       </group>
 
       {isSelf && !sleeping && (
@@ -225,12 +240,14 @@ export function PlayerAvatar({
   look,
   label,
   emote,
+  status,
 }: {
   posRef: { current: Pos };
   dirRef: { current: Dir };
   look: AvatarLook;
   label: string;
   emote?: string | null;
+  status?: PresenceStatus | null;
 }) {
   const groupRef = useRef<THREE.Group | null>(null);
   const lastRef = useRef<Pos | null>(null);
@@ -248,7 +265,7 @@ export function PlayerAvatar({
     g.rotation.y = dirToRadians(dirRef.current);
   });
 
-  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} isSelf />;
+  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} status={status} isSelf />;
 }
 
 export function RemoteAvatar({
@@ -257,12 +274,14 @@ export function RemoteAvatar({
   remoteEmoteRef,
   look,
   label,
+  status,
 }: {
   id: string;
   remoteRef: { current: Map<string, RemotePos> };
   remoteEmoteRef?: { current: Map<string, { content: string; at: number }> };
   look: AvatarLook;
   label: string;
+  status?: PresenceStatus | null;
 }) {
   const groupRef = useRef<THREE.Group | null>(null);
   const targetRef = useRef(new THREE.Vector3());
@@ -290,7 +309,7 @@ export function RemoteAvatar({
     }
   });
 
-  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} />;
+  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} status={status} />;
 }
 
 /** Orang yang sedang "online" (membuka MagnaSuperApp) tapi TIDAK sedang di
@@ -298,11 +317,23 @@ export function RemoteAvatar({
  * deskForDivision di house.ts), bukan ikut berjalan karena tidak ada
  * posisi live untuknya. Beda dari SleeperAvatar (itu utk yang app-nya
  * benar-benar tertutup/offline). */
-export function DeskAvatar({ x, y, look, label }: { x: number; y: number; look: AvatarLook; label: string }) {
+export function DeskAvatar({
+  x,
+  y,
+  look,
+  label,
+  status,
+}: {
+  x: number;
+  y: number;
+  look: AvatarLook;
+  label: string;
+  status?: PresenceStatus | null;
+}) {
   const [sx, , sz] = toScene(x, y);
   return (
     <group position={[sx, 0, sz]}>
-      <ChibiAvatar look={look} label={label} />
+      <ChibiAvatar look={look} label={label} status={status} />
     </group>
   );
 }

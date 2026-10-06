@@ -45,7 +45,9 @@ export type PresenceMeta = {
 export type ResolvedPresence = {
   look: AvatarLook;
   inOffice: boolean;
-  status: PresenceStatus | null;
+  /** Belum pernah pilih status eksplisit = dianggap "available" (default
+   * umum), bukan null -- biar dot status selalu konsisten tampil. */
+  status: PresenceStatus;
 };
 
 /** Emote/chat bubble ephemeral di atas avatar -- broadcast "emote" terpisah
