@@ -33,8 +33,12 @@ type ChatMessage = {
 // production. Lihat src/lib/ai/config.ts.
 const AI_CONFIG = resolveAIConfig(process.env);
 /** Batas putaran tool per pesan — cukup untuk "cari ID dulu, lalu aksi"
- * tanpa membiarkan model berputar terus memakan kuota. */
-const MAX_TOOL_ROUNDS = 4;
+ * tanpa membiarkan model berputar terus memakan kuota. Diturunkan dari 4
+ * ke 2 (2026-10-06) -- provider gratis (mis. Groq) punya limit token/menit
+ * yang ketat dan dibagi SELURUH aplikasi, jadi tiap putaran tool mahal;
+ * 2 putaran masih cukup untuk "cari ID -> aksi" tapi memotong separuh
+ * potensi pemakaian token per obrolan dibanding 4. */
+const MAX_TOOL_ROUNDS = 2;
 const AI_TIMEOUT_MS = 45_000;
 /** Suhu rendah untuk tool calling — jawaban data harus konsisten, bukan kreatif. */
 const TOOL_TEMPERATURE = 0.3;

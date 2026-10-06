@@ -44,6 +44,12 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const addFileInputRef = useRef<HTMLInputElement>(null);
+  // Progress kompresi saat upload banyak foto sekaligus -- tanpa ini, user
+  // cuma lihat "Mengunggah..." diam selama puluhan detik saat pilih 15-30
+  // foto kamera HP, yang terasa seperti macet/hang padahal masih proses
+  // (lihat mapWithConcurrency di lib/shared/image.ts untuk fix beban CPU-nya).
+  const [addProgress, setAddProgress] = useState<{ done: number; total: number } | null>(null);
+  const [morePhotosProgress, setMorePhotosProgress] = useState<{ done: number; total: number } | null>(null);
 
   const [viewingFolderId, setViewingFolderId] = useState<string | null>(null);
   const viewingFolder = folders.find((f) => f.id === viewingFolderId) ?? null;
@@ -68,6 +74,7 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
     setAddCaption("");
     setAddPreviews([]);
     setError(null);
+    setAddProgress(null);
     if (addFileInputRef.current) addFileInputRef.current.value = "";
   }
 
@@ -89,9 +96,13 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
     }
 
     setSubmitting(true);
-    const prepared = await prepareUploadFiles(files);
+    setAddProgress({ done: 0, total: files.length });
+    const prepared = await prepareUploadFiles(files, {
+      onProgress: (done, total) => setAddProgress({ done, total }),
+    });
     if (!prepared.ok) {
       setSubmitting(false);
+      setAddProgress(null);
       setError(prepared.error);
       return;
     }
@@ -102,6 +113,7 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
 
     const result = await createPortfolioFolder(formData);
     setSubmitting(false);
+    setAddProgress(null);
 
     if (!result.ok) {
       setError(result.error);
@@ -117,9 +129,13 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
     if (files.length === 0) return;
 
     setAddingPhotos(true);
-    const prepared = await prepareUploadFiles(files);
+    setMorePhotosProgress({ done: 0, total: files.length });
+    const prepared = await prepareUploadFiles(files, {
+      onProgress: (done, total) => setMorePhotosProgress({ done, total }),
+    });
     if (!prepared.ok) {
       setAddingPhotos(false);
+      setMorePhotosProgress(null);
       if (morePhotosInputRef.current) morePhotosInputRef.current.value = "";
       showToast(prepared.error, "error");
       return;
@@ -129,6 +145,7 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
 
     const result = await addPhotosToFolder(viewingFolder.id, formData);
     setAddingPhotos(false);
+    setMorePhotosProgress(null);
     if (morePhotosInputRef.current) morePhotosInputRef.current.value = "";
 
     if (!result.ok) {
@@ -354,7 +371,11 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
               className="rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
               style={{ background: GRADIENT }}
             >
-              {submitting ? "Mengunggah…" : "Simpan Folder"}
+              {submitting
+                ? addProgress && addProgress.done < addProgress.total
+                  ? `Mengompres foto ${addProgress.done}/${addProgress.total}…`
+                  : "Mengunggah…"
+                : "Simpan Folder"}
             </button>
           </div>
         </form>
@@ -409,7 +430,11 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
                 className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-fuchsia-400/60 px-3.5 py-2 text-xs font-semibold text-fuchsia-600 transition-colors hover:bg-fuchsia-50 dark:text-fuchsia-300 dark:hover:bg-fuchsia-500/10"
               >
                 <Plus className="h-3.5 w-3.5" />
-                {addingPhotos ? "Mengunggah…" : "Tambah Foto Lagi"}
+                {addingPhotos
+                  ? morePhotosProgress && morePhotosProgress.done < morePhotosProgress.total
+                    ? `Mengompres foto ${morePhotosProgress.done}/${morePhotosProgress.total}…`
+                    : "Mengunggah…"
+                  : "Tambah Foto Lagi"}
               </label>
             </div>
 

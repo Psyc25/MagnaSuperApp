@@ -71,14 +71,47 @@ export async function compressAvatarImage(file: File): Promise<File> {
 
 export type PreparedUpload = { ok: true; files: File[] } | { ok: false; error: string };
 
+/** Jalankan `fn` untuk tiap item dengan batas konkurensi, bukan semua
+ * sekaligus -- dipakai `prepareUploadFiles` di bawah supaya upload banyak
+ * foto (20-30 foto kamera HP) tidak nge-decode semua gambar resolusi penuh
+ * BERSAMAAN (yang bisa menghabiskan memori/CPU browser sampai terasa
+ * "rendering terus"/macet, terutama di laptop/HP yang kurang kuat).
+ * Default 3 paralel: tetap jauh lebih cepat dari murni satu-satu, tapi
+ * beban kerja browser tetap terkendali. */
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 /**
- * Kompres semua foto lalu pastikan TOTAL ukurannya muat dalam satu
- * Server Action. Pakai ini sebelum memasukkan file ke FormData.
- * `compress: false` untuk file hasil karya (aset desain, file pipeline,
- * dokumen) yang tidak boleh diubah kualitasnya -- hanya dicek ukurannya.
+ * Kompres semua foto (berurutan per batch kecil, lihat `mapWithConcurrency`)
+ * lalu pastikan TOTAL ukurannya muat dalam satu Server Action. Pakai ini
+ * sebelum memasukkan file ke FormData. `compress: false` untuk file hasil
+ * karya (aset desain, file pipeline, dokumen) yang tidak boleh diubah
+ * kualitasnya -- hanya dicek ukurannya. `onProgress` opsional untuk
+ * menampilkan "Mengompres n/total..." saat foto-nya banyak.
  */
-export async function prepareUploadFiles(files: File[], { compress = true } = {}): Promise<PreparedUpload> {
-  const prepared = compress ? await Promise.all(files.map((f) => compressImageFile(f))) : files;
+export async function prepareUploadFiles(
+  files: File[],
+  { compress = true, onProgress }: { compress?: boolean; onProgress?: (done: number, total: number) => void } = {}
+): Promise<PreparedUpload> {
+  let done = 0;
+  const prepared = compress
+    ? await mapWithConcurrency(files, 3, async (f) => {
+        const result = await compressImageFile(f);
+        done++;
+        onProgress?.(done, files.length);
+        return result;
+      })
+    : files;
   const total = prepared.reduce((sum, f) => sum + f.size, 0);
   if (total > MAX_UPLOAD_BYTES) {
     const tooBig = prepared.find((f) => f.size > MAX_UPLOAD_BYTES);

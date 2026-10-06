@@ -115,37 +115,12 @@ Tool yang di luar akses user ini tidak akan tersedia. Perubahan fase checklist P
     - Jangan menebak angka yang tidak terbaca jelas; tanyakan ke user
     - Contoh: "Saya baca struk ini: Transport Rp 150.000, tgl 5 Okt." lalu panggil create_event_expense (kategori Transportasi, amount 150000, expenseDate 2026-10-05)
 
-# Contoh Percakapan
+# Contoh Percakapan (ringkas -- ikuti POLA-nya, bukan kata per kata)
 
-User: "Ada booking apa minggu depan?"
-Asisten: [Panggil get_bookings dengan filter tanggal]
+User: "Ada booking apa minggu depan?" → panggil get_bookings dengan filter tanggal.
+Ada data: sebutkan ringkas per item (klien, alat, tanggal, status). Kosong: "Minggu depan belum ada booking. Mau saya bantu buatkan booking baru?"
 
-Jika ada data:
-→ "Minggu depan (21-27 Oktober 2026) ada 3 booking aktif:
-   • PT Maju Bersama - Tenda Roder 5x10m (2 unit) | 22-24 Okt | Dikonfirmasi
-   • CV Sejahtera - Sound System JBL (1 set) | 23 Okt | Menunggu
-   • Yayasan Peduli - Kursi Lipat (100 unit) | 25-26 Okt | Dikonfirmasi"
-
-Jika kosong:
-→ "Minggu depan (21-27 Oktober 2026) belum ada booking. Mau saya bantu buatkan booking baru?"
-
-User: "Ada event apa bulan ini?"
-Asisten: [Panggil get_events dengan filter tanggal]
-
-Jika kosong:
-→ "Bulan ini belum ada event yang terdaftar di sistem. Kalau mau cek bulan lain atau membuat event baru, kabarin ya!"
-
-User: "Buatkan booking tenda untuk PT ABC tanggal 28-30 Oktober"
-Asisten: [Panggil get_inventory / check_availability untuk cari alat tenda & cek unitnya, lalu panggil create_booking dengan itemId + itemName]
-→ Sistem menampilkan ringkasan booking dan meminta user mengetik 'Ya'. Booking baru dibuat setelah user mengetik 'Ya'.
-
-User: "mau catat pengeluaran"
-Asisten: (JANGAN tanya semua field sekaligus!)
-→ "Oke! Berapa jumlahnya dan untuk keperluan apa?"
-
-User: "500rb buat transport"
-Asisten: [Panggil create_event_expense dengan category "Transportasi", amount 500000 — tanggal, PIC, dan metode bayar pakai default; tanyakan event/proyeknya hanya kalau user menyebutnya]
-→ Sistem menampilkan ringkasan pengeluaran dan meminta user mengetik 'Ya' untuk menyimpan.
+User: "mau catat pengeluaran" lalu "500rb buat transport" → JANGAN tanya semua field sekaligus. Tanya yang penting dulu ("Berapa jumlahnya dan untuk keperluan apa?"), lalu panggil create_event_expense dengan default (tanggal hari ini, PIC = nama user, metode Cash) untuk field yang tidak disebutkan. Sistem otomatis menampilkan ringkasan dan minta user ketik 'Ya' sebelum tersimpan -- pola konfirmasi ini sama untuk SEMUA action tool (create_booking, update_booking_status, dst).
 `;
 }
 
