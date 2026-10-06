@@ -16,16 +16,14 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Canvas, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/cn";
 import type { ChatRoom } from "@/lib/chat/rooms";
 import { CHAT_ROOM_LABELS } from "@/lib/chat/rooms";
 import type { Division } from "@/lib/supabase/types";
 import type { OfficeRosterEntry } from "@/lib/virtual-office/data";
-import { sanitizeLook, type AvatarLook } from "@/lib/virtual-office/avatar-look";
+import type { AvatarLook } from "@/lib/virtual-office/avatar-look";
 import {
   AGENT_NPC_POSITIONS,
   OWNER_DOOR_CENTER,
@@ -35,6 +33,7 @@ import {
   blockersFor,
   canEnterOwnerRoom,
   chatRoomFor,
+  deskForDivision,
   getRoom,
   getRoomAt,
   resolveMove,
@@ -45,8 +44,9 @@ import {
 } from "@/lib/virtual-office/house";
 import { getAgentById, type AIAgent } from "@/lib/ai/agents";
 import { HouseScene, toScene } from "./HouseScene";
-import { AgentNPC, PlayerAvatar, RemoteAvatar, SleeperAvatar, type Dir, type RemotePos } from "./Avatars";
+import { AgentNPC, DeskAvatar, PlayerAvatar, RemoteAvatar, SleeperAvatar, type Dir, type RemotePos } from "./Avatars";
 import { CharacterEditor } from "./CharacterEditor";
+import { useVirtualOfficePresence } from "./PresenceProvider";
 
 /**
  * Kantor Virtual v4 -- "Rumah Magna" (denah & aturan di
@@ -55,7 +55,6 @@ import { CharacterEditor } from "./CharacterEditor";
  * kasurnya di Kamar Staff. Tiap orang bisa mengubah karakternya sendiri.
  */
 
-const CHANNEL_NAME = "kantor-virtual";
 const BROADCAST_INTERVAL_MS = 70;
 const INTERACTION_RADIUS = 55;
 const CAMERA_OFFSET = { x: 0, y: 260, z: 210 };
@@ -67,8 +66,6 @@ type CurrentUser = {
   division: Division;
   look: AvatarLook;
 };
-
-type PresenceMeta = { onlineAt?: string; look?: unknown };
 
 function firstName(name: string): string {
   return name.split(" ")[0] || name;
@@ -96,72 +93,31 @@ export function VirtualOfficeClient({
     [roster]
   );
 
+  const { onlineIds, presenceMeta, remoteRef, broadcastMove, updatePresence } = useVirtualOfficePresence();
+
   const posRef = useRef<Pos>({ ...SPAWN });
   const dirRef = useRef<Dir>("up");
   const keysRef = useRef<Set<string>>(new Set());
-  const remoteRef = useRef<Map<string, RemotePos>>(new Map());
-  const channelRef = useRef<RealtimeChannel | null>(null);
-  const lookRef = useRef<AvatarLook>(currentUser.look);
 
   const [look, setLook] = useState<AvatarLook>(currentUser.look);
   const [savedLook, setSavedLook] = useState<AvatarLook>(currentUser.look);
   const [editing, setEditing] = useState(false);
-  const [onlineIds, setOnlineIds] = useState<string[]>([]);
-  const [presenceLooks, setPresenceLooks] = useState<Map<string, AvatarLook>>(new Map());
   const [roomId, setRoomId] = useState<RoomId | undefined>(undefined);
   const [nearby, setNearby] = useState<OfficeRosterEntry | null>(null);
   const [nearbyAgent, setNearbyAgent] = useState<AIAgent | null>(null);
   const [nearOwnerDoor, setNearOwnerDoor] = useState(false);
 
+  // Begitu halaman Kantor Virtual dibuka, tandai presence sendiri
+  // "inOffice: true" (avatar ikut berjalan live di peta semua orang) --
+  // dan balikin ke false saat keluar halaman ini (avatar jadi diam di meja
+  // divisinya, tapi tetap "online" selama aplikasi masih dibuka di halaman
+  // lain). Channel Supabase-nya sendiri sudah hidup di PresenceProvider
+  // (AppShell) sejak aplikasi dibuka, jadi di sini cuma update flag.
   useEffect(() => {
-    lookRef.current = look;
-  }, [look]);
-
-  // Realtime: posisi lewat broadcast, siapa online + tampilannya lewat presence.
-  useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase.channel(CHANNEL_NAME, {
-      config: { broadcast: { self: false }, presence: { key: currentUser.id } },
-    });
-
-    channel.on("broadcast", { event: "move" }, ({ payload }) => {
-      const p = payload as { id: string; x: number; y: number; dir: Dir };
-      if (p.id === currentUser.id || !rosterById.has(p.id)) return;
-      remoteRef.current.set(p.id, { x: p.x, y: p.y, dir: p.dir });
-    });
-
-    channel.on("presence", { event: "sync" }, () => {
-      const state = channel.presenceState<PresenceMeta>();
-      // Kunci presence dipilih klien sendiri: hanya id yang ada di roster.
-      const ids = Object.keys(state).filter((id) => rosterById.has(id));
-      const looks = new Map<string, AvatarLook>();
-      for (const id of ids) {
-        const meta = state[id]?.[state[id].length - 1];
-        if (meta?.look) looks.set(id, sanitizeLook(meta.look, id));
-      }
-      setOnlineIds(ids);
-      setPresenceLooks(looks);
-      for (const id of Array.from(remoteRef.current.keys())) {
-        if (!ids.includes(id)) remoteRef.current.delete(id);
-      }
-    });
-
-    channel.subscribe((status) => {
-      if (status !== "SUBSCRIBED") return;
-      channel.track({ onlineAt: new Date().toISOString(), look: lookRef.current });
-      channel.send({
-        type: "broadcast",
-        event: "move",
-        payload: { id: currentUser.id, x: posRef.current.x, y: posRef.current.y, dir: dirRef.current },
-      });
-    });
-
-    channelRef.current = channel;
-    return () => {
-      supabase.removeChannel(channel);
-      channelRef.current = null;
-    };
-  }, [currentUser.id, rosterById]);
+    updatePresence({ inOffice: true });
+    return () => updatePresence({ inOffice: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Keyboard (diabaikan saat mengetik di input).
   useEffect(() => {
@@ -195,12 +151,15 @@ export function VirtualOfficeClient({
     else keysRef.current.delete(key);
   }, []);
 
-  const handleSaved = useCallback((next: AvatarLook) => {
-    setLook(next);
-    setSavedLook(next);
-    setEditing(false);
-    channelRef.current?.track({ onlineAt: new Date().toISOString(), look: next });
-  }, []);
+  const handleSaved = useCallback(
+    (next: AvatarLook) => {
+      setLook(next);
+      setSavedLook(next);
+      setEditing(false);
+      updatePresence({ look: next });
+    },
+    [updatePresence]
+  );
 
   const onlineSet = useMemo(() => new Set(onlineIds), [onlineIds]);
   const sleepers = useMemo(
@@ -210,8 +169,9 @@ export function VirtualOfficeClient({
         .sort((a, b) => a.fullName.localeCompare(b.fullName, "id")),
     [roster, onlineSet, currentUser.id]
   );
-  const others = onlineIds.filter((id) => id !== currentUser.id);
-  const lookFor = (entry: OfficeRosterEntry) => presenceLooks.get(entry.id) ?? entry.look;
+  const othersInOffice = onlineIds.filter((id) => id !== currentUser.id && presenceMeta.get(id)?.inOffice);
+  const othersElsewhere = onlineIds.filter((id) => id !== currentUser.id && !presenceMeta.get(id)?.inOffice);
+  const lookFor = (entry: OfficeRosterEntry) => presenceMeta.get(entry.id)?.look ?? entry.look;
 
   const room = roomId ? getRoom(roomId) : null;
   const roomChat = chatRoomFor(roomId, currentUser.division);
@@ -272,10 +232,17 @@ export function VirtualOfficeClient({
 
           <PlayerAvatar posRef={posRef} dirRef={dirRef} look={look} label={`${firstName(currentUser.fullName)} (Kamu)`} />
 
-          {others.map((id) => {
+          {othersInOffice.map((id) => {
             const entry = rosterById.get(id);
             if (!entry) return null;
             return <RemoteAvatar key={id} id={id} remoteRef={remoteRef} look={lookFor(entry)} label={firstName(entry.fullName)} />;
+          })}
+
+          {othersElsewhere.map((id) => {
+            const entry = rosterById.get(id);
+            if (!entry) return null;
+            const desk = deskForDivision(entry.division);
+            return <DeskAvatar key={id} x={desk.x} y={desk.y} look={lookFor(entry)} label={firstName(entry.fullName)} />;
           })}
 
           {sleepers.map((entry, i) => {
@@ -293,10 +260,9 @@ export function VirtualOfficeClient({
             keysRef={keysRef}
             posRef={posRef}
             dirRef={dirRef}
-            channelRef={channelRef}
+            broadcastMove={broadcastMove}
             remoteRef={remoteRef}
             blockers={blockers}
-            currentUserId={currentUser.id}
             rosterById={rosterById}
             setRoomId={setRoomId}
             setNearby={setNearby}
@@ -392,10 +358,9 @@ function GameLoop({
   keysRef,
   posRef,
   dirRef,
-  channelRef,
+  broadcastMove,
   remoteRef,
   blockers,
-  currentUserId,
   rosterById,
   setRoomId,
   setNearby,
@@ -405,10 +370,9 @@ function GameLoop({
   keysRef: { current: Set<string> };
   posRef: { current: Pos };
   dirRef: { current: Dir };
-  channelRef: { current: RealtimeChannel | null };
+  broadcastMove: (x: number, y: number, dir: Dir) => void;
   remoteRef: { current: Map<string, RemotePos> };
   blockers: ReturnType<typeof blockersFor>;
-  currentUserId: string;
   rosterById: Map<string, OfficeRosterEntry>;
   setRoomId: (id: RoomId | undefined) => void;
   setNearby: (entry: OfficeRosterEntry | null) => void;
@@ -448,11 +412,7 @@ function GameLoop({
     const now = performance.now();
     if (teleported || now - lastBroadcastRef.current > BROADCAST_INTERVAL_MS) {
       lastBroadcastRef.current = now;
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "move",
-        payload: { id: currentUserId, x: posRef.current.x, y: posRef.current.y, dir: dirRef.current },
-      });
+      broadcastMove(posRef.current.x, posRef.current.y, dirRef.current);
     }
 
     const { x, y } = posRef.current;

@@ -19,6 +19,11 @@ import type { Division } from "@/lib/supabase/types";
 
 export type Rect = { x: number; y: number; w: number; h: number };
 export type Pos = { x: number; y: number };
+/** Arah hadap avatar (dipakai render & broadcast posisi). Ditaruh di sini
+ * (bukan di Avatars.tsx) supaya presence.ts/PresenceProvider bisa pakai
+ * tanpa circular import dengan komponen React. */
+export type Dir = "up" | "down" | "left" | "right";
+export type RemotePos = { x: number; y: number; dir: Dir };
 
 export const PLAYER_RADIUS = 12;
 /** Satuan peta per detik (dikali delta-time, bukan per frame). */
@@ -282,6 +287,31 @@ export function stairsTeleport(pos: Pos): Pos | null {
   if (!isUpstairs(pos) && inRect(pos.x, pos.y, STAIRS_UP_ZONE)) return { ...FLOOR2_ARRIVAL };
   if (isUpstairs(pos) && inRect(pos.x, pos.y, STAIRS_DOWN_ZONE)) return { ...GROUND_ARRIVAL };
   return null;
+}
+
+/* ------------------------- Posisi "online di tempat lain" ------------------------- */
+
+/** Titik berdiri untuk orang yang sedang membuka MagnaSuperApp (jadi
+ * "online") tapi TIDAK sedang di halaman Kantor Virtual -- berdiri diam di
+ * dekat meja divisinya di Ruang Gabungan/Ruang Creative, bukan ikut
+ * berjalan (posisi live cuma ada kalau orangnya benar-benar di peta).
+ * Dipakai VirtualOfficeClient untuk membedakan 3 keadaan: berjalan (live
+ * di Kantor Virtual), diam di meja (online tapi di halaman lain), tidur di
+ * Kamar Staff (aplikasi tertutup). */
+export function deskForDivision(division: Division): Pos {
+  switch (division) {
+    case "magnarent":
+      return { x: 634, y: 393 };
+    case "production":
+      return { x: 706, y: 393 };
+    case "finance":
+      return { x: 788, y: 393 };
+    case "magnative":
+      return { x: 190, y: 695 };
+    default:
+      // admin ("all") & investor: tidak punya meja divisi sendiri -> lorong tengah.
+      return { x: 450, y: 660 };
+  }
 }
 
 /* ------------------------------- NPC AI ------------------------------- */

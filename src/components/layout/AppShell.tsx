@@ -7,6 +7,7 @@ import { ImportantNotificationBanner } from "@/components/notifications/Importan
 import { PullToRefresh } from "./PullToRefresh";
 import { WelcomeSplash } from "./WelcomeSplash";
 import { AIFloatingChat } from "@/components/ai/AIFloatingChat";
+import { VirtualOfficePresenceProvider } from "@/components/virtual-office/PresenceProvider";
 import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
 import { formatDisplayName } from "@/lib/shared/utils";
 import type { Profile } from "@/lib/supabase/types";
@@ -36,8 +37,8 @@ export function AppShell({
   user: (Profile & { email: string }) | null;
   maintenance?: MaintenanceStatus;
 }) {
-  return (
-    <LocaleProvider locale={user?.language_preference ?? "id"}>
+  const shell = (
+    <>
       {/* useSearchParams() di WelcomeSplash mewajibkan boundary Suspense di
           App Router — fallback null karena popup ini murni bonus visual,
           tidak boleh memblokir render dashboard itu sendiri. */}
@@ -58,6 +59,15 @@ export function AppShell({
       </div>
       {/* Floating AI Chat Widget — tersedia di SEMUA halaman dashboard */}
       <AIFloatingChat />
+    </>
+  );
+
+  return (
+    <LocaleProvider locale={user?.language_preference ?? "id"}>
+      {/* Presence Kantor Virtual dipasang di sini (bukan cuma di halaman
+          Kantor Virtual) supaya status "online" akurat begitu aplikasi
+          dibuka, di modul apa pun -- lihat PresenceProvider.tsx. */}
+      {user ? <VirtualOfficePresenceProvider userId={user.id}>{shell}</VirtualOfficePresenceProvider> : shell}
     </LocaleProvider>
   );
 }

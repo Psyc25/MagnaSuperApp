@@ -6,11 +6,12 @@ import { Billboard, Text } from "@react-three/drei";
 import * as THREE from "three";
 import type { AIAgent } from "@/lib/ai/agents";
 import type { AvatarLook } from "@/lib/virtual-office/avatar-look";
-import { SPAWN, type Pos } from "@/lib/virtual-office/house";
+import { SPAWN, type Dir, type Pos, type RemotePos } from "@/lib/virtual-office/house";
 import { toScene } from "./HouseScene";
 
-export type Dir = "up" | "down" | "left" | "right";
-export type RemotePos = { x: number; y: number; dir: Dir };
+// Re-export supaya kode lama yang mengimpor Dir/RemotePos dari "./Avatars"
+// (bukan langsung dari house.ts) tidak perlu diubah.
+export type { Dir, RemotePos };
 
 const DIR_VECTORS: Record<Dir, { x: number; z: number }> = {
   up: { x: 0, z: -1 },
@@ -257,6 +258,20 @@ export function RemoteAvatar({
   });
 
   return <ChibiAvatar ref={groupRef} look={look} label={label} />;
+}
+
+/** Orang yang sedang "online" (membuka MagnaSuperApp) tapi TIDAK sedang di
+ * halaman Kantor Virtual -- berdiri diam di meja divisinya (lihat
+ * deskForDivision di house.ts), bukan ikut berjalan karena tidak ada
+ * posisi live untuknya. Beda dari SleeperAvatar (itu utk yang app-nya
+ * benar-benar tertutup/offline). */
+export function DeskAvatar({ x, y, look, label }: { x: number; y: number; look: AvatarLook; label: string }) {
+  const [sx, , sz] = toScene(x, y);
+  return (
+    <group position={[sx, 0, sz]}>
+      <ChibiAvatar look={look} label={label} />
+    </group>
+  );
 }
 
 export function SleeperAvatar({ x, y, level, look, label }: { x: number; y: number; level: 0 | 1; look: AvatarLook; label: string }) {
