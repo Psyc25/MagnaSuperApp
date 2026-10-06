@@ -3,6 +3,9 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_AUTH_ROUTES = ["/login", "/register", "/lupa-password"];
 
+/** Harus sama dengan VALID_DIVISIONS di src/app/dashboard/admin/actions.ts. */
+const VALID_DIVISIONS = new Set(["magnarent", "magnative", "production", "all", "investor", "finance"]);
+
 // Path prefix modul -> divisi yang boleh mengaksesnya. "/reset-password"
 // SENGAJA tidak masuk PUBLIC_AUTH_ROUTES: rute itu dikunjungi sesaat
 // setelah pengguna (jadi "sudah login" lewat sesi recovery) klik tautan
@@ -137,7 +140,27 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && isAuthRoute) {
+  // Akun tanpa divisi sah di app_metadata tidak pernah dibuat admin (lihat
+  // createStaffAccount) -- biasanya hasil signup publik lewat API Supabase.
+  // Keluarkan dari sesi supaya tidak bisa memakai bagian aplikasi yang tidak
+  // dijaga per divisi (Chat bersama, Kantor Virtual, NOVA, dst).
+  const division = (user?.app_metadata as { division?: string } | null | undefined)?.division ?? "";
+  const hasValidDivision = VALID_DIVISIONS.has(division);
+
+  if (user && !hasValidDivision && isProtectedRoute) {
+    await supabase.auth.signOut();
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    url.search = "";
+    url.searchParams.set("error", "Akun ini belum diaktifkan admin. Hubungi admin Magna Technology.");
+    const redirect = NextResponse.redirect(url);
+    supabaseResponse.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
+    return redirect;
+  }
+
+  // Tanpa divisi sah: biarkan halaman login tampil (jangan dialihkan ke
+  // /dashboard), supaya tidak terjadi putaran redirect kalau signOut gagal.
+  if (user && hasValidDivision && isAuthRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     url.search = "";
@@ -145,12 +168,8 @@ export async function middleware(request: NextRequest) {
   }
 
   if (user && isProtectedRoute) {
-    // Tanpa division di app_metadata = tidak punya akses modul apa pun
-    // (sama dengan current_user_division() di database sejak migrasi 0094;
-    // dulu jatuh ke "production" sehingga akun hasil signup publik bisa
-    // membuka modul Production).
-    const division = (user.app_metadata as { division?: string } | null | undefined)?.division ?? "none";
-
+    // Di titik ini division pasti sah (akun tanpa division sudah dikeluarkan
+    // di atas).
     if (division !== "all") {
       const isOpenAdminRouteForDivision =
         (["magnarent", "magnative", "production"].includes(division) &&
