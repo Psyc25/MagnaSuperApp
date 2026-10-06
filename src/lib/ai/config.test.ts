@@ -43,3 +43,24 @@ describe("resolveAIConfig", () => {
     expect(resolveAIConfig({ AI_API_URL: "https://llm.example.com/v1", AI_API_KEY: "k", AI_MODEL: "m" }).available).toBe(true);
   });
 });
+
+describe("resolveAIConfig dengan AI_PROVIDER", () => {
+  it("AI_PROVIDER=groq tanpa AI_API_URL memakai base URL Groq", () => {
+    const c = resolveAIConfig({ NODE_ENV: "production", AI_PROVIDER: "groq", AI_API_KEY: "k" });
+    expect(c.baseUrl).toBe("https://api.groq.com/openai/v1");
+    expect(c.provider).toBe("groq");
+    expect(c.model).toBe("llama-3.3-70b-versatile");
+    expect(c.available).toBe(true);
+  });
+
+  it("AI_PROVIDER menimpa AI_API_URL localhost", () => {
+    const c = resolveAIConfig({ NODE_ENV: "production", AI_PROVIDER: "together", AI_API_URL: "http://localhost:20128/v1", AI_API_KEY: "k" });
+    expect(c.provider).toBe("together");
+    expect(c.available).toBe(true);
+  });
+
+  it("AI_API_URL non-lokal tetap menang atas AI_PROVIDER", () => {
+    const c = resolveAIConfig({ NODE_ENV: "production", AI_PROVIDER: "groq", AI_API_URL: "https://openrouter.ai/api/v1", AI_API_KEY: "k" });
+    expect(c.provider).toBe("openrouter");
+  });
+});

@@ -1,78 +1,94 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  Bell,
-  Building2,
+  ChevronDown,
+  ChevronLeft,
   ChevronRight,
-  Home,
-  LayoutGrid,
+  ChevronUp,
+  MapPin,
   MessageSquare,
-  Monitor,
-  Search,
   Users,
-  X,
-  Zap,
-  Activity,
-  Calendar,
-  TrendingUp
+  Zap
 } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { OrthographicCamera, Text } from "@react-three/drei";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Billboard, Text } from "@react-three/drei";
 import * as THREE from "three";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/cn";
+import type { ChatRoom } from "@/lib/chat/rooms";
 import type { Division } from "@/lib/supabase/types";
 import type { OfficeRosterEntry } from "@/lib/virtual-office/data";
-import type { OfficeRoom } from "@/lib/virtual-office/map";
+import type { OfficeRoom, Prop, Rect } from "@/lib/virtual-office/map";
 import {
   AGENT_NPC_POSITIONS,
   DIVISION_COLORS,
+  OBSTACLES,
+  OUTDOOR_MARGIN,
+  PLAYER_RADIUS,
+  PLAYER_SPEED,
+  PROPS,
   ROOMS,
+  SPAWN,
   WORLD_H,
   WORLD_W,
+  getRoomAt,
+  resolveMove,
 } from "@/lib/virtual-office/map";
 import { getAgentById, type AIAgent } from "@/lib/ai/agents";
 
 /**
- * Virtual Office v2 - Isometric Interactive Workspace
+ * Virtual Office v3 - Game-Like Interactive Workspace
  *
- * Konsep: "Living Application" - visualisasi aktivitas operasional
- * dalam bentuk kantor isometrik interaktif, bukan sekadar dashboard.
- *
- * Features:
- * - Fixed isometric camera (tidak follow player)
- * - Click-to-zoom pada area
- * - Status indicators pada karakter
- * - Glassmorphism UI overlay
- * - Real-time presence & activities
+ * Kombinasi terbaik:
+ * - Walking mechanics (WASD/Arrow) seperti game
+ * - Visual modern corporate dengan chibi avatars
+ * - AI Agent NPCs yang bisa diajak bicara
+ * - Real-time multiplayer presence
  */
 
-type CurrentUser = { id: string; fullName: string; username: string | null; division: Division };
-type RemotePresence = { id: string; status: "online" | "busy" | "away"; activity?: string };
+type Dir = "up" | "down" | "left" | "right";
+type RemotePos = { x: number; y: number; dir: Dir };
+type Pos = { x: number; y: number };
 
-const CHANNEL_NAME = "kantor-virtual-v2";
+const CHANNEL_NAME = "kantor-virtual";
+const BROADCAST_INTERVAL_MS = 70;
+const INTERACTION_RADIUS = 60;
+const CAMERA_OFFSET = { x: 0, y: 280, z: 220 };
 
-// Isometric camera settings
-const CAMERA_ZOOM = 0.8;
+const DIR_VECTORS: Record<Dir, { x: number; z: number }> = {
+  up: { x: 0, z: -1 },
+  down: { x: 0, z: 1 },
+  left: { x: -1, z: 0 },
+  right: { x: 1, z: 0 },
+};
 
-/** Angka mock yang stabil per id (pengganti Math.random() saat render, yang
- * dilarang React Compiler dan berubah tiap roster berubah). */
-function stableMockCount(id: string, max: number): number {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return h % max;
+function dirToRadians(dir: Dir): number {
+  const v = DIR_VECTORS[dir];
+  return Math.atan2(v.x, v.z);
 }
 
-// Room data with activities
-type RoomData = {
-  room: OfficeRoom;
-  occupants: OfficeRosterEntry[];
-  activities: number;
-  notifications: number;
-};
+function toScene(x: number, y: number): [number, number, number] {
+  return [x - WORLD_W / 2, 0, y - WORLD_H / 2];
+}
+
+function hex8ToRgbAlpha(hex: string): { color: string; opacity: number } {
+  if (hex.length === 9) {
+    return { color: hex.slice(0, 7), opacity: parseInt(hex.slice(7, 9), 16) / 255 };
+  }
+  return { color: hex, opacity: 1 };
+}
+
+type CurrentUser = { id: string; fullName: string; username: string | null; division: Division };
+
+function pickChatTarget(me: Division, other: OfficeRosterEntry): { room: ChatRoom; mention?: string } | null {
+  if (me === "investor" || other.division === "investor") return null;
+  const room: ChatRoom =
+    me === other.division && (me === "magnarent" || me === "magnative" || me === "production") ? me : "bersama";
+  return { room, mention: other.username ?? undefined };
+}
 
 export function VirtualOfficeClient({
   currentUser,
@@ -81,728 +97,344 @@ export function VirtualOfficeClient({
   currentUser: CurrentUser;
   roster: OfficeRosterEntry[];
 }) {
-  // UI State
-  const [selectedRoom, setSelectedRoom] = useState<OfficeRoom | null>(null);
-  const [selectedPerson, setSelectedPerson] = useState<OfficeRosterEntry | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<AIAgent | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [notifications] = useState(3); // Mock notifications
+  const rosterById = useMemo(() => new Map(roster.map((r) => [r.id, r])), [roster]);
 
-  // Realtime presence
-  const [onlineIds, setOnlineIds] = useState<string[]>([]);
-  const [, setPresenceMap] = useState<Map<string, RemotePresence>>(new Map());
+  // Player state
+  const posRef = useRef<Pos>({ ...SPAWN });
+  const dirRef = useRef<Dir>("down");
+  const keysRef = useRef<Set<string>>(new Set());
+
+  // Multiplayer state
+  const remoteRef = useRef<Map<string, RemotePos>>(new Map());
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const lastBroadcastRef = useRef(0);
 
-  // Camera state for zoom
-  const [cameraTarget, setCameraTarget] = useState<{ x: number; y: number; zoom: number }>({
-    x: WORLD_W / 2,
-    y: WORLD_H / 2,
-    zoom: CAMERA_ZOOM
-  });
+  // UI state
+  const lastRoomLabelRef = useRef("");
+  const lastNearbyIdRef = useRef<string | null>(null);
+  const lastNearbyAgentRef = useRef<string | null>(null);
+  const onlineIdsRef = useRef<string[]>([]);
+
+  const [onlineIds, setOnlineIds] = useState<string[]>([]);
+  const [roomLabel, setRoomLabel] = useState("Lobby");
+  const [nearby, setNearby] = useState<OfficeRosterEntry | null>(null);
+  const [nearbyAgent, setNearbyAgent] = useState<AIAgent | null>(null);
+
+  useEffect(() => {
+    onlineIdsRef.current = onlineIds;
+  }, [onlineIds]);
 
   // Realtime connection
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase.channel(CHANNEL_NAME, {
-      config: { presence: { key: currentUser.id } },
+      config: { broadcast: { self: false }, presence: { key: currentUser.id } },
     });
 
-    // Kunci presence dipilih klien sendiri, jadi hanya id yang ada di roster
-    // yang dihitung -- kunci karangan tidak lagi menggelembungkan jumlah
-    // "online".
-    const rosterIds = new Set(roster.map((r) => r.id));
-    channel.on("presence", { event: "sync" }, () => {
-      const state = channel.presenceState();
-      const ids = Object.keys(state).filter((id) => rosterIds.has(id));
-      setOnlineIds(ids);
+    channel.on("broadcast", { event: "move" }, ({ payload }) => {
+      const p = payload as { id: string; x: number; y: number; dir: Dir };
+      if (p.id === currentUser.id) return;
+      remoteRef.current.set(p.id, { x: p.x, y: p.y, dir: p.dir });
+    });
 
-      const newPresenceMap = new Map<string, RemotePresence>();
-      ids.forEach(id => {
-        newPresenceMap.set(id, {
-          id,
-          status: "online",
-          activity: "Working"
-        });
-      });
-      setPresenceMap(newPresenceMap);
+    channel.on("presence", { event: "sync" }, () => {
+      // Kunci presence dipilih klien sendiri, jadi hanya id yang ada di roster
+      // yang dihitung -- kunci karangan tidak menggelembungkan jumlah "online".
+      const ids = Object.keys(channel.presenceState()).filter((id) => rosterById.has(id));
+      setOnlineIds(ids);
+      for (const id of Array.from(remoteRef.current.keys())) {
+        if (!ids.includes(id)) remoteRef.current.delete(id);
+      }
     });
 
     channel.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        channel.track({
-          onlineAt: new Date().toISOString(),
-          status: "online",
-          activity: "Viewing Office"
-        });
-      }
+      if (status !== "SUBSCRIBED") return;
+      channel.track({ onlineAt: new Date().toISOString() });
+      channel.send({
+        type: "broadcast",
+        event: "move",
+        payload: { id: currentUser.id, x: posRef.current.x, y: posRef.current.y, dir: dirRef.current },
+      });
     });
 
     channelRef.current = channel;
     return () => {
       supabase.removeChannel(channel);
+      channelRef.current = null;
     };
-  }, [currentUser.id, roster]);
+  }, [currentUser.id, rosterById]);
 
-  // Build room data with occupants
-  const roomsData = useMemo<RoomData[]>(() => {
-    return ROOMS.map(room => {
-      const occupants = roster.filter(r => {
-        if (room.division === null) return false;
-        if (room.division === "all") return r.division === "all";
-        return r.division === room.division;
-      });
-
-      return {
-        room,
-        occupants: occupants.slice(0, 5),
-        activities: stableMockCount(room.id, 5),
-        notifications: room.id === "magnarent-desk" ? 2 : room.id === "meeting-room" ? 1 : 0,
-      };
-    });
-  }, [roster]);
-
-  // Handle room click
-  const handleRoomClick = useCallback((room: OfficeRoom) => {
-    setSelectedRoom(room);
-    setSelectedPerson(null);
-    setSelectedAgent(null);
-    setCameraTarget({
-      x: room.rect.x + room.rect.w / 2,
-      y: room.rect.y + room.rect.h / 2,
-      zoom: 1.5
-    });
+  // Keyboard controls
+  useEffect(() => {
+    const MOVE_KEYS = new Set(["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"]);
+    function onKeyDown(e: KeyboardEvent) {
+      const k = e.key.toLowerCase();
+      if (!MOVE_KEYS.has(k)) return;
+      keysRef.current.add(k);
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      keysRef.current.delete(e.key.toLowerCase());
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   }, []);
 
-  // Handle person click
-  const handlePersonClick = useCallback((person: OfficeRosterEntry) => {
-    setSelectedPerson(person);
-    setSelectedRoom(null);
-    setSelectedAgent(null);
+  // Virtual D-pad for mobile
+  const pressVirtual = useCallback((key: string, down: boolean) => {
+    if (down) keysRef.current.add(key);
+    else keysRef.current.delete(key);
   }, []);
 
-  // Handle agent click
-  const handleAgentClick = useCallback((agent: AIAgent) => {
-    setSelectedAgent(agent);
-    setSelectedRoom(null);
-    setSelectedPerson(null);
-  }, []);
-
-  // Reset view
-  const resetView = useCallback(() => {
-    setSelectedRoom(null);
-    setSelectedPerson(null);
-    setSelectedAgent(null);
-    setCameraTarget({ x: WORLD_W / 2, y: WORLD_H / 2, zoom: CAMERA_ZOOM });
-  }, []);
-
-  // Get status color
-  const getStatusColor = (id: string) => {
-    if (onlineIds.includes(id)) return "#22c55e";
-    return "#94a3b8";
-  };
+  const chatTarget = nearby ? pickChatTarget(currentUser.division, nearby) : null;
 
   return (
-    <div className="relative h-[calc(100vh-6rem)] w-full overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-
-      {/* Top Navigation Bar */}
-      <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-3 backdrop-blur-xl bg-slate-900/70 border-b border-white/10">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 rounded-lg hover:bg-white/10 transition"
-          >
-            <LayoutGrid className="h-5 w-5 text-white/70" />
-          </button>
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-              <Building2 className="h-4 w-4 text-white" />
-            </div>
-            <span className="font-bold text-white">Virtual Office</span>
-          </div>
-        </div>
-
-        {/* Search */}
-        <div className="flex-1 max-w-md mx-8">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/40" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search rooms, people, activities..."
-              className="w-full pl-10 pr-4 py-2 rounded-xl bg-white/5 border border-white/10 text-sm text-white placeholder:text-white/40 focus:outline-none focus:border-violet-500/50"
-            />
-          </div>
-        </div>
-
-        {/* Right actions */}
+    <div className="space-y-4">
+      {/* Status Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <button className="relative p-2 rounded-lg hover:bg-white/10 transition">
-            <Bell className="h-5 w-5 text-white/70" />
-            {notifications > 0 && (
-              <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center">
-                {notifications}
-              </span>
-            )}
-          </button>
-          <div className="flex items-center gap-2 pl-3 border-l border-white/10">
-            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center text-sm font-bold text-white">
-              {currentUser.fullName.charAt(0)}
-            </div>
-            <div className="hidden md:block">
-              <p className="text-sm font-medium text-white">{currentUser.fullName}</p>
-              <p className="text-[10px] text-white/50 capitalize">{currentUser.division}</p>
-            </div>
-          </div>
+          <span className="inline-flex items-center gap-2 rounded-full bg-slate-800/80 backdrop-blur-sm border border-white/10 px-4 py-2 text-sm font-medium text-white">
+            <MapPin className="h-4 w-4 text-violet-400" />
+            <span className="text-white/60">Lokasi:</span>
+            <span className="font-bold">{roomLabel}</span>
+          </span>
+          <span className="inline-flex items-center gap-2 rounded-full bg-slate-800/80 backdrop-blur-sm border border-white/10 px-4 py-2 text-sm font-medium text-white">
+            <Users className="h-4 w-4 text-emerald-400" />
+            <span className="font-bold text-emerald-400">{onlineIds.length}</span>
+            <span className="text-white/60">online</span>
+          </span>
+        </div>
+        <div className="text-xs text-white/40 hidden sm:block">
+          Gunakan WASD atau Arrow Keys untuk bergerak
         </div>
       </div>
 
-      {/* Sidebar */}
-      <div className={cn(
-        "absolute top-14 left-0 bottom-0 z-10 w-64 backdrop-blur-xl bg-slate-900/80 border-r border-white/10 transition-transform duration-300",
-        !sidebarOpen && "-translate-x-full"
-      )}>
-        <div className="p-4 space-y-6">
-          {/* Quick Stats */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-semibold text-white/50 uppercase tracking-wider">Overview</h3>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                <div className="flex items-center gap-2 text-emerald-400">
-                  <Users className="h-4 w-4" />
-                  <span className="text-lg font-bold">{onlineIds.length}</span>
-                </div>
-                <p className="text-[10px] text-white/50 mt-1">Online Now</p>
-              </div>
-              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                <div className="flex items-center gap-2 text-amber-400">
-                  <Activity className="h-4 w-4" />
-                  <span className="text-lg font-bold">12</span>
-                </div>
-                <p className="text-[10px] text-white/50 mt-1">Active Tasks</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Navigation */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-semibold text-white/50 uppercase tracking-wider">Navigation</h3>
-            <nav className="space-y-1">
-              <button
-                onClick={resetView}
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white/70 hover:bg-white/10 hover:text-white transition"
-              >
-                <Home className="h-4 w-4" />
-                <span>Overview</span>
-              </button>
-              {ROOMS.map(room => (
-                <button
-                  key={room.id}
-                  onClick={() => handleRoomClick(room)}
-                  className={cn(
-                    "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition",
-                    selectedRoom?.id === room.id
-                      ? "bg-violet-500/20 text-violet-300"
-                      : "text-white/70 hover:bg-white/10 hover:text-white"
-                  )}
-                >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="h-2 w-2 rounded-full"
-                      style={{ backgroundColor: room.accentColor }}
-                    />
-                    <span className="truncate">{room.label}</span>
-                  </div>
-                  {roomsData.find(r => r.room.id === room.id)?.notifications ? (
-                    <span className="h-5 w-5 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center">
-                      {roomsData.find(r => r.room.id === room.id)?.notifications}
-                    </span>
-                  ) : null}
-                </button>
-              ))}
-            </nav>
-          </div>
-
-          {/* AI Agents */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-semibold text-white/50 uppercase tracking-wider">AI Assistants</h3>
-            <div className="space-y-1">
-              {AGENT_NPC_POSITIONS.map(pos => {
-                const agent = getAgentById(pos.agentId);
-                if (!agent) return null;
-                return (
-                  <button
-                    key={agent.id}
-                    onClick={() => handleAgentClick(agent)}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition",
-                      selectedAgent?.id === agent.id
-                        ? "bg-violet-500/20 text-violet-300"
-                        : "text-white/70 hover:bg-white/10 hover:text-white"
-                    )}
-                  >
-                    <span className="text-lg">{agent.icon}</span>
-                    <div className="text-left">
-                      <p className="font-medium">{agent.name}</p>
-                      <p className="text-[10px] text-white/50">{agent.description}</p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Canvas */}
-      <div className={cn(
-        "absolute top-14 bottom-0 right-0 transition-all duration-300",
-        sidebarOpen ? "left-64" : "left-0"
-      )}>
+      {/* Game Canvas */}
+      <div
+        className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-900 shadow-2xl"
+        style={{ aspectRatio: `${WORLD_W} / ${WORLD_H}` }}
+      >
         <Canvas
-          style={{ width: "100%", height: "100%" }}
+          style={{ width: "100%", height: "100%", display: "block" }}
           dpr={[1, 2]}
           gl={{ antialias: true }}
-          orthographic
+          camera={{ fov: 45, near: 1, far: 3000 }}
         >
-          <IsometricScene
-            roomsData={roomsData}
-            roster={roster}
-            onlineIds={onlineIds}
+          {/* Sky */}
+          <color attach="background" args={["#0f172a"]} />
+
+          {/* Lighting */}
+          <ambientLight intensity={0.4} />
+          <directionalLight position={[300, 400, 200]} intensity={0.8} color="#fef3c7" />
+          <directionalLight position={[-200, 300, -100]} intensity={0.3} color="#bfdbfe" />
+          <hemisphereLight args={["#1e3a5f", "#064e3b", 0.3]} />
+          <pointLight position={[0, 100, 0]} intensity={0.5} color="#8b5cf6" distance={500} />
+
+          {/* Environment */}
+          <Ground />
+          <BuildingFloor />
+          {ROOMS.map((room) => (
+            <RoomFloor key={room.id} room={room} />
+          ))}
+          {OBSTACLES.map((rect, i) => (
+            <ModernDesk key={i} rect={rect} />
+          ))}
+          {PROPS.map((prop) => (
+            <PropMesh key={prop.id} prop={prop} />
+          ))}
+
+          {/* Player Avatar */}
+          <PlayerAvatar posRef={posRef} dirRef={dirRef} currentUser={currentUser} />
+
+          {/* Other Players */}
+          {onlineIds
+            .filter((id) => id !== currentUser.id)
+            .map((id) => {
+              const entry = rosterById.get(id);
+              if (!entry) return null;
+              return <RemoteAvatar key={id} id={id} remoteRef={remoteRef} entry={entry} />;
+            })}
+
+          {/* AI Agent NPCs */}
+          {AGENT_NPC_POSITIONS.map((npcPos) => {
+            const agent = getAgentById(npcPos.agentId);
+            if (!agent) return null;
+            return (
+              <AgentNPC
+                key={npcPos.agentId}
+                agent={agent}
+                x={npcPos.x}
+                y={npcPos.y}
+              />
+            );
+          })}
+
+          {/* Game Loop */}
+          <GameLoop
+            keysRef={keysRef}
+            posRef={posRef}
+            dirRef={dirRef}
+            channelRef={channelRef}
+            lastBroadcastRef={lastBroadcastRef}
+            lastRoomLabelRef={lastRoomLabelRef}
+            lastNearbyIdRef={lastNearbyIdRef}
+            lastNearbyAgentRef={lastNearbyAgentRef}
+            remoteRef={remoteRef}
             currentUser={currentUser}
-            cameraTarget={cameraTarget}
-            onRoomClick={handleRoomClick}
-            onPersonClick={handlePersonClick}
-            onAgentClick={handleAgentClick}
-            selectedRoom={selectedRoom}
+            rosterById={rosterById}
+            setRoomLabel={setRoomLabel}
+            setNearby={setNearby}
+            setNearbyAgent={setNearbyAgent}
           />
         </Canvas>
-      </div>
 
-      {/* Detail Panel - Room */}
-      {selectedRoom && (
-        <DetailPanel onClose={resetView}>
-          <div className="flex items-center gap-3 mb-4">
-            <div
-              className="h-10 w-10 rounded-xl flex items-center justify-center"
-              style={{ backgroundColor: selectedRoom.accentColor + "30" }}
-            >
-              <Monitor className="h-5 w-5" style={{ color: selectedRoom.accentColor }} />
-            </div>
-            <div>
-              <h3 className="font-bold text-white">{selectedRoom.label}</h3>
-              <p className="text-xs text-white/50">
-                {selectedRoom.division ? `Division: ${selectedRoom.division}` : "Shared Space"}
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            <StatCard icon={Users} label="Occupants" value={roomsData.find(r => r.room.id === selectedRoom.id)?.occupants.length || 0} color="cyan" />
-            <StatCard icon={Activity} label="Activities" value={roomsData.find(r => r.room.id === selectedRoom.id)?.activities || 0} color="amber" />
-            <StatCard icon={Bell} label="Alerts" value={roomsData.find(r => r.room.id === selectedRoom.id)?.notifications || 0} color="red" />
-          </div>
-
-          <div className="space-y-2">
-            <h4 className="text-xs font-semibold text-white/50 uppercase">Team Members</h4>
-            {roomsData.find(r => r.room.id === selectedRoom.id)?.occupants.map(person => (
-              <button
-                key={person.id}
-                onClick={() => handlePersonClick(person)}
-                className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 transition"
-              >
-                <div className="relative">
-                  <div
-                    className="h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold text-white"
-                    style={{ backgroundColor: DIVISION_COLORS[person.division] }}
-                  >
-                    {person.fullName.charAt(0)}
-                  </div>
-                  <div
-                    className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-800"
-                    style={{ backgroundColor: getStatusColor(person.id) }}
-                  />
-                </div>
-                <div className="text-left flex-1">
-                  <p className="text-sm font-medium text-white">{person.fullName}</p>
-                  <p className="text-[10px] text-white/50 capitalize">{person.division}</p>
-                </div>
-                <ChevronRight className="h-4 w-4 text-white/30" />
-              </button>
-            ))}
-          </div>
-        </DetailPanel>
-      )}
-
-      {/* Detail Panel - Person */}
-      {selectedPerson && (
-        <DetailPanel onClose={resetView}>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="relative">
-              <div
-                className="h-12 w-12 rounded-full flex items-center justify-center text-lg font-bold text-white"
-                style={{ backgroundColor: DIVISION_COLORS[selectedPerson.division] }}
-              >
-                {selectedPerson.fullName.charAt(0)}
-              </div>
-              <div
-                className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border-2 border-slate-800"
-                style={{ backgroundColor: getStatusColor(selectedPerson.id) }}
-              />
-            </div>
-            <div>
-              <h3 className="font-bold text-white">{selectedPerson.fullName}</h3>
-              <p className="text-xs text-white/50 capitalize">{selectedPerson.division}</p>
-            </div>
-          </div>
-
-          <div className="space-y-3 mb-4">
-            <div className="flex items-center justify-between p-3 rounded-lg bg-white/5">
-              <span className="text-sm text-white/70">Status</span>
-              <span className={cn(
-                "text-sm font-medium",
-                onlineIds.includes(selectedPerson.id) ? "text-emerald-400" : "text-white/50"
-              )}>
-                {onlineIds.includes(selectedPerson.id) ? "Online" : "Offline"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between p-3 rounded-lg bg-white/5">
-              <span className="text-sm text-white/70">Activity</span>
-              <span className="text-sm text-white">Working</span>
-            </div>
-            <div className="flex items-center justify-between p-3 rounded-lg bg-white/5">
-              <span className="text-sm text-white/70">Tasks</span>
-              <span className="text-sm text-amber-400">3 pending</span>
-            </div>
-          </div>
-
-          <div className="flex gap-2">
+        {/* Interaction Prompts */}
+        {chatTarget && nearby && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 animate-bounce-subtle">
             <Link
-              href={`/dashboard/chat?mention=${selectedPerson.username || ""}`}
-              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-violet-500 text-white text-sm font-medium hover:bg-violet-600 transition"
+              href={`/dashboard/chat?room=${chatTarget.room}${
+                chatTarget.mention ? `&mention=${encodeURIComponent(chatTarget.mention)}` : ""
+              }`}
+              className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-bold text-slate-900 shadow-lg transition-transform hover:scale-105"
             >
               <MessageSquare className="h-4 w-4" />
-              Message
+              Chat dengan {nearby.fullName.split(" ")[0]}
             </Link>
-            <button className="px-4 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/20 transition">
-              View Profile
-            </button>
           </div>
-        </DetailPanel>
-      )}
+        )}
 
-      {/* Detail Panel - Agent */}
-      {selectedAgent && (
-        <DetailPanel onClose={resetView}>
-          <div className="flex items-center gap-3 mb-4">
-            <div className={cn(
-              "h-12 w-12 rounded-xl flex items-center justify-center text-2xl",
-              `bg-gradient-to-br ${selectedAgent.color}`
-            )}>
-              {selectedAgent.icon}
-            </div>
-            <div>
-              <h3 className="font-bold text-white">{selectedAgent.name}</h3>
-              <p className="text-xs text-white/50">{selectedAgent.description}</p>
-            </div>
+        {nearbyAgent && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 animate-bounce-subtle">
+            <Link
+              href={`/dashboard/ai-assistant?agent=${nearbyAgent.id}`}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold text-white shadow-lg transition-transform hover:scale-105",
+                `bg-gradient-to-r ${nearbyAgent.color}`
+              )}
+            >
+              <Zap className="h-4 w-4" />
+              Bicara dengan {nearbyAgent.name}
+            </Link>
           </div>
+        )}
 
-          <div className="p-4 rounded-xl bg-white/5 border border-white/10 mb-4">
-            <p className="text-sm text-white/70">
-              {selectedAgent.id === "nova" && "Your all-in-one assistant. Ask me anything about the application, data, or get help with any module."}
-              {selectedAgent.id === "reno" && "Specialized in Magnarent. I can help with bookings, inventory, availability checks, and rental analytics."}
-              {selectedAgent.id === "crea" && "Your creative partner for Magnative. I handle clients, projects, content planning, and creative brainstorming."}
-              {selectedAgent.id === "fabr" && "Production expert. I manage materials, booth projects, and help calculate project requirements."}
-              {selectedAgent.id === "finn" && "Finance analyst. I track expenses, invoices, and provide financial insights and reports."}
-            </p>
-          </div>
-
-          <Link
-            href={`/dashboard/ai-assistant?agent=${selectedAgent.id}`}
-            className={cn(
-              "w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white font-medium transition",
-              `bg-gradient-to-r ${selectedAgent.color} hover:opacity-90`
-            )}
-          >
-            <Zap className="h-4 w-4" />
-            Start Conversation
-          </Link>
-        </DetailPanel>
-      )}
-
-      {/* Bottom Stats Bar */}
-      <div className="absolute bottom-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-2 backdrop-blur-xl bg-slate-900/70 border-t border-white/10">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 text-xs text-white/50">
-            <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>{onlineIds.length} online</span>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-white/50">
-            <Calendar className="h-3 w-3" />
-            <span>3 meetings today</span>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-white/50">
-            <TrendingUp className="h-3 w-3" />
-            <span>Activity: High</span>
-          </div>
+        {/* Mini Instructions */}
+        <div className="absolute top-3 right-3 rounded-lg bg-black/50 backdrop-blur-sm px-3 py-1.5 text-[10px] text-white/60">
+          Dekati karakter untuk interaksi
         </div>
-        <div className="text-xs text-white/30">
-          Click on rooms or characters to interact
+      </div>
+
+      {/* Mobile D-Pad */}
+      <div className="flex items-center justify-center gap-2 sm:hidden">
+        <DpadButton icon={ChevronLeft} onPress={(d) => pressVirtual("arrowleft", d)} />
+        <div className="flex flex-col gap-2">
+          <DpadButton icon={ChevronUp} onPress={(d) => pressVirtual("arrowup", d)} />
+          <DpadButton icon={ChevronDown} onPress={(d) => pressVirtual("arrowdown", d)} />
         </div>
+        <DpadButton icon={ChevronRight} onPress={(d) => pressVirtual("arrowright", d)} />
       </div>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* UI Components                                                       */
-/* ------------------------------------------------------------------ */
-
-function DetailPanel({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+function DpadButton({ icon: Icon, onPress }: { icon: typeof ChevronUp; onPress: (down: boolean) => void }) {
   return (
-    <div className="absolute top-14 right-0 bottom-0 w-80 z-30 backdrop-blur-xl bg-slate-900/90 border-l border-white/10 p-4 overflow-y-auto">
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 p-1 rounded-lg hover:bg-white/10 transition"
-      >
-        <X className="h-4 w-4 text-white/50" />
-      </button>
-      {children}
-    </div>
-  );
-}
-
-function StatCard({ icon: Icon, label, value, color }: { icon: typeof Users; label: string; value: number; color: string }) {
-  const colors: Record<string, string> = {
-    cyan: "text-cyan-400",
-    amber: "text-amber-400",
-    red: "text-red-400",
-    emerald: "text-emerald-400",
-  };
-  return (
-    <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
-      <Icon className={cn("h-4 w-4 mx-auto mb-1", colors[color])} />
-      <p className="text-lg font-bold text-white">{value}</p>
-      <p className="text-[10px] text-white/50">{label}</p>
-    </div>
+    <button
+      type="button"
+      onPointerDown={() => onPress(true)}
+      onPointerUp={() => onPress(false)}
+      onPointerLeave={() => onPress(false)}
+      className="grid h-14 w-14 place-items-center rounded-xl bg-slate-800 border border-white/10 text-white/70 shadow-lg active:bg-slate-700 active:scale-95 transition-all"
+    >
+      <Icon className="h-6 w-6" />
+    </button>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* 3D Scene - Isometric View                                          */
+/* 3D Scene Components                                                 */
 /* ------------------------------------------------------------------ */
-
-function IsometricScene({
-  roomsData,
-  roster,
-  onlineIds,
-  currentUser,
-  cameraTarget,
-  onRoomClick,
-  onPersonClick,
-  onAgentClick,
-  selectedRoom,
-}: {
-  roomsData: RoomData[];
-  roster: OfficeRosterEntry[];
-  onlineIds: string[];
-  currentUser: { id: string; fullName: string; division: Division };
-  cameraTarget: { x: number; y: number; zoom: number };
-  onRoomClick: (room: OfficeRoom) => void;
-  onPersonClick: (person: OfficeRosterEntry) => void;
-  onAgentClick: (agent: AIAgent) => void;
-  selectedRoom: OfficeRoom | null;
-}) {
-  const targetRef = useRef(new THREE.Vector3());
-  // Dipakai ulang tiap frame (dulu new Vector3 dialokasikan 60-120x/detik).
-  const desiredPosRef = useRef(new THREE.Vector3());
-
-  // Smooth camera movement -- kamera diambil dari argumen useFrame (bukan
-  // nilai kembalian useThree) supaya boleh dimutasi (aturan React Compiler).
-  useFrame(({ camera }) => {
-    const targetX = cameraTarget.x - WORLD_W / 2;
-    const targetZ = cameraTarget.y - WORLD_H / 2;
-    targetRef.current.set(targetX, 0, targetZ);
-
-    // Smooth interpolation
-    camera.position.lerp(
-      desiredPosRef.current.set(
-        targetX + 400 * cameraTarget.zoom,
-        500 * cameraTarget.zoom,
-        targetZ + 400 * cameraTarget.zoom
-      ),
-      0.05
-    );
-    camera.lookAt(targetRef.current);
-
-    if (camera instanceof THREE.OrthographicCamera) {
-      // Kamera ortografis: zoom LEBIH BESAR = objek lebih besar. Dulu rumusnya
-      // terbalik (0.5 / zoom) sehingga klik ruangan malah memperkecil kantor.
-      const targetZoom = 0.625 * (cameraTarget.zoom / CAMERA_ZOOM);
-      if (Math.abs(camera.zoom - targetZoom) > 1e-4) {
-        camera.zoom = THREE.MathUtils.lerp(camera.zoom, targetZoom, 0.05);
-        camera.updateProjectionMatrix();
-      }
-    }
-  });
-
-  return (
-    <>
-      {/* Lighting */}
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[300, 500, 300]} intensity={0.8} color="#fff5eb" />
-      <directionalLight position={[-200, 300, -200]} intensity={0.3} color="#e0f2fe" />
-      <hemisphereLight args={["#bfdbfe", "#86efac", 0.4]} />
-
-      {/* Ground */}
-      <Ground />
-
-      {/* Building Base */}
-      <BuildingBase />
-
-      {/* Rooms */}
-      {roomsData.map(({ room, occupants, notifications }) => (
-        <Room
-          key={room.id}
-          room={room}
-          occupants={occupants}
-          notifications={notifications}
-          isSelected={selectedRoom?.id === room.id}
-          onClick={() => onRoomClick(room)}
-        />
-      ))}
-
-      {/* Characters */}
-      {roster.slice(0, 15).map((person, i) => (
-        <Character
-          key={person.id}
-          person={person}
-          position={getCharacterPosition(person, i)}
-          isOnline={onlineIds.includes(person.id)}
-          isSelf={person.id === currentUser.id}
-          onClick={() => onPersonClick(person)}
-        />
-      ))}
-
-      {/* AI Agents */}
-      {AGENT_NPC_POSITIONS.map(pos => {
-        const agent = getAgentById(pos.agentId);
-        if (!agent) return null;
-        return (
-          <AgentNPC
-            key={agent.id}
-            agent={agent}
-            x={pos.x}
-            y={pos.y}
-            onClick={() => onAgentClick(agent)}
-          />
-        );
-      })}
-
-      {/* Camera */}
-      <OrthographicCamera makeDefault position={[400, 500, 400]} zoom={0.5} />
-    </>
-  );
-}
 
 function Ground() {
-  return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2, 0]}>
-      <planeGeometry args={[WORLD_W + 200, WORLD_H + 200]} />
-      <meshStandardMaterial color="#1e293b" />
-    </mesh>
-  );
-}
-
-function BuildingBase() {
+  const [x, , z] = toScene(WORLD_W / 2, WORLD_H / 2);
   return (
     <group>
-      {/* Main floor */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-        <planeGeometry args={[WORLD_W, WORLD_H]} />
-        <meshStandardMaterial color="#334155" metalness={0.2} roughness={0.8} />
+      {/* Outer grass */}
+      <mesh position={[x, -2, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[WORLD_W + OUTDOOR_MARGIN * 2, WORLD_H + OUTDOOR_MARGIN * 2]} />
+        <meshStandardMaterial color="#064e3b" />
       </mesh>
-      {/* Floor pattern - corridors */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.5, 0]}>
-        <planeGeometry args={[50, WORLD_H]} />
-        <meshStandardMaterial color="#475569" />
-      </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.5, 0]}>
-        <planeGeometry args={[WORLD_W, 50]} />
-        <meshStandardMaterial color="#475569" />
+      {/* Pavement around building */}
+      <mesh position={[x, -1, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[WORLD_W + 60, WORLD_H + 60]} />
+        <meshStandardMaterial color="#1e293b" />
       </mesh>
     </group>
   );
 }
 
-function Room({
-  room,
-  notifications,
-  isSelected,
-  onClick,
-}: {
-  room: OfficeRoom;
-  occupants: OfficeRosterEntry[];
-  notifications: number;
-  isSelected: boolean;
-  onClick: () => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const x = room.rect.x + room.rect.w / 2 - WORLD_W / 2;
-  const z = room.rect.y + room.rect.h / 2 - WORLD_H / 2;
+function BuildingFloor() {
+  const [x, , z] = toScene(WORLD_W / 2, WORLD_H / 2);
+  return (
+    <group>
+      <mesh position={[x, 0, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[WORLD_W, WORLD_H]} />
+        <meshStandardMaterial color="#1e293b" metalness={0.3} roughness={0.7} />
+      </mesh>
+      {/* Corridor highlights */}
+      <mesh position={[x, 0.5, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[50, WORLD_H]} />
+        <meshStandardMaterial color="#334155" emissive="#334155" emissiveIntensity={0.1} />
+      </mesh>
+      <mesh position={[x, 0.5, z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[WORLD_W, 50]} />
+        <meshStandardMaterial color="#334155" emissive="#334155" emissiveIntensity={0.1} />
+      </mesh>
+    </group>
+  );
+}
+
+function RoomFloor({ room }: { room: OfficeRoom }) {
+  const [x, , z] = toScene(room.rect.x + room.rect.w / 2, room.rect.y + room.rect.h / 2);
+  const { color, opacity } = hex8ToRgbAlpha(room.floorColor);
 
   return (
-    <group
-      position={[x, 0, z]}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      onPointerOver={() => setHovered(true)}
-      onPointerOut={() => setHovered(false)}
-    >
-      {/* Floor */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1, 0]}>
+    <group>
+      {/* Room floor */}
+      <mesh position={[x, 1, z]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[room.rect.w - 10, room.rect.h - 10]} />
         <meshStandardMaterial
-          color={room.accentColor}
+          color={color}
           transparent
-          opacity={isSelected ? 0.4 : hovered ? 0.25 : 0.15}
+          opacity={Math.max(opacity, 0.4)}
+          emissive={room.accentColor}
+          emissiveIntensity={0.05}
         />
       </mesh>
 
-      {/* Walls - Glass partitions */}
-      <GlassWall position={[-room.rect.w / 2 + 3, 20, 0]} size={[3, 40, room.rect.h - 10]} color={room.accentColor} />
-      <GlassWall position={[0, 20, -room.rect.h / 2 + 3]} size={[room.rect.w - 10, 40, 3]} color={room.accentColor} />
-
-      {/* Desk */}
-      <ModernDesk position={[0, 0, 0]} width={room.rect.w * 0.4} />
-
-      {/* Notification indicator */}
-      {notifications > 0 && (
-        <group position={[room.rect.w / 2 - 20, 60, -room.rect.h / 2 + 20]}>
-          <mesh>
-            <sphereGeometry args={[8, 16, 16]} />
-            <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.5} />
-          </mesh>
-          <Text
-            position={[0, 0, 9]}
-            fontSize={8}
-            color="white"
-            anchorX="center"
-            anchorY="middle"
-          >
-            {notifications}
-          </Text>
-        </group>
-      )}
+      {/* Glass walls */}
+      <mesh position={[x - room.rect.w / 2 + 3, 25, z]}>
+        <boxGeometry args={[4, 50, room.rect.h - 10]} />
+        <meshStandardMaterial color={room.accentColor} transparent opacity={0.15} metalness={0.9} roughness={0.1} />
+      </mesh>
+      <mesh position={[x, 25, z - room.rect.h / 2 + 3]}>
+        <boxGeometry args={[room.rect.w - 10, 50, 4]} />
+        <meshStandardMaterial color={room.accentColor} transparent opacity={0.15} metalness={0.9} roughness={0.1} />
+      </mesh>
 
       {/* Room label */}
       <Text
-        position={[0, 2, room.rect.h / 2 - 15]}
+        position={[x, 3, z + room.rect.h / 2 - 20]}
         rotation={[-Math.PI / 2, 0, 0]}
-        fontSize={12}
+        fontSize={14}
         color={room.accentColor}
         anchorX="center"
         anchorY="middle"
+        outlineWidth={0.5}
+        outlineColor="#000"
       >
         {room.label}
       </Text>
@@ -810,161 +442,335 @@ function Room({
   );
 }
 
-function GlassWall({ position, size, color }: { position: [number, number, number]; size: [number, number, number]; color: string }) {
+function ModernDesk({ rect }: { rect: Rect }) {
+  const [x, , z] = toScene(rect.x + rect.w / 2, rect.y + rect.h / 2);
   return (
-    <mesh position={position}>
-      <boxGeometry args={size} />
-      <meshStandardMaterial color={color} transparent opacity={0.15} metalness={0.9} roughness={0.1} />
-    </mesh>
-  );
-}
-
-function ModernDesk({ position, width }: { position: [number, number, number]; width: number }) {
-  return (
-    <group position={position}>
-      {/* Desk top */}
-      <mesh position={[0, 28, 0]}>
-        <boxGeometry args={[width, 3, width * 0.4]} />
+    <group>
+      {/* Desk surface */}
+      <mesh position={[x, 28, z]}>
+        <boxGeometry args={[rect.w, 4, rect.h]} />
         <meshStandardMaterial color="#f8fafc" metalness={0.1} roughness={0.3} />
       </mesh>
-      {/* Legs */}
+      {/* Desk legs */}
       {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([lx, lz], i) => (
-        <mesh key={i} position={[lx * (width / 2 - 5), 14, lz * (width * 0.15)]}>
-          <boxGeometry args={[3, 28, 3]} />
-          <meshStandardMaterial color="#64748b" metalness={0.7} roughness={0.3} />
+        <mesh key={i} position={[x + lx * (rect.w / 2 - 5), 14, z + lz * (rect.h / 2 - 5)]}>
+          <boxGeometry args={[4, 28, 4]} />
+          <meshStandardMaterial color="#64748b" metalness={0.6} roughness={0.3} />
         </mesh>
       ))}
       {/* Monitor */}
-      <mesh position={[0, 40, -width * 0.1]}>
-        <boxGeometry args={[width * 0.3, 20, 2]} />
-        <meshStandardMaterial color="#1e293b" />
+      <mesh position={[x, 42, z]}>
+        <boxGeometry args={[rect.w * 0.4, 20, 3]} />
+        <meshStandardMaterial color="#0f172a" />
       </mesh>
-      <mesh position={[0, 40, -width * 0.1 + 1.5]}>
-        <boxGeometry args={[width * 0.28, 18, 0.5]} />
+      <mesh position={[x, 42, z + 2]}>
+        <boxGeometry args={[rect.w * 0.38, 18, 1]} />
         <meshStandardMaterial color="#38bdf8" emissive="#38bdf8" emissiveIntensity={0.3} />
       </mesh>
     </group>
   );
 }
 
-function Character({
-  person,
-  position,
-  isOnline,
-  isSelf,
-  onClick,
-}: {
-  person: OfficeRosterEntry;
-  position: [number, number, number];
-  isOnline: boolean;
-  isSelf: boolean;
-  onClick: () => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const groupRef = useRef<THREE.Group>(null);
+function PropMesh({ prop }: { prop: Prop }) {
+  const [x, , z] = toScene(prop.x, prop.y);
 
-  // Subtle idle animation
-  useFrame((state) => {
-    if (groupRef.current) {
-      groupRef.current.position.y = position[1] + Math.sin(state.clock.elapsedTime * 2 + position[0]) * 1;
-    }
+  switch (prop.type) {
+    case "tree":
+      return (
+        <group position={[x, 0, z]}>
+          <mesh position={[0, 25, 0]}>
+            <cylinderGeometry args={[5, 6, 50, 8]} />
+            <meshStandardMaterial color="#78350f" />
+          </mesh>
+          <mesh position={[0, 65, 0]}>
+            <coneGeometry args={[30, 70, 8]} />
+            <meshStandardMaterial color="#166534" />
+          </mesh>
+        </group>
+      );
+    case "bush":
+      return (
+        <mesh position={[x, 12, z]}>
+          <sphereGeometry args={[16, 8, 8]} />
+          <meshStandardMaterial color="#15803d" />
+        </mesh>
+      );
+    case "chair":
+    case "meetingChair":
+      return (
+        <group position={[x, 0, z]}>
+          <mesh position={[0, 12, 0]}>
+            <boxGeometry args={[18, 5, 18]} />
+            <meshStandardMaterial color="#3b82f6" />
+          </mesh>
+          <mesh position={[0, 24, -8]}>
+            <boxGeometry args={[18, 22, 4]} />
+            <meshStandardMaterial color="#3b82f6" />
+          </mesh>
+        </group>
+      );
+    case "computer":
+      return (
+        <group position={[x, 30, z]}>
+          <mesh position={[0, 0, 0]}>
+            <boxGeometry args={[18, 14, 2]} />
+            <meshStandardMaterial color="#0f172a" />
+          </mesh>
+          <mesh position={[0, 0, 1.5]}>
+            <boxGeometry args={[16, 12, 1]} />
+            <meshStandardMaterial color="#22d3ee" emissive="#22d3ee" emissiveIntensity={0.4} />
+          </mesh>
+        </group>
+      );
+    case "fridge":
+      return (
+        <mesh position={[x, 35, z]}>
+          <boxGeometry args={[30, 70, 28]} />
+          <meshStandardMaterial color="#e2e8f0" metalness={0.4} roughness={0.3} />
+        </mesh>
+      );
+    case "dispenser":
+      return (
+        <group position={[x, 0, z]}>
+          <mesh position={[0, 25, 0]}>
+            <cylinderGeometry args={[10, 12, 50, 12]} />
+            <meshStandardMaterial color="#0ea5e9" />
+          </mesh>
+          <mesh position={[0, 54, 0]}>
+            <cylinderGeometry args={[8, 8, 10, 12]} />
+            <meshStandardMaterial color="#0284c7" />
+          </mesh>
+        </group>
+      );
+    case "sofa":
+      return (
+        <group position={[x, 0, z]}>
+          <mesh position={[0, 14, 0]}>
+            <boxGeometry args={[50, 18, 24]} />
+            <meshStandardMaterial color="#7c3aed" />
+          </mesh>
+          <mesh position={[0, 30, -10]}>
+            <boxGeometry args={[50, 26, 5]} />
+            <meshStandardMaterial color="#6d28d9" />
+          </mesh>
+        </group>
+      );
+    case "pottedplant":
+      return (
+        <group position={[x, 0, z]}>
+          <mesh position={[0, 10, 0]}>
+            <cylinderGeometry args={[10, 8, 20, 10]} />
+            <meshStandardMaterial color="#92400e" />
+          </mesh>
+          <mesh position={[0, 30, 0]}>
+            <sphereGeometry args={[16, 10, 10]} />
+            <meshStandardMaterial color="#22c55e" />
+          </mesh>
+        </group>
+      );
+    case "lamppost":
+      return (
+        <group position={[x, 0, z]}>
+          <mesh position={[0, 50, 0]}>
+            <cylinderGeometry args={[3, 3, 100, 8]} />
+            <meshStandardMaterial color="#374151" />
+          </mesh>
+          <mesh position={[0, 105, 0]}>
+            <sphereGeometry args={[12, 12, 12]} />
+            <meshStandardMaterial color="#fef08a" emissive="#fde047" emissiveIntensity={0.8} />
+          </mesh>
+          <pointLight position={[x, 100, z]} intensity={0.5} color="#fef08a" distance={150} />
+        </group>
+      );
+    default:
+      return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Avatar Components                                                   */
+/* ------------------------------------------------------------------ */
+
+const ChibiAvatar = forwardRef<THREE.Group, { color: string; label: string; isSelf: boolean; isOnline?: boolean }>(
+  function ChibiAvatar({ color, label, isSelf, isOnline = true }, ref) {
+    return (
+      <group ref={ref}>
+        {/* Shadow */}
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.5, 0]}>
+          <circleGeometry args={[12, 16]} />
+          <meshStandardMaterial color="#000" transparent opacity={0.3} />
+        </mesh>
+
+        {/* Body */}
+        <mesh position={[0, 14, 0]}>
+          <capsuleGeometry args={[8, 12, 8, 12]} />
+          <meshStandardMaterial color={color} />
+        </mesh>
+
+        {/* Arms */}
+        <mesh position={[-12, 16, 0]}>
+          <capsuleGeometry args={[4, 8, 4, 8]} />
+          <meshStandardMaterial color={color} />
+        </mesh>
+        <mesh position={[12, 16, 0]}>
+          <capsuleGeometry args={[4, 8, 4, 8]} />
+          <meshStandardMaterial color={color} />
+        </mesh>
+
+        {/* Head */}
+        <mesh position={[0, 38, 0]}>
+          <sphereGeometry args={[14, 20, 20]} />
+          <meshStandardMaterial color="#fef3c7" />
+        </mesh>
+
+        {/* Hair */}
+        <mesh position={[0, 44, -3]}>
+          <sphereGeometry args={[13, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+          <meshStandardMaterial color={color} />
+        </mesh>
+
+        {/* Eyes */}
+        <mesh position={[-5, 38, 12]}>
+          <sphereGeometry args={[2.5, 8, 8]} />
+          <meshStandardMaterial color="#1f2937" />
+        </mesh>
+        <mesh position={[5, 38, 12]}>
+          <sphereGeometry args={[2.5, 8, 8]} />
+          <meshStandardMaterial color="#1f2937" />
+        </mesh>
+
+        {/* Eye highlights */}
+        <mesh position={[-4, 39, 14]}>
+          <sphereGeometry args={[1, 6, 6]} />
+          <meshStandardMaterial color="#fff" />
+        </mesh>
+        <mesh position={[6, 39, 14]}>
+          <sphereGeometry args={[1, 6, 6]} />
+          <meshStandardMaterial color="#fff" />
+        </mesh>
+
+        {/* Blush */}
+        <mesh position={[-10, 34, 10]} rotation={[0, 0.3, 0]}>
+          <circleGeometry args={[3, 12]} />
+          <meshStandardMaterial color="#fca5a5" transparent opacity={0.5} />
+        </mesh>
+        <mesh position={[10, 34, 10]} rotation={[0, -0.3, 0]}>
+          <circleGeometry args={[3, 12]} />
+          <meshStandardMaterial color="#fca5a5" transparent opacity={0.5} />
+        </mesh>
+
+        {/* Mouth */}
+        <mesh position={[0, 32, 13]}>
+          <boxGeometry args={[5, 2, 1]} />
+          <meshStandardMaterial color="#f87171" />
+        </mesh>
+
+        {/* Online status */}
+        <mesh position={[10, 50, 0]}>
+          <sphereGeometry args={[4, 12, 12]} />
+          <meshStandardMaterial
+            color={isOnline ? "#22c55e" : "#64748b"}
+            emissive={isOnline ? "#22c55e" : "#64748b"}
+            emissiveIntensity={isOnline ? 0.5 : 0.1}
+          />
+        </mesh>
+
+        {/* Self indicator */}
+        {isSelf && (
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1, 0]}>
+            <ringGeometry args={[14, 17, 24]} />
+            <meshStandardMaterial color="#8b5cf6" emissive="#8b5cf6" emissiveIntensity={0.6} />
+          </mesh>
+        )}
+
+        {/* Name label */}
+        <Billboard position={[0, 65, 0]}>
+          <Text
+            fontSize={10}
+            color="#ffffff"
+            outlineWidth={0.5}
+            outlineColor={isSelf ? "#8b5cf6" : "#000"}
+            anchorX="center"
+            anchorY="middle"
+          >
+            {label}
+          </Text>
+        </Billboard>
+      </group>
+    );
+  }
+);
+
+function PlayerAvatar({
+  posRef,
+  dirRef,
+  currentUser,
+}: {
+  posRef: { current: Pos };
+  dirRef: { current: Dir };
+  currentUser: CurrentUser;
+}) {
+  const groupRef = useRef<THREE.Group | null>(null);
+  const walkTimeRef = useRef(0);
+
+  useFrame((_, delta) => {
+    const g = groupRef.current;
+    if (!g) return;
+    const [x, y, z] = toScene(posRef.current.x, posRef.current.y);
+    g.position.set(x, y, z);
+    g.rotation.y = dirToRadians(dirRef.current);
+
+    // Walking bob animation
+    walkTimeRef.current += delta * 10;
+    g.position.y = Math.sin(walkTimeRef.current) * 2;
   });
 
-  const color = DIVISION_COLORS[person.division];
-
   return (
-    <group
+    <ChibiAvatar
       ref={groupRef}
-      position={position}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      onPointerOver={() => setHovered(true)}
-      onPointerOut={() => setHovered(false)}
-    >
-      {/* Shadow */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.5, 0]}>
-        <circleGeometry args={[8, 16]} />
-        <meshStandardMaterial color="#000" transparent opacity={0.3} />
-      </mesh>
-
-      {/* Body - Chibi style */}
-      <mesh position={[0, 10, 0]}>
-        <capsuleGeometry args={[6, 8, 8, 12]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-
-      {/* Head - Big chibi head */}
-      <mesh position={[0, 26, 0]}>
-        <sphereGeometry args={[10, 20, 20]} />
-        <meshStandardMaterial color="#fef3c7" />
-      </mesh>
-
-      {/* Hair */}
-      <mesh position={[0, 30, -2]}>
-        <sphereGeometry args={[9, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-
-      {/* Eyes */}
-      <mesh position={[-3.5, 26, 8]}>
-        <sphereGeometry args={[1.8, 8, 8]} />
-        <meshStandardMaterial color="#1f2937" />
-      </mesh>
-      <mesh position={[3.5, 26, 8]}>
-        <sphereGeometry args={[1.8, 8, 8]} />
-        <meshStandardMaterial color="#1f2937" />
-      </mesh>
-
-      {/* Status indicator */}
-      <mesh position={[8, 34, 0]}>
-        <sphereGeometry args={[3, 12, 12]} />
-        <meshStandardMaterial
-          color={isOnline ? "#22c55e" : "#94a3b8"}
-          emissive={isOnline ? "#22c55e" : "#94a3b8"}
-          emissiveIntensity={isOnline ? 0.5 : 0.1}
-        />
-      </mesh>
-
-      {/* Self indicator ring */}
-      {isSelf && (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1, 0]}>
-          <ringGeometry args={[10, 12, 24]} />
-          <meshStandardMaterial color="#7c3aed" emissive="#7c3aed" emissiveIntensity={0.5} />
-        </mesh>
-      )}
-
-      {/* Name on hover */}
-      {hovered && (
-        <Text
-          position={[0, 45, 0]}
-          fontSize={8}
-          color="white"
-          anchorX="center"
-          anchorY="middle"
-          outlineWidth={0.5}
-          outlineColor="#000"
-        >
-          {person.fullName}
-        </Text>
-      )}
-    </group>
+      color={DIVISION_COLORS[currentUser.division]}
+      label={`${currentUser.fullName} (Kamu)`}
+      isSelf
+      isOnline
+    />
   );
 }
 
-function AgentNPC({
-  agent,
-  x,
-  y,
-  onClick,
+function RemoteAvatar({
+  id,
+  remoteRef,
+  entry,
 }: {
-  agent: AIAgent;
-  x: number;
-  y: number;
-  onClick: () => void;
+  id: string;
+  remoteRef: { current: Map<string, RemotePos> };
+  entry: OfficeRosterEntry;
 }) {
-  const [hovered, setHovered] = useState(false);
-  const groupRef = useRef<THREE.Group>(null);
-  const sx = x - WORLD_W / 2;
-  const sz = y - WORLD_H / 2;
+  const groupRef = useRef<THREE.Group | null>(null);
+
+  useFrame(() => {
+    const g = groupRef.current;
+    if (!g) return;
+    const rp = remoteRef.current.get(id);
+    const [x, y, z] = toScene(rp?.x ?? SPAWN.x, rp?.y ?? SPAWN.y);
+    g.position.lerp(new THREE.Vector3(x, y, z), 0.1);
+    if (rp) g.rotation.y = dirToRadians(rp.dir);
+  });
+
+  return (
+    <ChibiAvatar
+      ref={groupRef}
+      color={DIVISION_COLORS[entry.division]}
+      label={entry.fullName}
+      isSelf={false}
+      isOnline
+    />
+  );
+}
+
+function AgentNPC({ agent, x, y }: { agent: AIAgent; x: number; y: number }) {
+  const groupRef = useRef<THREE.Group | null>(null);
+  const bodyRef = useRef<THREE.Group | null>(null);
+  const [sx, , sz] = toScene(x, y);
 
   const colors: Record<string, string> = {
     nova: "#8b5cf6",
@@ -975,98 +781,200 @@ function AgentNPC({
   };
   const color = colors[agent.id] ?? "#8b5cf6";
 
-  // Floating animation
   useFrame((state) => {
-    if (groupRef.current) {
-      groupRef.current.position.y = Math.sin(state.clock.elapsedTime * 1.5) * 3;
-      groupRef.current.rotation.y = state.clock.elapsedTime * 0.3;
+    if (bodyRef.current) {
+      bodyRef.current.position.y = Math.sin(state.clock.elapsedTime * 2) * 3;
+      bodyRef.current.rotation.y = state.clock.elapsedTime * 0.5;
     }
   });
 
   return (
-    <group
-      position={[sx, 0, sz]}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      onPointerOver={() => setHovered(true)}
-      onPointerOut={() => setHovered(false)}
-    >
+    <group ref={groupRef} position={[sx, 0, sz]}>
       {/* Glow ring */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1, 0]}>
-        <ringGeometry args={[12, 16, 24]} />
-        <meshStandardMaterial
-          color={color}
-          emissive={color}
-          emissiveIntensity={hovered ? 0.8 : 0.4}
-          transparent
-          opacity={0.6}
-        />
+        <ringGeometry args={[16, 22, 32]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} transparent opacity={0.6} />
       </mesh>
 
       {/* Robot body */}
-      <group ref={groupRef}>
+      <group ref={bodyRef}>
         {/* Body */}
-        <mesh position={[0, 14, 0]}>
-          <capsuleGeometry args={[7, 6, 8, 12]} />
+        <mesh position={[0, 16, 0]}>
+          <capsuleGeometry args={[10, 10, 8, 12]} />
           <meshStandardMaterial color={color} metalness={0.4} roughness={0.3} />
         </mesh>
 
         {/* Head */}
-        <mesh position={[0, 30, 0]}>
-          <boxGeometry args={[16, 12, 12]} />
+        <mesh position={[0, 38, 0]}>
+          <boxGeometry args={[20, 16, 14]} />
           <meshStandardMaterial color="#374151" metalness={0.5} roughness={0.3} />
         </mesh>
 
         {/* Face screen */}
-        <mesh position={[0, 30, 6.5]}>
-          <boxGeometry args={[12, 8, 1]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 0.8 : 0.4} />
+        <mesh position={[0, 38, 7.5]}>
+          <boxGeometry args={[16, 10, 1]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} />
         </mesh>
 
         {/* Eyes */}
-        <mesh position={[-3, 31, 7]}>
-          <boxGeometry args={[3, 3, 0.5]} />
-          <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={0.3} />
+        <mesh position={[-4, 39, 8]}>
+          <boxGeometry args={[4, 4, 0.5]} />
+          <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={0.4} />
         </mesh>
-        <mesh position={[3, 31, 7]}>
-          <boxGeometry args={[3, 3, 0.5]} />
-          <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={0.3} />
+        <mesh position={[4, 39, 8]}>
+          <boxGeometry args={[4, 4, 0.5]} />
+          <meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={0.4} />
         </mesh>
 
         {/* Antenna */}
-        <mesh position={[0, 38, 0]}>
-          <cylinderGeometry args={[1, 1, 4, 8]} />
+        <mesh position={[0, 50, 0]}>
+          <cylinderGeometry args={[2, 2, 8, 8]} />
           <meshStandardMaterial color="#64748b" />
         </mesh>
-        <mesh position={[0, 41, 0]}>
-          <sphereGeometry args={[2.5, 12, 12]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={hovered ? 1 : 0.5} />
+        <mesh position={[0, 56, 0]}>
+          <sphereGeometry args={[4, 12, 12]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.8} />
         </mesh>
       </group>
 
       {/* Label */}
-      <Text
-        position={[0, 52, 0]}
-        fontSize={8}
-        color="white"
-        anchorX="center"
-        anchorY="middle"
-        outlineWidth={0.5}
-        outlineColor={color}
-      >
-        {agent.icon} {agent.name}
-      </Text>
+      <Billboard position={[0, 70, 0]}>
+        <Text
+          fontSize={10}
+          color="#ffffff"
+          outlineWidth={0.6}
+          outlineColor={color}
+          anchorX="center"
+          anchorY="middle"
+        >
+          {agent.icon} {agent.name}
+        </Text>
+      </Billboard>
     </group>
   );
 }
 
-// Helper function to position characters
-function getCharacterPosition(person: OfficeRosterEntry, index: number): [number, number, number] {
-  const room = ROOMS.find(r => r.division === person.division) || ROOMS[0];
-  const baseX = room.rect.x + room.rect.w / 2 - WORLD_W / 2;
-  const baseZ = room.rect.y + room.rect.h / 2 - WORLD_H / 2;
+/* ------------------------------------------------------------------ */
+/* Game Loop                                                           */
+/* ------------------------------------------------------------------ */
 
-  const offsetX = ((index % 3) - 1) * 30;
-  const offsetZ = (Math.floor(index / 3) - 1) * 30;
+function GameLoop({
+  keysRef,
+  posRef,
+  dirRef,
+  channelRef,
+  lastBroadcastRef,
+  lastRoomLabelRef,
+  lastNearbyIdRef,
+  lastNearbyAgentRef,
+  remoteRef,
+  currentUser,
+  rosterById,
+  setRoomLabel,
+  setNearby,
+  setNearbyAgent,
+}: {
+  keysRef: { current: Set<string> };
+  posRef: { current: Pos };
+  dirRef: { current: Dir };
+  channelRef: { current: RealtimeChannel | null };
+  lastBroadcastRef: { current: number };
+  lastRoomLabelRef: { current: string };
+  lastNearbyIdRef: { current: string | null };
+  lastNearbyAgentRef: { current: string | null };
+  remoteRef: { current: Map<string, RemotePos> };
+  currentUser: CurrentUser;
+  rosterById: Map<string, OfficeRosterEntry>;
+  setRoomLabel: (label: string) => void;
+  setNearby: (entry: OfficeRosterEntry | null) => void;
+  setNearbyAgent: (agent: AIAgent | null) => void;
+}) {
+  const { camera } = useThree();
+  const cameraReadyRef = useRef(false);
 
-  return [baseX + offsetX, 0, baseZ + offsetZ + 40];
+  useFrame((_, delta) => {
+    const dt = Math.min(delta, 0.05);
+    const keys = keysRef.current;
+
+    // Movement
+    let vx = 0;
+    let vy = 0;
+    if (keys.has("arrowup") || keys.has("w")) vy -= 1;
+    if (keys.has("arrowdown") || keys.has("s")) vy += 1;
+    if (keys.has("arrowleft") || keys.has("a")) vx -= 1;
+    if (keys.has("arrowright") || keys.has("d")) vx += 1;
+
+    if (vx !== 0 || vy !== 0) {
+      const len = Math.hypot(vx, vy) || 1;
+      const dx = (vx / len) * PLAYER_SPEED * dt;
+      const dy = (vy / len) * PLAYER_SPEED * dt;
+      posRef.current = resolveMove(posRef.current.x, posRef.current.y, dx, dy);
+      dirRef.current = Math.abs(vx) > Math.abs(vy) ? (vx > 0 ? "right" : "left") : vy > 0 ? "down" : "up";
+    }
+
+    // Broadcast position
+    const now = performance.now();
+    if (now - lastBroadcastRef.current > BROADCAST_INTERVAL_MS) {
+      lastBroadcastRef.current = now;
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "move",
+        payload: { id: currentUser.id, x: posRef.current.x, y: posRef.current.y, dir: dirRef.current },
+      });
+    }
+
+    // Update room label
+    const room = getRoomAt(posRef.current.x, posRef.current.y);
+    const label = room?.label ?? "Lobby";
+    if (label !== lastRoomLabelRef.current) {
+      lastRoomLabelRef.current = label;
+      setRoomLabel(label);
+    }
+
+    // Check nearby players
+    let closestId: string | null = null;
+    let closestDist = INTERACTION_RADIUS;
+    for (const [id, rp] of remoteRef.current.entries()) {
+      const d = Math.hypot(rp.x - posRef.current.x, rp.y - posRef.current.y);
+      if (d < closestDist) {
+        closestDist = d;
+        closestId = id;
+      }
+    }
+    if (closestId !== lastNearbyIdRef.current) {
+      lastNearbyIdRef.current = closestId;
+      setNearby(closestId ? rosterById.get(closestId) ?? null : null);
+    }
+
+    // Check nearby AI agents
+    let closestAgentId: string | null = null;
+    let closestAgentDist = INTERACTION_RADIUS;
+    for (const npcPos of AGENT_NPC_POSITIONS) {
+      const d = Math.hypot(npcPos.x - posRef.current.x, npcPos.y - posRef.current.y);
+      if (d < closestAgentDist) {
+        closestAgentDist = d;
+        closestAgentId = npcPos.agentId;
+      }
+    }
+    if (closestAgentId !== lastNearbyAgentRef.current) {
+      lastNearbyAgentRef.current = closestAgentId;
+      setNearbyAgent(closestAgentId ? getAgentById(closestAgentId) ?? null : null);
+    }
+
+    // Camera follow
+    const [sx, sy, sz] = toScene(posRef.current.x, posRef.current.y);
+    const targetX = sx + CAMERA_OFFSET.x;
+    const targetY = sy + CAMERA_OFFSET.y;
+    const targetZ = sz + CAMERA_OFFSET.z;
+
+    if (!cameraReadyRef.current) {
+      camera.position.set(targetX, targetY, targetZ);
+      cameraReadyRef.current = true;
+    } else {
+      camera.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.08);
+    }
+    camera.lookAt(sx, sy + 30, sz);
+  });
+
+  return null;
 }

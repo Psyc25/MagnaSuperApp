@@ -12,6 +12,10 @@
  *   AI_API_KEY  API key penyedia tsb (wajib untuk penyedia cloud)
  *   AI_MODEL    (opsional) model untuk SEMUA agen; kalau kosong dipilih
  *               default yang cocok untuk penyedianya
+ *   AI_PROVIDER (opsional) openrouter | openai | groq | together -- cukup
+ *               ini + AI_API_KEY tanpa AI_API_URL; base URL penyedianya
+ *               dipakai otomatis. Kalau AI_API_URL diisi (bukan localhost),
+ *               AI_API_URL yang menang.
  *
  * Modul murni (tanpa import server) supaya bisa diuji unit.
  */
@@ -21,7 +25,7 @@ export const DEFAULT_LOCAL_AI_URL = "http://localhost:20128/v1";
 export type AIConfig = {
   baseUrl: string;
   apiKey: string;
-  provider: "9router" | "openrouter" | "openai" | "groq" | "other";
+  provider: "9router" | "openrouter" | "openai" | "groq" | "together" | "other";
   /** null = pakai model bawaan agen (khusus 9Router). */
   model: string | null;
   available: boolean;
@@ -37,7 +41,15 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<AIConfig["provider"], string | null> = {
   openrouter: "openai/gpt-4o-mini",
   openai: "gpt-4o-mini",
   groq: "llama-3.3-70b-versatile",
+  together: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
   other: null,
+};
+
+const BASE_URL_BY_PROVIDER: Partial<Record<AIConfig["provider"], string>> = {
+  openrouter: "https://openrouter.ai/api/v1",
+  openai: "https://api.openai.com/v1",
+  groq: "https://api.groq.com/openai/v1",
+  together: "https://api.together.xyz/v1",
 };
 
 function detectProvider(baseUrl: string): AIConfig["provider"] {
@@ -51,11 +63,17 @@ function detectProvider(baseUrl: string): AIConfig["provider"] {
   if (host.endsWith("openrouter.ai")) return "openrouter";
   if (host === "api.openai.com") return "openai";
   if (host.endsWith("groq.com")) return "groq";
+  if (host.endsWith("together.xyz")) return "together";
   return "other";
 }
 
 export function resolveAIConfig(env: Env): AIConfig {
-  const baseUrl = (env.AI_API_URL?.trim() || DEFAULT_LOCAL_AI_URL).replace(/\/+$/, "");
+  const explicitUrl = env.AI_API_URL?.trim() ?? "";
+  const namedProvider = env.AI_PROVIDER?.trim().toLowerCase() as AIConfig["provider"] | undefined;
+  const namedBaseUrl = namedProvider ? BASE_URL_BY_PROVIDER[namedProvider] : undefined;
+  // AI_PROVIDER berlaku kalau AI_API_URL kosong atau masih menunjuk 9Router lokal.
+  const urlIsLocal = !explicitUrl || detectProvider(explicitUrl) === "9router";
+  const baseUrl = (namedBaseUrl && urlIsLocal ? namedBaseUrl : explicitUrl || DEFAULT_LOCAL_AI_URL).replace(/\/+$/, "");
   const apiKey = env.AI_API_KEY?.trim() ?? "";
   const provider = detectProvider(baseUrl);
   const model = env.AI_MODEL?.trim() || DEFAULT_MODEL_BY_PROVIDER[provider];
