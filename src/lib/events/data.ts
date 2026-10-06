@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { fetchInChunks, PAGE_SIZE } from "@/lib/shared/paginate";
+import { fetchAllPages, fetchInChunks, PAGE_SIZE } from "@/lib/shared/paginate";
 import {
   computeChecklistItemProgress,
   type ChecklistPhase,
@@ -90,17 +90,24 @@ function mapTemplateItem(row: TemplateItemRow): EventTypeTemplateItem {
  * ProductManager memuat seluruh katalog produk sekaligus. */
 export async function getAllEventTypeTemplateItems(): Promise<EventTypeTemplateItem[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("event_type_template_items")
-    .select("id, event_type_id, category, item_name, detail, qty_info, notes, sort_order, default_needs_production")
-    .order("sort_order", { ascending: true })
-    .returns<TemplateItemRow[]>();
+  // Per halaman (batas 1000 baris PostgREST) lalu diurutkan di sini -- dulu
+  // tiap jenis event kehilangan item terakhirnya begitu total template lewat
+  // 1000, dan item baru dapat sort_order yang bentrok dengan yang tersembunyi.
+  const { data, error } = await fetchAllPages<TemplateItemRow>((afterId) =>
+    supabase
+      .from("event_type_template_items")
+      .select("id, event_type_id, category, item_name, detail, qty_info, notes, sort_order, default_needs_production")
+      .gt("id", afterId)
+      .order("id")
+      .limit(PAGE_SIZE)
+      .returns<TemplateItemRow[]>()
+  );
 
   if (error) {
     console.error("[events] getAllEventTypeTemplateItems gagal:", error.message);
     return [];
   }
-  return (data ?? []).map(mapTemplateItem);
+  return [...data].sort((a, b) => a.sort_order - b.sort_order).map(mapTemplateItem);
 }
 
 // ---------------------------------------------------------------------

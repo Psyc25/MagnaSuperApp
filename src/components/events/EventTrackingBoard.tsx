@@ -1013,6 +1013,7 @@ export function EventTrackingBoard({
   picOptions,
   currentUserId,
   isFullAccess,
+  canEditChecklist = true,
 }: {
   event: EventSummary;
   initialChecklistItems: EventChecklistItem[];
@@ -1020,6 +1021,8 @@ export function EventTrackingBoard({
   picOptions: PicOption[];
   currentUserId: string | null;
   isFullAccess: boolean;
+  /** false untuk finance: boleh melihat, tapi RLS menolak tulis checklist. */
+  canEditChecklist?: boolean;
 }) {
   const router = useRouter();
   const { showToast } = useToast();
@@ -1050,7 +1053,7 @@ export function EventTrackingBoard({
 
   // Staf boleh nambah item selagi event "Berjalan"; akses penuh selalu
   // boleh (mengikuti guard `getCurrentUserAccess` di actions.ts).
-  const canAddItem = isFullAccess || event.status === "Berjalan";
+  const canAddItem = canEditChecklist && (isFullAccess || event.status === "Berjalan");
 
   // Edit/hapus cuma untuk pembuat item sendiri + event masih Berjalan,
   // akses penuh selalu boleh override -- pola yang sama dengan
