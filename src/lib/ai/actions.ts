@@ -51,8 +51,9 @@ const PROVIDER_CONFIGS: Record<string, { baseUrl: string; modelMap: Record<strin
   groq: {
     baseUrl: "https://api.groq.com/openai/v1",
     modelMap: {
-      "gh/gpt-4o-mini-2024-07-18": "llama-3.1-8b-instant",
-      "gpt-4o-mini": "llama-3.1-8b-instant",
+      "gh/gpt-4o-mini-2024-07-18": "llama-3.3-70b-versatile",
+      "gpt-4o-mini": "llama-3.3-70b-versatile",
+      "llama-3.1-8b-instant": "llama-3.3-70b-versatile",
     },
   },
   together: {
