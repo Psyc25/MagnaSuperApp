@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
 import {
   BedDouble,
@@ -218,7 +219,7 @@ export function VirtualOfficeClient({
   const canKnock = nearOwnerDoor && !isOwner && ownerEntry?.username && currentUser.division !== "investor";
 
   return (
-    <div className="space-y-3">
+    <div className="select-none space-y-3 [-webkit-touch-callout:none]" onContextMenu={(e) => e.preventDefault()}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-800/80 px-3.5 py-1.5 text-sm font-medium text-white">
@@ -358,15 +359,29 @@ export function VirtualOfficeClient({
 }
 
 function DpadButton({ icon: Icon, label, onPress }: { icon: typeof ChevronUp; label: string; onPress: (down: boolean) => void }) {
+  // Pointer capture: begitu jari turun, SEMUA event pointer berikutnya (up/move)
+  // tetap terkunci ke tombol ini walau jari sedikit geser keluar area tombol --
+  // tanpa ini, jari yang geser cepat antar tombol D-pad bisa membuat arah
+  // "nyangkut" ON (pointerleave tidak selalu konsisten saat gestur cepat) atau
+  // malah memicu gestur bawaan browser (pilih teks/callout) di elemen lain.
+  const handleDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    onPress(true);
+  };
+  const handleUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    onPress(false);
+  };
   return (
     <button
       type="button"
       aria-label={label}
-      onPointerDown={() => onPress(true)}
-      onPointerUp={() => onPress(false)}
+      onPointerDown={handleDown}
+      onPointerUp={handleUp}
       onPointerLeave={() => onPress(false)}
-      onPointerCancel={() => onPress(false)}
-      className="grid h-14 w-14 touch-none place-items-center rounded-xl border border-white/10 bg-slate-800 text-white/70 shadow-lg transition-all active:scale-95 active:bg-slate-700"
+      onPointerCancel={handleUp}
+      onContextMenu={(e) => e.preventDefault()}
+      className="grid h-14 w-14 touch-none select-none place-items-center rounded-xl border border-white/10 bg-slate-800 text-white/70 shadow-lg transition-all [-webkit-touch-callout:none] active:scale-95 active:bg-slate-700"
     >
       <Icon className="h-6 w-6" />
     </button>
