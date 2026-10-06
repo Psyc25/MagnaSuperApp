@@ -47,3 +47,6 @@ tsc_tahap_*.log
 build_log.txt
 commit_msg_*.txt
 push_*.log
+
+.vercel
+.env*

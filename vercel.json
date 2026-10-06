@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/investor-capital-summary",
       "schedule": "0 1 * * 1"
+    },
+    {
+      "path": "/api/cron/event-date-notifications",
+      "schedule": "0 1 * * *"
     }
   ]
 }
