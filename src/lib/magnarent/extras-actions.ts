@@ -94,8 +94,14 @@ export async function saveBookingCheck(
   const photoPaths: string[] = existing?.photo_storage_paths ?? [];
 
   const files = formData.getAll("photos").filter((f): f is File => f instanceof File && f.size > 0);
+  // Foto yang gagal diunggah dilaporkan (dulu dilewati diam-diam lalu
+  // "berhasil disimpan" -- padahal foto kondisi adalah bukti klaim kerusakan).
+  const failedFiles: string[] = [];
   for (const file of files) {
-    if (!file.type.startsWith("image/")) continue;
+    if (!file.type.startsWith("image/")) {
+      failedFiles.push(file.name);
+      continue;
+    }
     const ext = file.name.includes(".") ? file.name.split(".").pop()!.toLowerCase() : "jpg";
     const storagePath = `${bookingId}/${stage}/${crypto.randomUUID()}.${ext}`;
     const { error: uploadError } = await supabase.storage
@@ -103,6 +109,7 @@ export async function saveBookingCheck(
       .upload(storagePath, file, { contentType: file.type || undefined });
     if (uploadError) {
       console.error("[magnarent] Upload foto checklist gagal:", uploadError.message);
+      failedFiles.push(file.name);
       continue;
     }
     const {
@@ -135,6 +142,12 @@ export async function saveBookingCheck(
   }
 
   revalidatePath(MODULE_PATH);
+  if (failedFiles.length > 0) {
+    return {
+      ok: false,
+      error: `Catatan tersimpan, tapi ${failedFiles.length} foto gagal diunggah (${failedFiles.join(", ")}). Pastikan file berupa foto lalu unggah ulang.`,
+    };
+  }
   return { ok: true };
 }
 
@@ -418,7 +431,7 @@ export async function updateInventoryUnit(
 export async function bulkScanUpdateStatus(
   codes: string[],
   status: InventoryUnitStatus
-): Promise<{ ok: true; matchedCount: number; notFound: string[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; matchedCount: number; notFound: string[]; ambiguous: string[] } | { ok: false; error: string }> {
   const cleaned = Array.from(new Set(codes.map((c) => c.trim()).filter(Boolean)));
   if (cleaned.length === 0) return { ok: false, error: "Tidak ada kode yang bisa diproses." };
 
@@ -434,12 +447,24 @@ export async function bulkScanUpdateStatus(
     return { ok: false, error: GENERIC_ERROR };
   }
 
+  // kode_unit hanya unik PER ALAT (mis. "Kursi Chiavari Putih" & "Pink"
+  // sama-sama punya KCP-01). Kode yang cocok ke lebih dari satu unit
+  // DILEWATI dan dilaporkan, supaya unit alat lain yang masih di gudang tidak
+  // ikut berubah status.
   const matchedRows = matches ?? [];
-  const matchedIds = matchedRows.map((m) => m.id);
-  const matchedCodesLower = new Set(
-    matchedRows.flatMap((m) => [m.kode_unit.toLowerCase(), m.rfid_tag?.toLowerCase()].filter(Boolean) as string[])
+  const rowsByCode = new Map<string, string[]>();
+  for (const code of cleaned) {
+    const lower = code.toLowerCase();
+    const ids = matchedRows
+      .filter((m) => m.kode_unit.toLowerCase() === lower || m.rfid_tag?.toLowerCase() === lower)
+      .map((m) => m.id);
+    rowsByCode.set(code, ids);
+  }
+  const notFound = cleaned.filter((c) => (rowsByCode.get(c) ?? []).length === 0);
+  const ambiguous = cleaned.filter((c) => (rowsByCode.get(c) ?? []).length > 1);
+  const matchedIds = Array.from(
+    new Set(cleaned.filter((c) => (rowsByCode.get(c) ?? []).length === 1).flatMap((c) => rowsByCode.get(c) ?? []))
   );
-  const notFound = cleaned.filter((c) => !matchedCodesLower.has(c.toLowerCase()));
 
   if (matchedIds.length > 0) {
     const { error: updateError } = await supabase
@@ -460,7 +485,7 @@ export async function bulkScanUpdateStatus(
     entityType: "bulk scan unit",
     entityLabel: `${matchedIds.length} unit → ${status}`,
   });
-  return { ok: true, matchedCount: matchedIds.length, notFound };
+  return { ok: true, matchedCount: matchedIds.length, notFound, ambiguous };
 }
 
 export async function deleteInventoryUnit(id: string): Promise<MutationResult> {

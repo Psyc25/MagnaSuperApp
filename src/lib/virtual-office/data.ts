@@ -1,12 +1,13 @@
 import { createAdminClientSafe } from "@/lib/supabase/admin";
 import type { Division } from "@/lib/supabase/types";
+import { defaultLook, sanitizeLook, type AvatarLook } from "./avatar-look";
 
 export type OfficeRosterEntry = {
   id: string;
   fullName: string;
   username: string | null;
   division: Division;
-  avatarUrl: string | null;
+  look: AvatarLook;
 };
 
 /**
@@ -32,7 +33,11 @@ export async function getOfficeRoster(): Promise<OfficeRosterEntry[]> {
   try {
     const { data, error } = await admin
       .from("profiles")
-      .select("id, full_name, username, division, avatar_url")
+      // Hanya kolom yang dipakai UI -- data ini dikirim ke SEMUA browser yang
+      // membuka Kantor Virtual lewat service role (melewati RLS profiles).
+      // avatar_url tidak dipakai; username investor tidak dikirim (chat
+      // memang tidak menerima mention investor).
+      .select("id, full_name, username, division")
       .order("full_name", { ascending: true });
 
     if (error) {
@@ -40,15 +45,40 @@ export async function getOfficeRoster(): Promise<OfficeRosterEntry[]> {
       return [];
     }
 
+    const looks = await getAvatarLooks(admin);
+
     return (data ?? []).map((row) => ({
       id: row.id as string,
       fullName: row.full_name as string,
-      username: (row.username as string | null) ?? null,
+      username: row.division === "investor" ? null : ((row.username as string | null) ?? null),
       division: row.division as Division,
-      avatarUrl: (row.avatar_url as string | null) ?? null,
+      look: looks.get(row.id as string) ?? defaultLook(row.id as string),
     }));
   } catch (err) {
     console.error("[virtual-office] getOfficeRoster error:", err);
     return [];
   }
+}
+
+/** Tampilan karakter tiap akun (user_metadata.avatar_look, diisi lewat
+ * saveAvatarLook). Gagal membaca -> semua orang memakai tampilan bawaan. */
+async function getAvatarLooks(admin: NonNullable<ReturnType<typeof createAdminClientSafe>>): Promise<Map<string, AvatarLook>> {
+  const looks = new Map<string, AvatarLook>();
+  try {
+    for (let page = 1; page <= 10; page += 1) {
+      const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+      if (error) {
+        console.error("[virtual-office] listUsers gagal:", error.message);
+        break;
+      }
+      for (const user of data.users) {
+        const raw = (user.user_metadata as { avatar_look?: unknown } | null)?.avatar_look;
+        if (raw) looks.set(user.id, sanitizeLook(raw, user.id));
+      }
+      if (data.users.length < 200) break;
+    }
+  } catch (err) {
+    console.error("[virtual-office] getAvatarLooks error:", err);
+  }
+  return looks;
 }

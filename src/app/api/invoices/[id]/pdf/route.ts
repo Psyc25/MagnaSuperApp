@@ -16,7 +16,9 @@ export const runtime = "nodejs";
  */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const profile = await getCurrentProfile();
-  if (!profile || profile.division !== "all") {
+  // Finance boleh membuka halaman Faktur (middleware & page.tsx), jadi juga
+  // boleh mengunduh PDF-nya -- dulu dapat 403.
+  if (!profile || (profile.division !== "all" && profile.division !== "finance")) {
     return NextResponse.json({ error: "Tidak punya akses." }, { status: 403 });
   }
 

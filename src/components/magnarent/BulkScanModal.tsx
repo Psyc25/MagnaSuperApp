@@ -9,7 +9,7 @@ import type { InventoryUnitStatus } from "@/lib/magnarent/types";
 const ALL_STATUSES: InventoryUnitStatus[] = ["Tersedia", "Dipinjam", "Maintenance", "Hilang"];
 
 /** Hasil terakhir ditampilkan di dalam modal, bukan toast — supaya daftar kode yang tidak ketemu tetap kelihatan sampai staf tutup modal. */
-type ScanResult = { matchedCount: number; notFound: string[] };
+type ScanResult = { matchedCount: number; notFound: string[]; ambiguous: string[] };
 
 /**
  * Bulk-scan gudang (pelengkap QR per-unit, laporan Bagian 5-C #17) — staf
@@ -49,7 +49,7 @@ export function BulkScanModal({ onClose }: { onClose: () => void }) {
       setError(res.error);
       return;
     }
-    setResult({ matchedCount: res.matchedCount, notFound: res.notFound });
+    setResult({ matchedCount: res.matchedCount, notFound: res.notFound, ambiguous: res.ambiguous });
     setRaw("");
   }
 
@@ -103,6 +103,12 @@ export function BulkScanModal({ onClose }: { onClose: () => void }) {
             {result.notFound.length > 0 && (
               <p>
                 Tidak ketemu ({result.notFound.length}): {result.notFound.join(", ")}
+              </p>
+            )}
+            {result.ambiguous.length > 0 && (
+              <p className="text-amber-700 dark:text-amber-300">
+                Dilewati karena kodenya dipakai lebih dari satu alat ({result.ambiguous.length}):{" "}
+                {result.ambiguous.join(", ")} -- ubah statusnya lewat menu unit di alat yang bersangkutan.
               </p>
             )}
           </div>

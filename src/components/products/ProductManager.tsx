@@ -36,6 +36,7 @@ import {
 import type { ImportSummary, Product, ProductDivision, ProductImportRow } from "@/lib/products/types";
 import { GLASS_BORDER, GLASS_INPUT, GLASS_SURFACE } from "@/lib/glass";
 import { loadXlsx } from "@/lib/shared/xlsx";
+import { prepareUploadFiles } from "@/lib/shared/image";
 
 const GRADIENT = "linear-gradient(135deg, #14B8A6 0%, #22D3EE 100%)";
 
@@ -311,8 +312,15 @@ export function ProductManager({ products }: { products: Product[] }) {
     if (files.length === 0) return;
 
     setGalleryBusy(true);
+    const prepared = await prepareUploadFiles(files);
+    if (!prepared.ok) {
+      setGalleryBusy(false);
+      if (galleryInputRef.current) galleryInputRef.current.value = "";
+      showToast(prepared.error, "error");
+      return;
+    }
     const formData = new FormData();
-    files.forEach((f) => formData.append("photos", f));
+    prepared.files.forEach((f) => formData.append("photos", f));
     const result = await addProductPhotos(editingId, formData);
     setGalleryBusy(false);
     if (galleryInputRef.current) galleryInputRef.current.value = "";
@@ -376,11 +384,17 @@ export function ProductManager({ products }: { products: Product[] }) {
     // Cuma relevan saat TAMBAH produk baru — untuk edit, foto dikelola
     // langsung lewat galeri (`handleAddGalleryFiles` dst), bukan lewat
     // submit form ini.
+    setSubmitting(true);
     if (!editingId) {
-      newPhotoFiles.forEach((f) => formData.append("photos", f));
+      const prepared = await prepareUploadFiles(newPhotoFiles);
+      if (!prepared.ok) {
+        setSubmitting(false);
+        setError(prepared.error);
+        return;
+      }
+      prepared.files.forEach((f) => formData.append("photos", f));
     }
 
-    setSubmitting(true);
     const result = editingId ? await updateProduct(editingId, formData) : await addProduct(formData);
     setSubmitting(false);
 
@@ -825,7 +839,7 @@ export function ProductManager({ products }: { products: Product[] }) {
                 id="product-price"
                 type="number"
                 min={0}
-                step={1000}
+                step={1}
                 value={form.price}
                 onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
                 className="w-full rounded-xl border border-black/10 bg-transparent px-3.5 py-2.5 text-sm text-zinc-900 outline-none ring-teal-500/40 focus:ring-2 dark:border-white/10 dark:text-white"

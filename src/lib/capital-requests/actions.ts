@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient, getCurrentProfile } from "@/lib/supabase/server";
 import { notifyDivision } from "@/lib/push/notify";
 import { logActivity } from "@/lib/activity/log";
-import { formatRupiah } from "@/lib/shared/utils";
+import { exceedsDbAmount, formatRupiah, MAX_DB_AMOUNT_MESSAGE } from "@/lib/shared/utils";
 import type { CapitalRequestStatus } from "./types";
 
 const ADMIN_PATH = "/dashboard/admin/pengajuan-modal";
@@ -50,6 +50,7 @@ export async function addCapitalRequest(input: NewCapitalRequestInput): Promise<
   ) {
     return { ok: false, error: "Perkiraan Billing dan Modal harus angka 0 atau lebih." };
   }
+  if (exceedsDbAmount(input.billingEstimate, input.modalEstimate)) return { ok: false, error: MAX_DB_AMOUNT_MESSAGE };
 
   const supabase = await createClient();
   const { error } = await supabase.from("capital_requests").insert({

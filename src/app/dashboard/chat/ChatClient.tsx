@@ -37,6 +37,7 @@ import { DIVISION_BADGE_CLASSES, DIVISION_LABELS, type Division } from "@/lib/su
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_INPUT, GLASS_PILL, GLASS_SURFACE, GLASS_SURFACE_STRONG } from "@/lib/glass";
+import { prepareUploadFiles } from "@/lib/shared/image";
 import { formatBytes, formatTimeID, getAvatarColor, getInitials } from "@/lib/shared/utils";
 
 const POLL_MS = 4000;
@@ -466,8 +467,14 @@ export function ChatClient({
 
     let fileFormData: FormData | undefined;
     if (selectedFile) {
+      const prepared = await prepareUploadFiles([selectedFile]);
+      if (!prepared.ok) {
+        setSending(false);
+        setError(prepared.error);
+        return;
+      }
       fileFormData = new FormData();
-      fileFormData.set("file", selectedFile);
+      fileFormData.set("file", prepared.files[0]);
     }
 
     const result = await sendChatMessage(activeRoom, text, fileFormData, replyTarget?.id ?? null);
@@ -481,8 +488,11 @@ export function ChatClient({
     setComposerText("");
     removeSelectedFile();
     setReplyTarget(null);
-    cursorRef.current[activeRoom] = latestActivityIso(result.message);
-    setMessagesByRoom((prev) => ({ ...prev, [activeRoom]: [...(prev[activeRoom] ?? []), result.message] }));
+    // Kursor polling SENGAJA tidak dimajukan ke waktu pesan sendiri: pesan
+    // orang lain yang masuk di antara polling terakhir dan kirim ini akan
+    // terlewat selamanya. Poll berikutnya ikut mengembalikan pesan ini dan
+    // mergeMessages membuang duplikatnya (by id).
+    setMessagesByRoom((prev) => ({ ...prev, [activeRoom]: mergeMessages(prev[activeRoom] ?? [], [result.message]) }));
   }
 
   return (
@@ -729,7 +739,7 @@ export function ChatClient({
                 <Loader2 className="h-3.5 w-3.5 animate-spin" /> Mencari…
               </p>
             ) : suggestions.length === 0 ? (
-              <p className="px-3 py-2.5 text-xs text-zinc-400 dark:text-zinc-500">Tidak ada username cocok.</p>
+              <p className="px-3 py-2.5 text-xs text-zinc-400 dark:text-zinc-500">Tidak ada nama panggilan yang cocok.</p>
             ) : (
               <ul className="max-h-52 overflow-y-auto p-1">
                 {suggestions.map((user) => (

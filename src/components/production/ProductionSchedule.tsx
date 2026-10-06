@@ -46,7 +46,7 @@ export function ProductionSchedule() {
     const idx = STAGE_ORDER.indexOf(p.status);
     if (idx === -1 || idx === STAGE_ORDER.length - 1) return;
     const next = STAGE_ORDER[idx + 1];
-    const result = await updateProjectStatus(p.id, next);
+    const result = await updateProjectStatus(p.id, next, p.status);
     if (!result.ok) {
       showToast(result.error, "error");
       return;

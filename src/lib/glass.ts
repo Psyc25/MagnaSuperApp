@@ -75,3 +75,10 @@ export const GLASS_PILL =
  * (md, dari xl) + saturate ditambahkan + opacity latar diturunkan. */
 export const GLASS_INPUT =
   "border-white/60 bg-white/25 backdrop-blur-md backdrop-saturate-150 dark:border-white/15 dark:bg-white/5";
+
+/** Panel dropdown di atas konten (notifikasi, hasil pencarian global).
+ * Sengaja HAMPIR PEKAT: dengan GLASS_SURFACE (latar 40%) isi halaman di
+ * belakangnya -- terutama Chat yang padat -- ikut terbaca menembus panel
+ * dan teksnya bertumpuk (laporan Owner 6 Okt 2026). */
+export const DROPDOWN_SURFACE =
+  "bg-white/95 shadow-[0_12px_40px_-8px_rgba(31,41,55,0.25)] backdrop-blur-xl dark:bg-zinc-900/95 dark:shadow-[0_12px_40px_-8px_rgba(0,0,0,0.6)]";

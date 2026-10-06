@@ -1,5 +1,6 @@
 import type { createClient } from "@/lib/supabase/server";
 import type { ProductDivision } from "./types";
+import { fetchAllPages, PAGE_SIZE } from "@/lib/shared/paginate";
 
 type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
 
@@ -23,10 +24,15 @@ const DIVISION_SKU_PREFIX: Record<ProductDivision, string> = {
 
 export async function generateSku(supabase: SupabaseClient, division: ProductDivision): Promise<string> {
   const prefix = DIVISION_SKU_PREFIX[division] ?? "UM";
-  const { data } = await supabase.from("products").select("sku").like("sku", `${prefix}-%`);
+  // Semua SKU berawalan ini, per halaman -- dulu terpotong di 1000 baris
+  // sehingga nomor "berikutnya" sudah dipakai dan setiap tambah/impor
+  // produk gagal "SKU sudah dipakai" begitu produk lewat ~1000.
+  const { data } = await fetchAllPages<{ id: string; sku: string | null }>((afterId) =>
+    supabase.from("products").select("id, sku").like("sku", `${prefix}-%`).gt("id", afterId).order("id").limit(PAGE_SIZE)
+  );
 
   let max = 0;
-  for (const row of (data ?? []) as { sku: string | null }[]) {
+  for (const row of data) {
     const match = /^([A-Z]+)-(\d+)$/.exec(row.sku ?? "");
     if (match && match[1] === prefix) {
       const n = parseInt(match[2], 10);

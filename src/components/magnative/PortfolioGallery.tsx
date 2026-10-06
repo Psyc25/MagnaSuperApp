@@ -18,6 +18,7 @@ import {
 import type { PortfolioFolder } from "@/lib/magnative/types";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { prepareUploadFiles } from "@/lib/shared/image";
 
 const GRADIENT = "linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)";
 
@@ -87,12 +88,18 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
       return;
     }
 
+    setSubmitting(true);
+    const prepared = await prepareUploadFiles(files);
+    if (!prepared.ok) {
+      setSubmitting(false);
+      setError(prepared.error);
+      return;
+    }
     const formData = new FormData();
-    files.forEach((file) => formData.append("photos", file));
+    prepared.files.forEach((file) => formData.append("photos", file));
     formData.set("title", addTitle.trim());
     formData.set("caption", addCaption.trim());
 
-    setSubmitting(true);
     const result = await createPortfolioFolder(formData);
     setSubmitting(false);
 
@@ -109,10 +116,17 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
     const files = Array.from(morePhotosInputRef.current?.files ?? []);
     if (files.length === 0) return;
 
-    const formData = new FormData();
-    files.forEach((file) => formData.append("photos", file));
-
     setAddingPhotos(true);
+    const prepared = await prepareUploadFiles(files);
+    if (!prepared.ok) {
+      setAddingPhotos(false);
+      if (morePhotosInputRef.current) morePhotosInputRef.current.value = "";
+      showToast(prepared.error, "error");
+      return;
+    }
+    const formData = new FormData();
+    prepared.files.forEach((file) => formData.append("photos", file));
+
     const result = await addPhotosToFolder(viewingFolder.id, formData);
     setAddingPhotos(false);
     if (morePhotosInputRef.current) morePhotosInputRef.current.value = "";

@@ -51,12 +51,20 @@ export default async function KlienTerpaduPage() {
     const clientMagnative = magnativeProjects.filter((p) => p.clientId === client.id);
     const clientBooth = boothProjects.filter((p) => p.clientId === client.id);
 
-    const bookingValue = clientBookings.reduce(
+    // Nilai & jumlah transaksi hanya dari yang benar-benar terjadi: booking/
+    // proyek "Dibatalkan" dan pitching Magnativ yang belum jadi proyek tidak
+    // dihitung (sama seperti Piutang & Pendapatan). Daftar rincian tetap
+    // menampilkan semuanya.
+    const countedBookings = clientBookings.filter((b) => b.status !== "Dibatalkan");
+    const countedMagnative = clientMagnative.filter((p) => p.status !== "Dibatalkan" && p.status !== "Pitching");
+    const countedBooth = clientBooth.filter((p) => p.status !== "Dibatalkan");
+
+    const bookingValue = countedBookings.reduce(
       (sum, b) => sum + calculateBookingTotal(b, inventory.find((i) => i.id === b.itemId)),
       0
     );
-    const magnativeValue = clientMagnative.reduce((sum, p) => sum + p.budget, 0);
-    const boothValue = clientBooth.reduce((sum, p) => sum + p.budget, 0);
+    const magnativeValue = countedMagnative.reduce((sum, p) => sum + p.budget, 0);
+    const boothValue = countedBooth.reduce((sum, p) => sum + p.budget, 0);
 
     return {
       id: client.id,
@@ -68,7 +76,7 @@ export default async function KlienTerpaduPage() {
       // order) — total booking/proyek klien ini lintas ketiga modul,
       // TERPISAH dari jumlah lini bisnis yang dipakai (lihat komentar di
       // ClientDirectoryTable.tsx).
-      totalTransaksi: clientBookings.length + clientMagnative.length + clientBooth.length,
+      totalTransaksi: countedBookings.length + countedMagnative.length + countedBooth.length,
       bookings: clientBookings.map((b) => ({
         id: b.id,
         label: inventory.find((i) => i.id === b.itemId)?.name ?? "—",

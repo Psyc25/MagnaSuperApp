@@ -1,34 +1,42 @@
 "use client";
 
 /**
- * Tahap 35 — kompresi foto di BROWSER sebelum diupload, khusus untuk foto
- * profil. Sebelumnya form Pengaturan menolak mentah-mentah kalau file lebih
- * besar dari 3MB ("Ukuran foto maksimal 3MB.") — terasa seperti "tidak bisa
- * disimpan" bagi staf yang upload langsung dari kamera HP, karena foto
- * kamera modern hampir selalu di atas 3MB (bisa 5-15MB), dan pesan errornya
- * cuma teks kecil di bawah form yang gampang tidak kelihatan/tidak
- * dianggap penting di layar HP yang sudah penuh.
+ * Kompresi & validasi file di BROWSER sebelum dikirim ke Server Action.
  *
- * Daripada menaikkan batasnya, fotonya yang diperkecil dulu: digambar ke
- * <canvas> pada dimensi maksimum yang wajar untuk foto profil bulat kecil
- * (jauh di bawah resolusi kamera HP), lalu diekspor ulang sebagai JPEG
- * kualitas tinggi. Hasilnya hampir selalu di bawah 500KB apa pun ukuran
- * aslinya, jadi batas 3MB di server praktis tidak akan pernah kena lagi
- * untuk kasus normal — tapi tetap dipertahankan di server sebagai jaring
- * pengaman kalau kompresi klien gagal (browser sangat lama, dsb).
+ * Kenapa perlu: Server Action Next.js membatasi body request (default 1MB,
+ * di sini dinaikkan ke 4MB lewat `serverActions.bodySizeLimit` di
+ * next.config.ts -- Vercel sendiri memotong body di 4,5MB). Foto kamera HP
+ * hampir selalu 2-15MB, jadi tanpa kompresi unggahan foto gagal dengan error
+ * yang tidak jelas. Foto diperkecil dulu ke dimensi wajar lalu diekspor
+ * ulang sebagai JPEG; hasilnya biasanya < 1MB. File non-gambar (PDF, dsb)
+ * dikirim apa adanya dan dicek ukurannya supaya user dapat pesan yang jelas.
+ *
+ * Tahap 35 (foto profil) memakai helper yang sama dengan dimensi 512px.
  */
-const MAX_DIMENSION = 512;
-const JPEG_QUALITY = 0.85;
 
-export async function compressAvatarImage(file: File): Promise<File> {
-  // Bukan gambar rester yang bisa digambar ke canvas (mis. SVG aneh) — atau
-  // browser tidak mendukung createImageBitmap — biarkan file asli lewat apa
-  // adanya, biar validasi ukuran di server yang jadi jaring pengaman terakhir.
-  if (!file.type.startsWith("image/")) return file;
+/** Batas total body per unggahan, menyisakan ruang untuk overhead multipart. */
+export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024 - 64 * 1024;
+export const MAX_UPLOAD_LABEL = "4MB";
+
+const DEFAULT_MAX_DIMENSION = 2048;
+const DEFAULT_JPEG_QUALITY = 0.82;
+/** Foto di bawah ukuran ini tidak perlu dikompres. */
+const SKIP_BELOW_BYTES = 700 * 1024;
+/** Format yang aman digambar ulang ke canvas (GIF/SVG sengaja dilewati). */
+const COMPRESSIBLE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+
+export async function compressImageFile(
+  file: File,
+  { maxDimension = DEFAULT_MAX_DIMENSION, quality = DEFAULT_JPEG_QUALITY, skipBelowBytes = SKIP_BELOW_BYTES } = {}
+): Promise<File> {
+  // Bukan gambar raster yang bisa digambar ke canvas -- atau browser tidak
+  // mendukung createImageBitmap untuk formatnya (mis. HEIC di Chrome) --
+  // biarkan file asli lewat, validasi ukuran yang jadi jaring pengaman.
+  if (!COMPRESSIBLE_TYPES.has(file.type) || file.size < skipBelowBytes) return file;
 
   try {
     const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
     const targetWidth = Math.round(bitmap.width * scale);
     const targetHeight = Math.round(bitmap.height * scale);
 
@@ -38,29 +46,48 @@ export async function compressAvatarImage(file: File): Promise<File> {
     const ctx = canvas.getContext("2d");
     if (!ctx) return file;
 
-    // Latar putih dulu sebelum menggambar — jaga-jaga kalau sumbernya PNG
-    // transparan, supaya tidak jadi hitam waktu diekspor sebagai JPEG (JPEG
-    // tidak punya kanal alpha).
+    // Latar putih dulu -- PNG transparan tidak jadi hitam saat diekspor
+    // sebagai JPEG (JPEG tidak punya kanal alpha).
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, targetWidth, targetHeight);
     ctx.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
     bitmap.close();
 
-    const blob: Blob | null = await new Promise((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY)
-    );
-    if (!blob) return file;
-
-    // Kalau hasil kompresinya (jarang terjadi) malah lebih besar dari
-    // aslinya (mis. file asli sudah kecil & JPEG re-encode menambah
-    // overhead), pakai yang asli saja.
-    if (blob.size >= file.size) return file;
+    const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    // Hasil kompresi (jarang) lebih besar dari aslinya -> pakai yang asli.
+    if (!blob || blob.size >= file.size) return file;
 
     const newName = file.name.replace(/\.[^.]+$/, "") + ".jpg";
-    return new File([blob], newName, { type: "image/jpeg" });
+    return new File([blob], newName, { type: "image/jpeg", lastModified: file.lastModified });
   } catch {
-    // Kompresi gagal karena alasan apa pun — jangan sampai memblokir upload,
-    // biarkan file asli lewat ke validasi server seperti sebelumnya.
+    // Kompresi gagal karena alasan apa pun -- jangan memblokir unggahan.
     return file;
   }
+}
+
+export async function compressAvatarImage(file: File): Promise<File> {
+  return compressImageFile(file, { maxDimension: 512, quality: 0.85, skipBelowBytes: 0 });
+}
+
+export type PreparedUpload = { ok: true; files: File[] } | { ok: false; error: string };
+
+/**
+ * Kompres semua foto lalu pastikan TOTAL ukurannya muat dalam satu
+ * Server Action. Pakai ini sebelum memasukkan file ke FormData.
+ * `compress: false` untuk file hasil karya (aset desain, file pipeline,
+ * dokumen) yang tidak boleh diubah kualitasnya -- hanya dicek ukurannya.
+ */
+export async function prepareUploadFiles(files: File[], { compress = true } = {}): Promise<PreparedUpload> {
+  const prepared = compress ? await Promise.all(files.map((f) => compressImageFile(f))) : files;
+  const total = prepared.reduce((sum, f) => sum + f.size, 0);
+  if (total > MAX_UPLOAD_BYTES) {
+    const tooBig = prepared.find((f) => f.size > MAX_UPLOAD_BYTES);
+    return {
+      ok: false,
+      error: tooBig
+        ? `File "${tooBig.name}" terlalu besar. Maksimal ${MAX_UPLOAD_LABEL} per unggahan.`
+        : `Total ukuran file maksimal ${MAX_UPLOAD_LABEL} per unggahan. Unggah sebagian dulu, lalu sisanya.`,
+    };
+  }
+  return { ok: true, files: prepared };
 }

@@ -105,14 +105,18 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const division: ProductDivision =
+    const validDivision =
       item.division && VALID_DIVISIONS.includes(item.division as ProductDivision)
         ? (item.division as ProductDivision)
-        : "umum";
+        : undefined;
+    const division: ProductDivision = validDivision ?? "umum";
     const sku = item.sku?.trim() || null;
+    // Baris baru: kolom yang tidak dikirim diisi default. `divisions` (array,
+    // yang dibaca katalog) ikut diisi -- dulu hanya kolom lama `division`.
     const payload = {
       name,
       division,
+      divisions: [division],
       category: item.category?.trim() || "",
       sku,
       price: Number.isFinite(item.price) ? Number(item.price) : 0,
@@ -121,11 +125,25 @@ export async function POST(req: NextRequest) {
       supplier: item.supplier?.trim() || null,
       catatan: item.catatan?.trim() || null,
     };
+    // Update SKU yang sudah ada: hanya kolom yang benar-benar dikirim --
+    // dulu kiriman "harga saja" mereset stok jadi 0, kategori, satuan,
+    // supplier & catatan ke default.
+    const updatePayload: Record<string, unknown> = { name };
+    if (validDivision) {
+      updatePayload.division = validDivision;
+      updatePayload.divisions = [validDivision];
+    }
+    if (item.category !== undefined) updatePayload.category = item.category?.trim() || "";
+    if (Number.isFinite(item.price)) updatePayload.price = Number(item.price);
+    if (item.unit !== undefined) updatePayload.unit = item.unit?.trim() || "unit";
+    if (Number.isFinite(item.stock)) updatePayload.stock = Number(item.stock);
+    if (item.supplier !== undefined) updatePayload.supplier = item.supplier?.trim() || null;
+    if (item.catatan !== undefined) updatePayload.catatan = item.catatan?.trim() || null;
 
     if (sku) {
       const { data: existing } = await supabase.from("products").select("id").eq("sku", sku).maybeSingle();
       if (existing) {
-        const { error } = await supabase.from("products").update(payload).eq("id", existing.id);
+        const { error } = await supabase.from("products").update(updatePayload).eq("id", existing.id);
         if (error) {
           summary.skipped++;
           summary.errors.push(`Item ${index + 1} (${name}): ${error.message}`);

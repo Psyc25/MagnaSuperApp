@@ -5,12 +5,19 @@ import { History } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { cn } from "@/lib/cn";
-import { formatDateID, formatTimeID } from "@/lib/shared/utils";
+import { formatDateID, formatTimeID, isoDateInJakarta } from "@/lib/shared/utils";
 import { getChecklistStatusLog } from "@/lib/events/actions";
-import type { ChecklistStatusLogEntry, EventChecklistStatus } from "@/lib/events/types";
+import type { ChecklistStatusLogEntry } from "@/lib/events/types";
 
-const CHECKLIST_STATUS_STYLE: Record<EventChecklistStatus, string> = {
-  "Belum Mulai": "border-zinc-300 text-zinc-500 dark:border-zinc-600 dark:text-zinc-400",
+const DEFAULT_STATUS_STYLE = "border-zinc-300 text-zinc-500 dark:border-zinc-600 dark:text-zinc-400";
+// Label fase (model 8 tahap) + status lama untuk baris riwayat sebelum 0077a.
+const CHECKLIST_STATUS_STYLE: Record<string, string> = {
+  "Belum Mulai": DEFAULT_STATUS_STYLE,
+  Design: "border-pink-300 text-pink-700 dark:border-pink-500/40 dark:text-pink-300",
+  Mockup: "border-fuchsia-300 text-fuchsia-700 dark:border-fuchsia-500/40 dark:text-fuchsia-300",
+  Completed: "border-teal-300 text-teal-700 dark:border-teal-500/40 dark:text-teal-300",
+  "Loading In": "border-indigo-300 text-indigo-700 dark:border-indigo-500/40 dark:text-indigo-300",
+  "Loading Out": "border-blue-300 text-blue-700 dark:border-blue-500/40 dark:text-blue-300",
   Sample: "border-amber-300 text-amber-700 dark:border-amber-500/40 dark:text-amber-300",
   Approval: "border-orange-300 text-orange-700 dark:border-orange-500/40 dark:text-orange-300",
   Preparation: "border-sky-300 text-sky-700 dark:border-sky-500/40 dark:text-sky-300",
@@ -69,7 +76,7 @@ export function ChecklistHistoryModal({
                 <span
                   className={cn(
                     "inline-block rounded-full border px-2 py-0.5 text-xs font-semibold",
-                    CHECKLIST_STATUS_STYLE[entry.status]
+                    CHECKLIST_STATUS_STYLE[entry.status] ?? DEFAULT_STATUS_STYLE
                   )}
                 >
                   {entry.status}
@@ -79,7 +86,7 @@ export function ChecklistHistoryModal({
                 </p>
               </div>
               <span className="shrink-0 text-right text-[11px] text-zinc-400 dark:text-zinc-500">
-                {formatDateID(entry.changedAt.slice(0, 10))}
+                {formatDateID(isoDateInJakarta(entry.changedAt))}
                 <br />
                 {formatTimeID(entry.changedAt)} WIB
               </span>

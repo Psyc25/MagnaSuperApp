@@ -439,7 +439,7 @@ export function InventoryManager() {
               id="inventory-price-per-day"
               type="number"
               min={0}
-              step={1000}
+              step={1}
               value={form.pricePerDay}
               onChange={(e) => setForm((f) => ({ ...f, pricePerDay: e.target.value }))}
               className="w-full rounded-xl border border-black/10 bg-transparent px-3.5 py-2.5 text-sm text-zinc-900 outline-none ring-blue-500/40 focus:ring-2 dark:border-white/10 dark:text-white"
@@ -491,7 +491,7 @@ export function InventoryManager() {
                   id="inventory-price-per-week"
                   type="number"
                   min={0}
-                  step={1000}
+                  step={1}
                   placeholder="Kosongkan kalau tidak ada"
                   value={form.pricePerWeek}
                   onChange={(e) => setForm((f) => ({ ...f, pricePerWeek: e.target.value }))}
@@ -506,7 +506,7 @@ export function InventoryManager() {
                   id="inventory-price-per-month"
                   type="number"
                   min={0}
-                  step={1000}
+                  step={1}
                   placeholder="Kosongkan kalau tidak ada"
                   value={form.pricePerMonth}
                   onChange={(e) => setForm((f) => ({ ...f, pricePerMonth: e.target.value }))}

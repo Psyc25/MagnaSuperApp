@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.9.0",
@@ -17,7 +18,7 @@
     "@types/three": "^0.186.0",
     "clsx": "^2.1.1",
     "lucide-react": "^1.41.0",
-    "next": "16.3.4",
+    "next": "16.3.8",
     "qrcode.react": "^4.2.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -28,14 +29,15 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^24.19.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/web-push": "^3.6.4",
     "eslint": "^9",
-    "eslint-config-next": "16.3.4",
+    "eslint-config-next": "16.3.8",
     "pg": "^8.23.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.0.3"
   }
 }

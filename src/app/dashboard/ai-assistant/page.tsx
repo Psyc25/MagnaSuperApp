@@ -5,7 +5,7 @@ import { getAgentById, getDefaultAgent } from "@/lib/ai/agents";
 import { AIAssistantClient } from "./AIAssistantClient";
 
 /**
- * Halaman AI Assistant — terkoneksi ke 9Router, gateway AI lokal GRATIS.
+ * Halaman AI Assistant — penyedia AI OpenAI-compatible (src/lib/ai/config.ts).
  * Terbuka untuk SEMUA divisi TERMASUK investor. Percakapan bersifat PRIBADI
  * per-user. Mendukung multiple AI agents (NOVA, RENO, CREA, FABR, FINN).
  */
@@ -19,7 +19,7 @@ export default async function AIAssistantPage({
     redirect("/dashboard");
   }
 
-  const { messages } = await getAIMessages();
+  const { messages, notice } = await getAIMessages();
   const params = await searchParams;
   const agentId = params.agent;
   const agent = agentId ? getAgentById(agentId) ?? getDefaultAgent() : getDefaultAgent();
@@ -54,6 +54,7 @@ export default async function AIAssistantPage({
           initialMessages={messages}
           userName={profile.full_name}
           initialAgentId={agentId}
+          initialNotice={notice}
         />
       </div>
     </div>

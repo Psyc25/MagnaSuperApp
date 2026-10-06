@@ -7,6 +7,7 @@ import { logActivity } from "@/lib/activity/log";
 import { ACTIVE_BOOTH_STATUSES, findMaterialConflicts, type MaterialConflict } from "./availability";
 import { rowToBoothProject, rowToMaterial, type BoothProjectRow, type MaterialRow } from "./mappers";
 import type { BoothStatus, MaterialItem, MaterialUsage, PaymentStatus, PurchaseOrder } from "./types";
+import { exceedsDbAmount, MAX_DB_AMOUNT_MESSAGE } from "@/lib/shared/utils";
 
 const MODULE_PATH = "/dashboard/production";
 const GENERIC_ERROR = "Terjadi kesalahan, coba lagi.";
@@ -79,12 +80,22 @@ export async function addMaterial(input: Omit<MaterialItem, "id">): Promise<Muta
   return { ok: true };
 }
 
-export async function updateMaterial(id: string, input: Omit<MaterialItem, "id">): Promise<MutationResult> {
+/**
+ * `expectedStock` = stok yang tampil saat form edit dibuka. Update bersyarat
+ * pada nilai itu: kalau sementara itu stok berubah (penerimaan PO, transfer
+ * gudang oleh staf lain), simpan DITOLAK -- dulu angka lama dari halaman
+ * menimpa stok terbaru dan barang yang baru diterima "hilang" tanpa jejak.
+ */
+export async function updateMaterial(
+  id: string,
+  input: Omit<MaterialItem, "id">,
+  expectedStock?: number
+): Promise<MutationResult> {
   const validationError = validateMaterialInput(input);
   if (validationError) return { ok: false, error: validationError };
 
   const supabase = await createClient();
-  const { error } = await supabase
+  let query = supabase
     .from("production_materials")
     .update({
       name: input.name,
@@ -96,10 +107,19 @@ export async function updateMaterial(id: string, input: Omit<MaterialItem, "id">
       price_per_unit: input.pricePerUnit,
     })
     .eq("id", id);
+  if (expectedStock !== undefined) query = query.eq("stock", expectedStock);
+  const { data: updated, error } = await query.select("id");
 
   if (error) {
     console.error("[production] updateMaterial gagal:", error.message);
     return { ok: false, error: GENERIC_ERROR };
+  }
+  if (!updated || updated.length === 0) {
+    return {
+      ok: false,
+      error:
+        "Stok material ini sudah berubah sejak halaman dibuka (mis. ada penerimaan PO atau transfer gudang). Muat ulang halaman, lalu ulangi perubahan.",
+    };
   }
   revalidatePath(MODULE_PATH);
   void logActivity({ module: "production", action: "update", entityType: "material", entityLabel: input.name });
@@ -239,6 +259,7 @@ function validateBoothProjectInput(input: NewBoothProjectInput): string | null {
   if (input.dpAmount !== undefined && (!Number.isFinite(input.dpAmount) || input.dpAmount < 0)) {
     return "Nominal DP tidak valid.";
   }
+  if (exceedsDbAmount(input.budget, input.dpAmount)) return MAX_DB_AMOUNT_MESSAGE;
   for (const m of input.materials) {
     if (!Number.isInteger(m.qty) || m.qty <= 0) {
       return "Jumlah alokasi material harus bilangan bulat lebih dari 0.";
@@ -277,7 +298,9 @@ export async function addProject(input: NewBoothProjectInput): Promise<SaveBooth
     p_tanggal_instalasi: input.tanggalInstalasi,
     p_budget: input.budget,
     p_status_pembayaran: input.statusPembayaran,
-    p_dp_amount: input.dpAmount ?? 0,
+    // DP hanya bermakna untuk status "DP" -- nilai lama yang tertinggal saat
+    // status diganti membuat piutang terhitung lebih kecil dari seharusnya.
+    p_dp_amount: input.statusPembayaran === "DP" ? (input.dpAmount ?? 0) : 0,
     p_materials: input.materials,
     p_catatan: input.catatan ?? null,
     p_tanggal_bongkar_estimasi: input.tanggalBongkarEstimasi || null,
@@ -344,7 +367,9 @@ export async function updateProject(id: string, input: NewBoothProjectInput): Pr
     p_tanggal_instalasi: input.tanggalInstalasi,
     p_budget: input.budget,
     p_status_pembayaran: input.statusPembayaran,
-    p_dp_amount: input.dpAmount ?? 0,
+    // DP hanya bermakna untuk status "DP" -- nilai lama yang tertinggal saat
+    // status diganti membuat piutang terhitung lebih kecil dari seharusnya.
+    p_dp_amount: input.statusPembayaran === "DP" ? (input.dpAmount ?? 0) : 0,
     p_materials: input.materials,
     p_catatan: input.catatan ?? null,
     p_tanggal_bongkar_estimasi: input.tanggalBongkarEstimasi || null,
@@ -473,14 +498,21 @@ export async function cancelPurchaseOrder(id: string): Promise<MutationResult> {
     return { ok: false, error: "Purchase order ini sudah tidak berstatus Dipesan." };
   }
 
-  const { error } = await supabase
+  // Bersyarat pada status "Dipesan": kalau PO baru saja diterima staf lain
+  // (stok sudah bertambah), pembatalan tidak boleh menimpanya.
+  const { data: cancelled, error } = await supabase
     .from("production_purchase_orders")
     .update({ status: "Dibatalkan" })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("status", "Dipesan")
+    .select("id");
 
   if (error) {
     console.error("[production] cancelPurchaseOrder gagal:", error.message);
     return { ok: false, error: GENERIC_ERROR };
+  }
+  if (!cancelled || cancelled.length === 0) {
+    return { ok: false, error: "Purchase order ini sudah tidak berstatus Dipesan. Muat ulang halaman." };
   }
   revalidatePath(MODULE_PATH);
   void logActivity({
@@ -508,10 +540,20 @@ export async function deletePurchaseOrder(id: string): Promise<MutationResult> {
     return { ok: false, error: "PO yang sudah Diterima tidak bisa dihapus (mengubah riwayat stok)." };
   }
 
-  const { error } = await supabase.from("production_purchase_orders").delete().eq("id", id);
+  // Bersyarat juga di query-nya: PO yang diterima tepat di antara cek di
+  // atas dan hapus ini tidak ikut terhapus.
+  const { data: deleted, error } = await supabase
+    .from("production_purchase_orders")
+    .delete()
+    .eq("id", id)
+    .neq("status", "Diterima")
+    .select("id");
   if (error) {
     console.error("[production] deletePurchaseOrder gagal:", error.message);
     return { ok: false, error: GENERIC_ERROR };
+  }
+  if (!deleted || deleted.length === 0) {
+    return { ok: false, error: "PO ini sudah Diterima atau sudah dihapus. Muat ulang halaman." };
   }
   revalidatePath(MODULE_PATH);
   void logActivity({
@@ -528,19 +570,40 @@ export async function deletePurchaseOrder(id: string): Promise<MutationResult> {
  * Sengaja tidak melalui pengecekan konflik material — proyek yang sudah
  * disetujui alokasinya boleh berpindah tahap tanpa harus mengisi ulang form.
  */
-export async function updateProjectStatus(id: string, status: BoothStatus): Promise<MutationResult> {
+/**
+ * Pindah tahap cepat dari Linimasa Produksi. `fromStatus` = status yang
+ * tampil di kartu: kalau sudah berubah (staf lain membatalkan/menyelesaikan
+ * proyek), perubahan DITOLAK -- dulu kartu basi bisa menghidupkan lagi
+ * proyek Dibatalkan/Selesai dan materialnya langsung memesan stok lagi
+ * tanpa cek ketersediaan. Proyek final hanya bisa diubah lewat form edit
+ * (save_booth_project_checked, dengan cek stok).
+ */
+export async function updateProjectStatus(id: string, status: BoothStatus, fromStatus?: BoothStatus): Promise<MutationResult> {
   const supabase = await createClient();
   const { data: projectRow } = await supabase
     .from("production_booth_projects")
-    .select("name")
+    .select("name, status")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle<{ name: string; status: BoothStatus }>();
 
-  const { error } = await supabase.from("production_booth_projects").update({ status }).eq("id", id);
+  if (!projectRow) return { ok: false, error: "Proyek tidak ditemukan." };
+  const staleMessage = "Status proyek sudah berubah. Muat ulang halaman lalu coba lagi.";
+  if (fromStatus && projectRow.status !== fromStatus) return { ok: false, error: staleMessage };
+  if (projectRow.status === "Selesai" || projectRow.status === "Dibatalkan") {
+    return { ok: false, error: `Proyek berstatus "${projectRow.status}" hanya bisa diubah lewat form edit proyek.` };
+  }
+
+  const { data: updated, error } = await supabase
+    .from("production_booth_projects")
+    .update({ status })
+    .eq("id", id)
+    .eq("status", projectRow.status)
+    .select("id");
   if (error) {
     console.error("[production] updateProjectStatus gagal:", error.message);
     return { ok: false, error: GENERIC_ERROR };
   }
+  if (!updated || updated.length === 0) return { ok: false, error: staleMessage };
   revalidatePath(MODULE_PATH);
   void logActivity({
     module: "production",

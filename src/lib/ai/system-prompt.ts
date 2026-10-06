@@ -200,8 +200,23 @@ function buildAvailableModules(ctx: UserContext): string {
 - **Event**: Running event yang berjalan lintas divisi
 - **Checklist**: Item-item yang harus diselesaikan per event
 - **Tracking**: Fase setiap item (Design → Mockup → Sample → Production → Completed → Loading In → Loading Out → Finish)
-- **Pengeluaran**: Realisasi biaya event (Sewa Venue, Dekorasi & Material, Transportasi, Konsumsi, Talent / Vendor, Percetakan, Operasional Kantor, Lain-lain)`);
+- **Pengeluaran**: Realisasi biaya event (Sewa Venue, Dekorasi & Material, Transportasi, Konsumsi, Talent / Vendor, Percetakan, Operasional Kantor, Lain-lain)
+- **Detail event** (get_event_detail): checklist per fase, item yang belum selesai & lewat tenggat, total pengeluaran, faktur terkait, perkiraan laba`);
   }
+
+  if (ctx.canAccessInvoices) {
+    sections.push(`## Faktur & Piutang
+- **Faktur** (get_invoices): status Draft/Terkirim/Lunas, jatuh tempo, faktur terlambat (overdueOnly)`);
+  }
+
+  if (ctx.canAccessCapital) {
+    sections.push(`## Pengajuan Modal
+- **Pengajuan modal** (get_capital_requests): estimasi tagihan vs modal, status keputusan investor`);
+  }
+
+  sections.push(`## Ringkasan
+- **Ringkasan harian** (get_daily_summary): pakai ini saat ditanya "hari ini ada apa", "ringkasan", atau saat menyapa di awal hari
+- **Pengeluaran** (get_expenses): total per kategori/divisi dalam rentang tanggal, termasuk reimbursement yang belum diganti`);
 
   return sections.length > 0 ? sections.join("\n\n") : "";
 }
@@ -231,5 +246,8 @@ export function buildUserContext(profile: {
     canAccessChecklist: full || operational,
     canAccessExpenses: division !== "investor",
     canAccessAdmin: full,
+    canAccessInvoices: full || division === "investor" || division === "finance",
+    canAccessCapital: full || division === "investor",
+    canAccessPurchaseOrders: full || division === "production" || division === "investor",
   };
 }

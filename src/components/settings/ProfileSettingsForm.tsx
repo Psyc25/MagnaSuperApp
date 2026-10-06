@@ -2,7 +2,8 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import { Camera, Loader2, Trash2, UserRound } from "lucide-react";
-import { updateProfileInfo } from "@/lib/settings/actions";
+import { updateNickname, updateProfileInfo } from "@/lib/settings/actions";
+import { NICKNAME_RULE, isValidNickname, normalizeNickname } from "@/lib/shared/nickname";
 import { useToast } from "@/components/ui/ToastProvider";
 import { getAvatarColor, getInitials } from "@/lib/shared/utils";
 import { compressAvatarImage } from "@/lib/shared/image";
@@ -11,7 +12,8 @@ import type { Profile } from "@/lib/supabase/types";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
 
 /**
- * Kartu "Profil" di halaman Pengaturan — ubah nama & foto profil sendiri.
+ * Kartu "Profil" di halaman Pengaturan — ubah nama, nama panggilan (@tag
+ * di Chat) & foto profil sendiri.
  * Pola FormData + panggil Server Action langsung (bukan lewat action=
  * di <form>) sama seperti ProductManager.tsx, supaya bisa validasi &
  * preview foto di klien dulu sebelum submit.
@@ -20,6 +22,8 @@ export function ProfileSettingsForm({ profile }: { profile: Profile & { email: s
   const { showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fullName, setFullName] = useState(profile.full_name || "");
+  const [savedNickname, setSavedNickname] = useState(profile.username || "");
+  const [nickname, setNickname] = useState(profile.username || "");
   const [avatarUrl, setAvatarUrl] = useState(profile.avatar_url);
   const [preview, setPreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -77,6 +81,13 @@ export function ProfileSettingsForm({ profile }: { profile: Profile & { email: s
       return;
     }
 
+    const nextNickname = normalizeNickname(nickname);
+    const nicknameChanged = nextNickname !== savedNickname;
+    if (nicknameChanged && !isValidNickname(nextNickname)) {
+      setError(NICKNAME_RULE);
+      return;
+    }
+
     const formData = new FormData();
     formData.set("fullName", trimmed);
     if (selectedFile) formData.set("avatar", selectedFile);
@@ -84,6 +95,17 @@ export function ProfileSettingsForm({ profile }: { profile: Profile & { email: s
 
     setError(null);
     setIsPending(true);
+    if (nicknameChanged) {
+      const nicknameResult = await updateNickname(nextNickname);
+      if (!nicknameResult.ok) {
+        setIsPending(false);
+        setError(nicknameResult.error);
+        showToast(nicknameResult.error, "error");
+        return;
+      }
+      setSavedNickname(nicknameResult.nickname);
+      setNickname(nicknameResult.nickname);
+    }
     const result = await updateProfileInfo(formData);
     setIsPending(false);
 
@@ -175,18 +197,36 @@ export function ProfileSettingsForm({ profile }: { profile: Profile & { email: s
         />
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-zinc-400 dark:text-zinc-500">
-        <div>
-          <p className="font-semibold text-zinc-500 dark:text-zinc-400">Username</p>
-          <p className="mt-0.5">{profile.username ? `@${profile.username}` : "—"}</p>
+      <div className="mt-3">
+        <label htmlFor="settings-nickname" className="mb-1.5 block text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+          Nama Panggilan
+        </label>
+        <div className="relative">
+          <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-zinc-400">@</span>
+          <input
+            id="settings-nickname"
+            type="text"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            maxLength={20}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="mis. angel"
+            className="w-full rounded-xl border border-black/10 bg-transparent py-2 pl-8 pr-3.5 text-sm text-zinc-900 outline-none ring-indigo-500/40 placeholder:text-zinc-400 focus:ring-2 dark:border-white/10 dark:text-white"
+          />
         </div>
-        <div>
-          <p className="font-semibold text-zinc-500 dark:text-zinc-400">Email Pemulihan</p>
-          <p className="mt-0.5 truncate">{profile.email}</p>
-        </div>
+        <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+          Dipakai teman setim untuk menandai Anda di Chat. 3-20 karakter, tanpa spasi.
+        </p>
+      </div>
+
+      <div className="mt-3 text-xs text-zinc-400 dark:text-zinc-500">
+        <p className="font-semibold text-zinc-500 dark:text-zinc-400">Email (untuk login)</p>
+        <p className="mt-0.5 truncate">{profile.email}</p>
       </div>
       <p className="mt-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
-        Username & divisi cuma bisa diubah admin — hubungi admin kalau ada yang perlu diganti.
+        Email & divisi cuma bisa diubah admin — hubungi admin kalau ada yang perlu diganti.
       </p>
 
       {error && <p className="mt-3 text-xs font-semibold text-rose-600 dark:text-rose-400">{error}</p>}

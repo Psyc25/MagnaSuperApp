@@ -31,6 +31,12 @@ export function todayISO(): string {
   return formatISODateJakarta(new Date());
 }
 
+/** Tanggal kalender WIB (YYYY-MM-DD) dari timestamp lengkap (mis. `created_at`).
+ * Jangan pakai `iso.slice(0, 10)` -- itu tanggal UTC, salah untuk 00:00-06:59 WIB. */
+export function isoDateInJakarta(timestamp: string): string {
+  return formatISODateJakarta(new Date(timestamp));
+}
+
 /** Tanggal ISO N hari dari sekarang, tetap dihitung menurut kalender WIB (mis. untuk window "7 hari ke depan"). */
 export function isoDaysFromNow(days: number): string {
   return formatISODateJakarta(new Date(Date.now() + days * 24 * 60 * 60 * 1000));
@@ -71,6 +77,19 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/**
+ * Kolom nominal di database masih `integer` (maks Rp 2.147.483.647) --
+ * nilai di atasnya ditolak Postgres dengan error yang tidak jelas bagi
+ * staf, jadi dicek lebih dulu di server action.
+ */
+export const MAX_DB_AMOUNT = 2_147_483_647;
+
+export function exceedsDbAmount(...amounts: (number | undefined)[]): boolean {
+  return amounts.some((a) => a !== undefined && a > MAX_DB_AMOUNT);
+}
+
+export const MAX_DB_AMOUNT_MESSAGE = "Nominal maksimal Rp 2.147.483.647 per isian (batas sistem saat ini).";
 
 export function formatRupiah(amount: number): string {
   return new Intl.NumberFormat("id-ID", {

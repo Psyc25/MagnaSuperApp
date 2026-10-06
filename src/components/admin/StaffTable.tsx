@@ -64,7 +64,7 @@ export function StaffTable({ staff, currentUserId }: { staff: StaffRow[]; curren
             <thead>
               <tr className="border-b border-black/5 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:border-white/10 dark:text-zinc-500">
                 <th className="px-4 py-3">Nama</th>
-                <th className="px-4 py-3">Username</th>
+                <th className="px-4 py-3">Nama Panggilan</th>
                 <th className="px-4 py-3">Email Pemulihan</th>
                 <th className="px-4 py-3">Divisi / Akses</th>
                 <th className="px-4 py-3 text-right">Aksi</th>

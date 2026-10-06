@@ -20,6 +20,7 @@ import { addBooking, updateBookingStatus } from "@/lib/magnarent/actions";
 import { getAvailableUnitsInRange } from "@/lib/magnarent/availability";
 import { rowToBooking, rowToInventory, type BookingRow, type InventoryRow } from "@/lib/magnarent/mappers";
 import type { BookingStatus, PaymentStatus } from "@/lib/magnarent/types";
+import { BOOKING_TRANSITIONS } from "@/lib/magnarent/booking-status";
 import { addEventExpense } from "@/lib/event-expenses/actions";
 import {
   EXPENSE_CATEGORIES,
@@ -30,6 +31,14 @@ import {
   type ExpenseSourceType,
 } from "@/lib/event-expenses/types";
 import { CHECKLIST_PHASE_LABELS, type ChecklistPhase } from "@/lib/events/types";
+import {
+  handleGetCapitalRequests,
+  handleGetDailySummary,
+  handleGetEventDetail,
+  handleGetExpenses,
+  handleGetInvoices,
+  handleGetPurchaseOrders,
+} from "./report-tools";
 
 type Args = Record<string, unknown>;
 
@@ -76,6 +85,18 @@ export async function executeToolCall(
         return await handleGetMaterials(supabase, ctx, args);
       case "check_availability":
         return await handleCheckAvailability(supabase, ctx, args);
+      case "get_invoices":
+        return await handleGetInvoices(supabase, ctx, args);
+      case "get_event_detail":
+        return await handleGetEventDetail(supabase, ctx, args);
+      case "get_capital_requests":
+        return await handleGetCapitalRequests(supabase, ctx, args);
+      case "get_purchase_orders":
+        return await handleGetPurchaseOrders(supabase, ctx, args);
+      case "get_expenses":
+        return await handleGetExpenses(supabase, ctx, args);
+      case "get_daily_summary":
+        return await handleGetDailySummary(supabase, ctx);
 
       // Action tools (sudah dikonfirmasi)
       case "create_booking":
@@ -472,18 +493,8 @@ async function handleCreateBooking(ctx: UserContext, args: Args): Promise<ToolRe
   return { success: true, data: { message: `Booking untuk ${namaKlien} berhasil dibuat (status: Menunggu).` } };
 }
 
-/**
- * Transisi status yang boleh lewat asisten. Membuka lagi booking yang sudah
- * Dibatalkan/Selesai SENGAJA tidak diizinkan: updateBookingStatus adalah
- * UPDATE polos tanpa cek kapasitas, jadi bisa menimbulkan overbooking --
- * pembukaan ulang harus lewat form booking (save_booking_checked).
- */
-const BOOKING_TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
-  Menunggu: ["Dikonfirmasi", "Dibatalkan"],
-  Dikonfirmasi: ["Selesai", "Dibatalkan"],
-  Selesai: [],
-  Dibatalkan: [],
-};
+// Transisi status yang sah: BOOKING_TRANSITIONS (src/lib/magnarent/booking-status.ts),
+// sama dengan halaman Booking & updateBookingStatus di server.
 
 type BookingForStatus = {
   id: string;
@@ -513,7 +524,7 @@ async function loadBookingForStatusChange(
     return {
       error:
         booking.status === "Dibatalkan" || booking.status === "Selesai"
-          ? `Booking berstatus "${booking.status}" tidak bisa dibuka lagi lewat asisten -- buka lewat halaman Booking supaya ketersediaan alat dicek ulang.`
+          ? `Booking berstatus "${booking.status}" sudah final dan tidak bisa dibuka lagi -- buat booking baru supaya ketersediaan alat dicek ulang.`
           : `Status "${booking.status}" tidak bisa langsung diubah ke "${status}".`,
     };
   }

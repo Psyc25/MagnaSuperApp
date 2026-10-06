@@ -67,23 +67,28 @@ export function BookingCalendar() {
 
   const bookingsByDay = useMemo(() => {
     const map = new Map<string, Booking[]>();
+    if (cells.length === 0) return map;
+    // Rentang tiap booking dipotong ke sel yang TAMPIL di grid bulan ini --
+    // dulu dibatasi 60 hari dari tanggal mulai, jadi sewa bulanan yang
+    // panjang tampak kosong (alat seolah tersedia) setelah hari ke-60.
+    const gridStart = cells[0].date;
+    const gridEnd = cells[cells.length - 1].date;
     for (const b of bookings) {
       if (b.status === "Dibatalkan") continue;
-      let d = new Date(`${b.tanggalMulai}T00:00:00`);
+      const start = new Date(`${b.tanggalMulai}T00:00:00`);
       const end = new Date(`${b.tanggalSelesai}T00:00:00`);
-      // Batasi maksimum 60 iterasi (± 2 bulan) untuk jaga-jaga kalau ada data tidak wajar.
-      let guard = 0;
-      while (d <= end && guard < 60) {
+      let d = start < gridStart ? new Date(gridStart) : start;
+      const last = end > gridEnd ? gridEnd : end;
+      while (d <= last) {
         const key = toISO(d);
         const list = map.get(key) ?? [];
         list.push(b);
         map.set(key, list);
         d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
-        guard++;
       }
     }
     return map;
-  }, [bookings]);
+  }, [bookings, cells]);
 
   const itemName = (id: string) => inventory.find((i) => i.id === id)?.name ?? "—";
   const todayKey = toISO(today);

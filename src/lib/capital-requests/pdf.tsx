@@ -1,5 +1,5 @@
 import { Document, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer";
-import { formatDateID, formatRupiah } from "@/lib/shared/utils";
+import { formatDateID, formatRupiah, isoDateInJakarta } from "@/lib/shared/utils";
 import type { CapitalRequest } from "./types";
 
 const styles = StyleSheet.create({
@@ -75,7 +75,7 @@ function CapitalRequestReportDocument({ requests, generatedAt }: { requests: Cap
           </View>
           <View>
             <Text style={styles.reportTitle}>PENGAJUAN MODAL</Text>
-            <Text style={styles.reportMeta}>Dibuat {formatDateID(generatedAt.slice(0, 10))}</Text>
+            <Text style={styles.reportMeta}>Dibuat {formatDateID(isoDateInJakarta(generatedAt))}</Text>
           </View>
         </View>
 

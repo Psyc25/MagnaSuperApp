@@ -12,6 +12,7 @@ import { TrendBarChart } from "@/components/ui/TrendBarChart";
 import { ExportButton, type ExportSheet } from "@/components/ui/ExportButton";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { fetchAllPages, PAGE_SIZE } from "@/lib/shared/paginate";
 
 type PaymentStatusLike = "Belum Bayar" | "DP" | "Lunas";
 
@@ -72,18 +73,26 @@ export default async function KeuanganPage() {
   }
 
   const supabase = await createClient();
+  // Per halaman: PostgREST memotong di 1000 baris, dan total piutang/
+  // pendapatan dulu diam-diam berhenti menghitung begitu tabel lewat 1000.
   const [bookingsRes, inventoryRes, projectsRes, boothRes, clientsRes] = await Promise.all([
-    supabase.from("magnarent_bookings").select("*").returns<BookingRow[]>(),
+    fetchAllPages<BookingRow>((afterId) =>
+      supabase.from("magnarent_bookings").select("*").gt("id", afterId).order("id").limit(PAGE_SIZE).returns<BookingRow[]>()
+    ),
     supabase.from("magnarent_inventory").select("*").returns<InventoryRow[]>(),
-    supabase.from("magnative_projects").select("*").returns<ProjectRow[]>(),
-    supabase.from("production_booth_projects").select("*").returns<BoothProjectRow[]>(),
+    fetchAllPages<ProjectRow>((afterId) =>
+      supabase.from("magnative_projects").select("*").gt("id", afterId).order("id").limit(PAGE_SIZE).returns<ProjectRow[]>()
+    ),
+    fetchAllPages<BoothProjectRow>((afterId) =>
+      supabase.from("production_booth_projects").select("*").gt("id", afterId).order("id").limit(PAGE_SIZE).returns<BoothProjectRow[]>()
+    ),
     supabase.from("magnative_clients").select("*").returns<ClientRow[]>(),
   ]);
 
-  const bookings = (bookingsRes.data ?? []).map(rowToBooking);
+  const bookings = bookingsRes.data.map(rowToBooking);
   const inventory = (inventoryRes.data ?? []).map(rowToInventory);
-  const projects = (projectsRes.data ?? []).map(rowToProject);
-  const boothProjects = (boothRes.data ?? []).map(rowToBoothProject);
+  const projects = projectsRes.data.map(rowToProject);
+  const boothProjects = boothRes.data.map(rowToBoothProject);
   const clients = (clientsRes.data ?? []).map(rowToClient);
 
   const entries: Entry[] = [
