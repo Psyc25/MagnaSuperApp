@@ -28,6 +28,8 @@ export type RemotePos = { x: number; y: number; dir: Dir };
 export const PLAYER_RADIUS = 12;
 /** Satuan peta per detik (dikali delta-time, bukan per frame). */
 export const PLAYER_SPEED = 170;
+/** Pengali kecepatan saat tombol/tahan Shift (sprint) aktif. */
+export const SPRINT_MULTIPLIER = 1.8;
 export const WALL_THICKNESS = 8;
 export const WALL_HEIGHT = 46;
 

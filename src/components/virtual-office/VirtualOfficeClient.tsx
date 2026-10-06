@@ -13,6 +13,7 @@ import {
   MapPin,
   MessageSquare,
   Palette,
+  Rabbit,
   Send,
   Smile,
   Users,
@@ -28,16 +29,22 @@ import type { OfficeRosterEntry } from "@/lib/virtual-office/data";
 import type { AvatarLook } from "@/lib/virtual-office/avatar-look";
 import {
   AGENT_NPC_POSITIONS,
+  FLOOR2_BOUNDS,
+  FLOOR2_OFFSET_X,
+  GROUND_BOUNDS,
   OWNER_DOOR_CENTER,
   OWNER_ROOM_USER_IDS,
   PLAYER_SPEED,
+  ROOMS,
   SPAWN,
+  SPRINT_MULTIPLIER,
   blockersFor,
   canEnterOwnerRoom,
   chatRoomFor,
   deskForDivision,
   getRoom,
   getRoomAt,
+  isUpstairs,
   resolveMove,
   sleepSlot,
   stairsTeleport,
@@ -134,6 +141,10 @@ export function VirtualOfficeClient({
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
       const k = e.key.toLowerCase();
+      if (k === "shift") {
+        keysRef.current.add("shift");
+        return;
+      }
       if (!MOVE_KEYS.has(k)) return;
       if (k.startsWith("arrow")) e.preventDefault();
       keysRef.current.add(k);
@@ -404,8 +415,10 @@ export function VirtualOfficeClient({
         </div>
 
         <div className="absolute right-3 top-3 hidden rounded-lg bg-black/50 px-3 py-1.5 text-[11px] text-white/70 sm:block">
-          WASD / panah untuk berjalan · dekati rekan atau NPC untuk interaksi
+          WASD / panah untuk berjalan (tahan Shift untuk lari) · dekati rekan atau NPC untuk interaksi
         </div>
+
+        <Minimap posRef={posRef} remoteRef={remoteRef} othersInOffice={othersInOffice} />
       </div>
 
       <div className="flex items-center justify-center gap-2 sm:hidden">
@@ -415,6 +428,71 @@ export function VirtualOfficeClient({
           <DpadButton label="Bawah" icon={ChevronDown} onPress={(d) => pressVirtual("arrowdown", d)} />
         </div>
         <DpadButton label="Kanan" icon={ChevronRight} onPress={(d) => pressVirtual("arrowright", d)} />
+        <DpadButton label="Lari" icon={Rabbit} onPress={(d) => pressVirtual("shift", d)} />
+      </div>
+    </div>
+  );
+}
+
+/** Minimap ringan: cuma kotak ruangan dari ROOMS (data, bukan render 3D)
+ * + titik posisi sendiri & rekan yang sedang di Kantor Virtual. Update
+ * posisi lewat interval singkat (bukan re-render React tiap frame) --
+ * cukup utk kebutuhan "jangan nyasar", tidak perlu presisi 60fps. */
+const MINIMAP_W = 92;
+const MINIMAP_H = 108;
+
+function Minimap({
+  posRef,
+  remoteRef,
+  othersInOffice,
+}: {
+  posRef: { current: Pos };
+  remoteRef: { current: Map<string, RemotePos> };
+  othersInOffice: string[];
+}) {
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => forceTick((t) => t + 1), 150);
+    return () => clearInterval(id);
+  }, []);
+
+  const upstairs = isUpstairs(posRef.current);
+  const bounds = upstairs ? FLOOR2_BOUNDS : GROUND_BOUNDS;
+  const scaleX = MINIMAP_W / bounds.w;
+  const scaleY = MINIMAP_H / bounds.h;
+  const rooms = ROOMS.filter((r) => (r.rect.x >= FLOOR2_OFFSET_X) === upstairs);
+
+  return (
+    <div className="absolute left-3 top-3 rounded-lg border border-white/10 bg-black/60 p-1.5 shadow-lg">
+      <svg width={MINIMAP_W} height={MINIMAP_H} viewBox={`0 0 ${MINIMAP_W} ${MINIMAP_H}`}>
+        {rooms.map((r) => (
+          <rect
+            key={r.id}
+            x={(r.rect.x - bounds.x) * scaleX}
+            y={(r.rect.y - bounds.y) * scaleY}
+            width={r.rect.w * scaleX}
+            height={r.rect.h * scaleY}
+            fill="#1e293b"
+            stroke="#475569"
+            strokeWidth={0.5}
+          />
+        ))}
+        {othersInOffice.map((id) => {
+          const rp = remoteRef.current.get(id);
+          if (!rp || (rp.x >= FLOOR2_OFFSET_X) !== upstairs) return null;
+          return <circle key={id} cx={(rp.x - bounds.x) * scaleX} cy={(rp.y - bounds.y) * scaleY} r={2} fill="#34d399" />;
+        })}
+        <circle
+          cx={(posRef.current.x - bounds.x) * scaleX}
+          cy={(posRef.current.y - bounds.y) * scaleY}
+          r={2.6}
+          fill="#a78bfa"
+          stroke="#ffffff"
+          strokeWidth={0.6}
+        />
+      </svg>
+      <div className="mt-0.5 text-center text-[9px] font-semibold text-white/60">
+        {upstairs ? "Lt. 2 · Gudang" : "Lantai 1"}
       </div>
     </div>
   );
@@ -496,7 +574,8 @@ function GameLoop({
     let teleported = false;
     if (vx !== 0 || vy !== 0) {
       const len = Math.hypot(vx, vy) || 1;
-      posRef.current = resolveMove(posRef.current, (vx / len) * PLAYER_SPEED * dt, (vy / len) * PLAYER_SPEED * dt, blockers);
+      const speed = keys.has("shift") ? PLAYER_SPEED * SPRINT_MULTIPLIER : PLAYER_SPEED;
+      posRef.current = resolveMove(posRef.current, (vx / len) * speed * dt, (vy / len) * speed * dt, blockers);
       dirRef.current = Math.abs(vx) > Math.abs(vy) ? (vx > 0 ? "right" : "left") : vy > 0 ? "down" : "up";
       const next = stairsTeleport(posRef.current);
       if (next) {
