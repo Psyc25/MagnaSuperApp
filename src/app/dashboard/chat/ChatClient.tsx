@@ -739,7 +739,7 @@ export function ChatClient({
                 <Loader2 className="h-3.5 w-3.5 animate-spin" /> Mencari…
               </p>
             ) : suggestions.length === 0 ? (
-              <p className="px-3 py-2.5 text-xs text-zinc-400 dark:text-zinc-500">Tidak ada username cocok.</p>
+              <p className="px-3 py-2.5 text-xs text-zinc-400 dark:text-zinc-500">Tidak ada nama panggilan yang cocok.</p>
             ) : (
               <ul className="max-h-52 overflow-y-auto p-1">
                 {suggestions.map((user) => (

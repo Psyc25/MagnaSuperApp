@@ -6,6 +6,7 @@ import { createStaffAccount } from "@/app/dashboard/admin/actions";
 import { DIVISION_LABELS, type Division } from "@/lib/supabase/types";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { NICKNAME_RULE } from "@/lib/shared/nickname";
 
 const DIVISION_OPTIONS: Array<{ value: Division; hint: string }> = [
   { value: "production", hint: "Hanya modul Production" },
@@ -76,36 +77,37 @@ export function CreateStaffForm() {
         </div>
 
         <div>
-          <label htmlFor="create-staff-username" className="mb-1.5 block text-xs font-semibold text-zinc-600 dark:text-zinc-300">
-            Username
+          <label htmlFor="create-staff-email" className="mb-1.5 block text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+            Email
           </label>
           <input
-            id="create-staff-username"
-            type="text"
-            name="username"
-            required
-            pattern="[a-z0-9._-]{3,20}"
-            title="3-20 karakter: huruf kecil, angka, titik, garis bawah, atau strip"
-            placeholder="mis. angel.putri"
-            className="w-full rounded-xl border border-black/10 bg-transparent px-3.5 py-2 text-sm text-zinc-900 outline-none ring-indigo-500/40 placeholder:text-zinc-400 focus:ring-2 dark:border-white/10 dark:text-white"
-          />
-          <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">Huruf kecil, tanpa spasi.</p>
-        </div>
-
-        <div>
-          <label htmlFor="create-staff-recovery-email" className="mb-1.5 block text-xs font-semibold text-zinc-600 dark:text-zinc-300">
-            Email Pemulihan
-          </label>
-          <input
-            id="create-staff-recovery-email"
+            id="create-staff-email"
             type="email"
-            name="recoveryEmail"
+            name="email"
             required
-            placeholder="email pribadi staf"
+            placeholder="email staf"
             className="w-full rounded-xl border border-black/10 bg-transparent px-3.5 py-2 text-sm text-zinc-900 outline-none ring-indigo-500/40 placeholder:text-zinc-400 focus:ring-2 dark:border-white/10 dark:text-white"
           />
           <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-            Bukan untuk login — cuma dipakai kalau staf ini lupa password.
+            Dipakai untuk login dan untuk reset password kalau lupa.
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="create-staff-nickname" className="mb-1.5 block text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+            Nama Panggilan <span className="font-normal text-zinc-400">(opsional)</span>
+          </label>
+          <input
+            id="create-staff-nickname"
+            type="text"
+            name="nickname"
+            pattern="[A-Za-z0-9._\-]{3,20}"
+            title={NICKNAME_RULE}
+            placeholder="mis. angel"
+            className="w-full rounded-xl border border-black/10 bg-transparent px-3.5 py-2 text-sm text-zinc-900 outline-none ring-indigo-500/40 placeholder:text-zinc-400 focus:ring-2 dark:border-white/10 dark:text-white"
+          />
+          <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+            Untuk @tag di Chat. Kosongkan untuk dibuat otomatis dari nama depan; staf bisa menggantinya sendiri di Pengaturan.
           </p>
         </div>
 
@@ -167,7 +169,7 @@ export function CreateStaffForm() {
             )}
           </div>
           <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-            {copied ? "Password disalin ke clipboard." : "Bagikan username & password ini langsung ke staf."}
+            {copied ? "Password disalin ke clipboard." : "Bagikan email & password ini langsung ke staf."}
           </p>
         </div>
 

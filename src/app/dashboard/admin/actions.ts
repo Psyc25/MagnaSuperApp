@@ -6,9 +6,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentProfile } from "@/lib/supabase/server";
 import { logActivity } from "@/lib/activity/log";
 import type { Division } from "@/lib/supabase/types";
+import { NICKNAME_RULE, isValidNickname, normalizeNickname, suggestNickname } from "@/lib/shared/nickname";
 
 const VALID_DIVISIONS: Division[] = ["magnarent", "magnative", "production", "all", "investor", "finance"];
-const USERNAME_PATTERN = /^[a-z0-9._-]{3,20}$/;
 /** Konsisten dengan `GENERIC_ERROR` di modul lain (mis. capital-requests/actions.ts) —
  * pesan error Supabase Admin API mentah tidak pernah ditampilkan langsung ke
  * pengguna, cuma dicatat ke server log lewat `console.error` untuk ditelusuri. */
@@ -28,24 +28,36 @@ export async function requireFullAccess() {
   return profile;
 }
 
+type AdminClient = ReturnType<typeof createAdminClient>;
+
+async function isNicknameTaken(admin: AdminClient, nickname: string): Promise<boolean> {
+  const { data } = await admin.from("profiles").select("id").eq("username", nickname).maybeSingle();
+  return Boolean(data);
+}
+
+async function findFreeNickname(admin: AdminClient, base: string): Promise<string> {
+  if (!(await isNicknameTaken(admin, base))) return base;
+  for (let i = 2; i <= 99; i += 1) {
+    const candidate = `${base.slice(0, 20 - String(i).length)}${i}`;
+    if (!(await isNicknameTaken(admin, candidate))) return candidate;
+  }
+  return `${base.slice(0, 14)}${crypto.randomUUID().slice(0, 6)}`;
+}
+
 export async function createStaffAccount(formData: FormData) {
   await requireFullAccess();
 
   const fullName = String(formData.get("fullName") ?? "").trim();
-  const username = String(formData.get("username") ?? "").trim().toLowerCase();
-  const recoveryEmail = String(formData.get("recoveryEmail") ?? "").trim();
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const typedNickname = normalizeNickname(formData.get("nickname"));
   const division = String(formData.get("division") ?? "") as Division;
   const password = String(formData.get("password") ?? "");
 
-  if (!fullName || !username || !recoveryEmail || !password) {
-    redirect(`/dashboard/admin/pengguna?error=${encodeURIComponent("Semua kolom wajib diisi.")}`);
+  if (!fullName || !email || !password) {
+    redirect(`/dashboard/admin/pengguna?error=${encodeURIComponent("Nama, email, dan password wajib diisi.")}`);
   }
-  if (!USERNAME_PATTERN.test(username)) {
-    redirect(
-      `/dashboard/admin/pengguna?error=${encodeURIComponent(
-        "Username 3-20 karakter: huruf kecil, angka, titik, garis bawah, atau strip."
-      )}`
-    );
+  if (typedNickname && !isValidNickname(typedNickname)) {
+    redirect(`/dashboard/admin/pengguna?error=${encodeURIComponent(NICKNAME_RULE)}`);
   }
   if (!VALID_DIVISIONS.includes(division)) {
     redirect(`/dashboard/admin/pengguna?error=${encodeURIComponent("Divisi tidak valid.")}`);
@@ -55,21 +67,34 @@ export async function createStaffAccount(formData: FormData) {
   }
 
   const admin = createAdminClient();
+
+  // Nama panggilan unik (kolom profiles.username). Diketik admin -> harus
+  // belum dipakai; dikosongkan -> usulan dari nama depan, ditambah angka
+  // kalau sudah ada yang memakai.
+  let nickname = typedNickname;
+  if (typedNickname) {
+    if (await isNicknameTaken(admin, typedNickname)) {
+      redirect(`/dashboard/admin/pengguna?error=${encodeURIComponent(`Nama panggilan "@${typedNickname}" sudah dipakai.`)}`);
+    }
+  } else {
+    nickname = await findFreeNickname(admin, suggestNickname(fullName, email));
+  }
+
   const { error } = await admin.auth.admin.createUser({
-    email: recoveryEmail,
+    email,
     password,
     email_confirm: true,
     // full_name di user_metadata (boleh diubah sendiri nanti oleh pemilik
-    // akun); username & division di app_metadata (cuma admin yang bisa
-    // ubah — lihat catatan di middleware.ts & migration 0003).
+    // akun); nama panggilan (kunci `username`, nama lama) & division di
+    // app_metadata -- dibaca trigger handle_new_user (migrasi 0003/0089).
     user_metadata: { full_name: fullName },
-    app_metadata: { username, division },
+    app_metadata: { username: nickname, division },
   });
 
   if (error) {
     console.error("[admin] createStaffAccount gagal:", error.message);
     const message = error.message.toLowerCase().includes("already been registered")
-      ? "Email pemulihan ini sudah dipakai akun lain."
+      ? "Email ini sudah dipakai akun lain."
       : GENERIC_ERROR;
     redirect(`/dashboard/admin/pengguna?error=${encodeURIComponent(message)}`);
   }
@@ -80,7 +105,7 @@ export async function createStaffAccount(formData: FormData) {
     action: "create",
     entityType: "staf",
     entityLabel: fullName,
-    detail: `username: ${username}, divisi: ${division}`,
+    detail: `email: ${email}, nama panggilan: @${nickname}, divisi: ${division}`,
   });
   redirect(`/dashboard/admin/pengguna?notice=${encodeURIComponent(`Akun ${fullName} berhasil dibuat.`)}`);
 }

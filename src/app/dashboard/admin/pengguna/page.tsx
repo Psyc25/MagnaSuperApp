@@ -8,7 +8,7 @@ import { StaffTable } from "@/components/admin/StaffTable";
  * Halaman "Kelola Pengguna" — HANYA untuk akun akses penuh (division
  * "all": Owner/Finance/Investor). Ini pengganti pendaftaran mandiri lewat
  * /register: sekarang akun staf baru dibuat dari sini, langsung aktif
- * (tanpa konfirmasi email) dengan username+password yang admin tentukan.
+ * (tanpa konfirmasi email) dengan email+password yang admin tentukan.
  *
  * Penjagaan dobel dengan sengaja: middleware.ts sudah memblokir rute ini
  * untuk division selain "all", dan requireFullAccess() di actions.ts
@@ -53,7 +53,7 @@ export default async function KelolaPenggunaPage({
             Kelola Pengguna
           </h1>
           <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
-            Tambahkan anggota tim di sini — mereka tinggal login pakai username &amp; password yang Anda buatkan.
+            Tambahkan anggota tim di sini — mereka tinggal login pakai email &amp; password yang Anda buatkan.
           </p>
         </div>
       </div>
