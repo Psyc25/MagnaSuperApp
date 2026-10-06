@@ -6,7 +6,6 @@ export type OfficeRosterEntry = {
   fullName: string;
   username: string | null;
   division: Division;
-  avatarUrl: string | null;
 };
 
 /**
@@ -32,7 +31,11 @@ export async function getOfficeRoster(): Promise<OfficeRosterEntry[]> {
   try {
     const { data, error } = await admin
       .from("profiles")
-      .select("id, full_name, username, division, avatar_url")
+      // Hanya kolom yang dipakai UI -- data ini dikirim ke SEMUA browser yang
+      // membuka Kantor Virtual lewat service role (melewati RLS profiles).
+      // avatar_url tidak dipakai; username investor tidak dikirim (chat
+      // memang tidak menerima mention investor).
+      .select("id, full_name, username, division")
       .order("full_name", { ascending: true });
 
     if (error) {
@@ -43,9 +46,8 @@ export async function getOfficeRoster(): Promise<OfficeRosterEntry[]> {
     return (data ?? []).map((row) => ({
       id: row.id as string,
       fullName: row.full_name as string,
-      username: (row.username as string | null) ?? null,
+      username: row.division === "investor" ? null : ((row.username as string | null) ?? null),
       division: row.division as Division,
-      avatarUrl: (row.avatar_url as string | null) ?? null,
     }));
   } catch (err) {
     console.error("[virtual-office] getOfficeRoster error:", err);

@@ -3,61 +3,37 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { safeRedirectTarget } from "@/lib/shared/safe-redirect";
 
-function safeRedirectTarget(value: FormDataEntryValue | null): string {
-  const target = typeof value === "string" ? value : "";
-  // Hanya izinkan path relatif internal ("/dashboard/...") — mencegah
-  // open-redirect kalau ada yang mengutak-atik query string redirectTo.
-  return target.startsWith("/") && !target.startsWith("//") ? target : "/dashboard";
-}
 
 /**
- * Login pakai USERNAME, bukan email — email asli tiap staf cuma dipakai
- * sebagai alamat pemulihan password (lihat `requestPasswordReset`), bukan
- * untuk masuk. Karena Supabase Auth secara internal tetap berbasis email,
- * kita cari dulu email yang berpasangan dengan username itu lewat service
- * role (supaya tidak perlu RLS publik yang membocorkan email ke siapa pun
- * yang belum login), baru panggil signInWithPassword dengan email tersebut.
+ * Login pakai EMAIL + password, langsung ke Supabase Auth. Dulu login pakai
+ * username (dicari dulu email pasangannya lewat service role); sekarang
+ * username sudah jadi "nama panggilan" untuk @tag di chat saja (lihat
+ * src/lib/shared/nickname.ts), jadi tidak ada lagi pencarian profil di sini.
+ * Email yang dipakai adalah email yang sudah terdaftar di akun masing-masing
+ * (yang dulu disebut "email pemulihan"), jadi akun lama langsung bisa masuk.
  */
 export async function signIn(formData: FormData) {
-  const username = String(formData.get("username") ?? "").trim().toLowerCase();
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
   const redirectTo = safeRedirectTarget(formData.get("redirectTo"));
 
-  if (!username || !password) {
-    redirect(`/login?error=${encodeURIComponent("Username dan password wajib diisi.")}`);
-  }
-
-  const admin = createAdminClient();
-  const { data: profile, error: lookupError } = await admin
-    .from("profiles")
-    .select("email")
-    .eq("username", username)
-    .maybeSingle();
-
-  // Dicatat HANYA di terminal server, tidak pernah ditampilkan ke browser —
-  // supaya kita bisa lihat persis di titik mana login gagal (username tidak
-  // ketemu vs password salah) tanpa membocorkan info itu ke orang yang
-  // sedang mencoba login.
-  if (lookupError) {
-    console.error("[signIn] Query profiles gagal:", lookupError.message);
-  }
-
-  if (!profile?.email) {
-    console.log(`[signIn] Username "${username}" tidak ditemukan di tabel profiles.`);
-    redirect(`/login?error=${encodeURIComponent("Username atau password salah.")}`);
+  if (!email || !password) {
+    redirect(`/login?error=${encodeURIComponent("Email dan password wajib diisi.")}`);
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({ email: profile.email, password });
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
 
+  // Detail error hanya di log server -- ke browser selalu pesan yang sama,
+  // supaya tidak membocorkan apakah sebuah email terdaftar.
   if (error) {
-    console.error(`[signIn] signInWithPassword gagal untuk email terkait username "${username}":`, error.message);
-    redirect(`/login?error=${encodeURIComponent("Username atau password salah.")}`);
+    console.error(`[signIn] signInWithPassword gagal untuk "${email}":`, error.message);
+    redirect(`/login?error=${encodeURIComponent("Email atau password salah.")}`);
   }
 
-  console.log(`[signIn] Login berhasil untuk username "${username}".`);
+  console.log(`[signIn] Login berhasil untuk "${email}".`);
   // `welcome=1` memicu animasi popup selamat datang SEKALI di dashboard
   // (lihat WelcomeSplash.tsx) — dibaca lalu langsung dibuang dari URL di
   // sana, jadi tidak terulang kalau halaman di-refresh/dibuka lagi lewat

@@ -1,24 +1,32 @@
 import { NextResponse } from "next/server";
+import { getCurrentProfile } from "@/lib/supabase/server";
+import { resolveAIConfig } from "@/lib/ai/config";
 
 /**
- * Debug endpoint untuk cek konfigurasi AI di production.
- * HAPUS SETELAH DEBUGGING SELESAI!
+ * Cek konfigurasi AI di production (hasil resolveAIConfig, sama persis dengan
+ * yang dipakai src/lib/ai/actions.ts). API key tidak pernah dikirim -- hanya
+ * terisi/tidak. Khusus akun akses penuh (Owner); hapus kalau sudah tidak perlu.
  */
 export async function GET() {
-  const AI_API_URL = process.env.AI_API_URL || "(not set)";
-  const AI_API_KEY = process.env.AI_API_KEY ? "***set***" : "(not set)";
-  const AI_PROVIDER = process.env.AI_PROVIDER || "(not set)";
+  const profile = await getCurrentProfile();
+  if (!profile || profile.division !== "all") {
+    return NextResponse.json({ error: "Tidak diizinkan." }, { status: 403 });
+  }
 
-  const isLocalhost = AI_API_URL.includes("localhost") || AI_API_URL.includes("127.0.0.1");
-  const isProduction = process.env.NODE_ENV === "production";
-
+  const config = resolveAIConfig(process.env);
   return NextResponse.json({
     env: process.env.NODE_ENV,
-    AI_API_URL: AI_API_URL.replace(/^(https?:\/\/[^\/]+).*/, "$1/..."), // hide full path
-    AI_API_KEY,
-    AI_PROVIDER,
-    isLocalhost,
-    isProduction,
-    wouldBeAvailable: !isProduction || !isLocalhost,
+    provider: config.provider,
+    baseUrlHost: (() => {
+      try {
+        return new URL(config.baseUrl).host;
+      } catch {
+        return "(tidak valid)";
+      }
+    })(),
+    model: config.model ?? "(model bawaan agen)",
+    apiKeySet: Boolean(config.apiKey),
+    available: config.available,
+    unavailableReason: config.unavailableReason ?? null,
   });
 }

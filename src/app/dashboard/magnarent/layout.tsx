@@ -6,6 +6,7 @@ import { ToastProvider } from "@/components/ui/ToastProvider";
 import { createClient } from "@/lib/supabase/server";
 import { rowToBooking, rowToInventory, type BookingRow, type InventoryRow } from "@/lib/magnarent/mappers";
 import { rowToClient, type ClientRow } from "@/lib/magnative/mappers";
+import { fetchAllPages, PAGE_SIZE } from "@/lib/shared/paginate";
 
 const mod = MODULES.find((m) => m.id === "magnarent")!;
 
@@ -31,11 +32,18 @@ export default async function MagnarentLayout({ children }: { children: ReactNod
       .select("*")
       .order("created_at", { ascending: true })
       .returns<InventoryRow[]>(),
-    supabase
-      .from("magnarent_bookings")
-      .select("*")
-      .order("tanggal_mulai", { ascending: true })
-      .returns<BookingRow[]>(),
+    // Semua booking diambil per halaman (PostgREST memotong di 1000 baris --
+    // dulu booking TERBARU yang hilang dari halaman Booking, kalender, dan
+    // pratinjau ketersediaan begitu datanya lewat 1000).
+    fetchAllPages<BookingRow>((afterId) =>
+      supabase
+        .from("magnarent_bookings")
+        .select("*")
+        .gt("id", afterId)
+        .order("id")
+        .limit(PAGE_SIZE)
+        .returns<BookingRow[]>()
+    ),
     // Daftar klien Magnative — dibaca di sini cuma untuk pilihan "Klien
     // Terdaftar" di form booking (migrasi 0010 sudah mengizinkan siapa pun
     // yang login membaca tabel ini). Kepemilikan datanya tetap di Magnative.
@@ -53,7 +61,9 @@ export default async function MagnarentLayout({ children }: { children: ReactNod
   }
 
   const inventory = (inventoryResult.data ?? []).map(rowToInventory);
-  const bookings = (bookingsResult.data ?? []).map(rowToBooking);
+  const bookings = bookingsResult.data
+    .map(rowToBooking)
+    .sort((a, b) => a.tanggalMulai.localeCompare(b.tanggalMulai));
   const clients = (clientsResult.data ?? []).map(rowToClient);
 
   return (

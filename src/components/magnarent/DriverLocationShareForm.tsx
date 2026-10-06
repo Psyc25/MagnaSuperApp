@@ -35,7 +35,16 @@ export function DriverLocationShareForm({ token }: { token: string }) {
         const result = await submitDriverLocation(token, pos.coords.latitude, pos.coords.longitude);
         if (result.ok) setLastSentAt(new Date());
       },
-      () => setStatus("denied"),
+      (err) => {
+        // Hanya izin ditolak yang menghentikan pengiriman. Timeout/sinyal GPS
+        // lemah bersifat sementara -- coba lagi di interval berikutnya. Dulu
+        // status jadi "denied" tapi interval tetap jalan diam-diam.
+        if (err.code === err.PERMISSION_DENIED) {
+          if (intervalRef.current) clearInterval(intervalRef.current);
+          intervalRef.current = null;
+          setStatus("denied");
+        }
+      },
       { enableHighAccuracy: true, timeout: 15000 }
     );
   }
@@ -47,6 +56,9 @@ export function DriverLocationShareForm({ token }: { token: string }) {
     }
     setStatus("active");
     sendOnce();
+    // Bersihkan interval lama dulu -- tombol Mulai yang ditekan dua kali dulu
+    // meninggalkan interval yatim yang terus mengirim lokasi setelah Berhenti.
+    if (intervalRef.current) clearInterval(intervalRef.current);
     intervalRef.current = setInterval(sendOnce, SEND_INTERVAL_MS);
   }
 

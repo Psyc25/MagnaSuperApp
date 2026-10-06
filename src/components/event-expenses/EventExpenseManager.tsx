@@ -75,7 +75,13 @@ export function EventExpenseManager({
       showToast(result.error, "error");
       return;
     }
-    setExpenses((prev) => [...prev, ...result.expenses]);
+    // Buang yang sudah ada (by id): offset dihitung dari panjang daftar lokal,
+    // jadi pengeluaran yang baru dicatat bisa membuat baris terulang -- dulu
+    // ikut terjumlah dua kali di total & export.
+    setExpenses((prev) => {
+      const seen = new Set(prev.map((e) => e.id));
+      return [...prev, ...result.expenses.filter((e) => !seen.has(e.id))];
+    });
     setHasMore(result.hasMore);
   }
 
@@ -383,6 +389,9 @@ export function EventExpenseManager({
           // editTarget saat itu mengubah form jadi form tambah kosong dan
           // peringatannya hilang. onClose yang mengosongkannya.
         }}
+        onProofsChanged={(expenseId, proofs) =>
+          setExpenses((prev) => prev.map((item) => (item.id === expenseId ? { ...item, proofs } : item)))
+        }
       />
 
       <ConfirmDialog

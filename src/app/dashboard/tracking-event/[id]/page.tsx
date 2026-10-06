@@ -29,9 +29,14 @@ export default async function TrackingEventDetailPage({ params }: { params: Prom
     data: { user },
   } = await supabase.auth.getUser();
   let isFullAccess = false;
+  // Finance boleh melihat daftar event (migrasi 0083) tapi RLS checklist
+  // hanya untuk 3 divisi operasional + akses penuh -- tombol "Tambah Item"
+  // dulu tampil untuk finance dan selalu gagal.
+  let canEditChecklist = false;
   if (user) {
     const { data: profile } = await supabase.from("profiles").select("division").eq("id", user.id).maybeSingle();
     isFullAccess = profile?.division === "all";
+    canEditChecklist = ["all", "magnarent", "magnative", "production"].includes(profile?.division ?? "");
   }
 
   return (
@@ -68,6 +73,7 @@ export default async function TrackingEventDetailPage({ params }: { params: Prom
             picOptions={picOptions}
             currentUserId={user?.id ?? null}
             isFullAccess={isFullAccess}
+            canEditChecklist={canEditChecklist}
           />
         </ToastProvider>
       </div>

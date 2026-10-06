@@ -7,6 +7,8 @@ import { logActivity } from "@/lib/activity/log";
 import { getAvailableUnitsInRange, getOverlappingBookings } from "./availability";
 import { rowToBooking, rowToInventory, type BookingRow, type InventoryRow } from "./mappers";
 import type { Booking, BookingStatus, InventoryItem, PaymentStatus } from "./types";
+import { canTransitionBooking } from "./booking-status";
+import { exceedsDbAmount, MAX_DB_AMOUNT_MESSAGE } from "@/lib/shared/utils";
 
 const MODULE_PATH = "/dashboard/magnarent";
 const GENERIC_ERROR = "Terjadi kesalahan, coba lagi.";
@@ -249,6 +251,7 @@ function validateBookingInput(input: BookingInput): string | null {
   if (input.dpAmount !== undefined && (!Number.isFinite(input.dpAmount) || input.dpAmount < 0)) {
     return "Nominal DP tidak valid.";
   }
+  if (exceedsDbAmount(input.dpAmount)) return MAX_DB_AMOUNT_MESSAGE;
   return null;
 }
 
@@ -282,7 +285,9 @@ export async function addBooking(input: BookingInput): Promise<SaveBookingResult
     p_tanggal_selesai: input.tanggalSelesai,
     p_jumlah_unit: input.jumlahUnit,
     p_status_pembayaran: input.statusPembayaran,
-    p_dp_amount: input.dpAmount ?? 0,
+    // DP hanya bermakna untuk status "DP" -- nilai lama yang tertinggal saat
+    // status diganti membuat piutang terhitung lebih kecil dari seharusnya.
+    p_dp_amount: input.statusPembayaran === "DP" ? (input.dpAmount ?? 0) : 0,
     p_catatan: input.catatan ?? null,
   });
 
@@ -349,7 +354,9 @@ export async function updateBooking(id: string, input: BookingInput): Promise<Sa
     p_tanggal_selesai: input.tanggalSelesai,
     p_jumlah_unit: input.jumlahUnit,
     p_status_pembayaran: input.statusPembayaran,
-    p_dp_amount: input.dpAmount ?? 0,
+    // DP hanya bermakna untuk status "DP" -- nilai lama yang tertinggal saat
+    // status diganti membuat piutang terhitung lebih kecil dari seharusnya.
+    p_dp_amount: input.statusPembayaran === "DP" ? (input.dpAmount ?? 0) : 0,
     p_catatan: input.catatan ?? null,
   });
 
@@ -394,14 +401,29 @@ export async function updateBookingStatus(id: string, status: BookingStatus): Pr
   const supabase = await createClient();
   const { data: bookingRow } = await supabase
     .from("magnarent_bookings")
-    .select("nama_klien")
+    .select("nama_klien, status")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle<{ nama_klien: string; status: BookingStatus }>();
 
-  const { error } = await supabase.from("magnarent_bookings").update({ status }).eq("id", id);
+  if (!bookingRow) return { ok: false, error: "Booking tidak ditemukan." };
+  if (!canTransitionBooking(bookingRow.status, status)) {
+    return { ok: false, error: `Booking berstatus "${bookingRow.status}" tidak bisa diubah ke "${status}".` };
+  }
+
+  // Bersyarat pada status yang tadi dibaca: kalau staf lain sudah mengubahnya
+  // duluan (mis. membatalkan), perubahan ini tidak menimpa diam-diam.
+  const { data: updated, error } = await supabase
+    .from("magnarent_bookings")
+    .update({ status })
+    .eq("id", id)
+    .eq("status", bookingRow.status)
+    .select("id");
   if (error) {
     console.error("[magnarent] updateBookingStatus gagal:", error.message);
     return { ok: false, error: GENERIC_ERROR };
+  }
+  if (!updated || updated.length === 0) {
+    return { ok: false, error: "Status booking sudah berubah. Muat ulang halaman lalu coba lagi." };
   }
 
   revalidatePath(MODULE_PATH);

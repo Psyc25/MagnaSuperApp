@@ -1,4 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
+import { classifyCashFlowCategory, pickCounterLine, type CashFlowCategory } from "./cash-flow-category";
+import { fetchAllPages, fetchInChunks, PAGE_SIZE } from "@/lib/shared/paginate";
 import { ACCOUNT_CODE, DIVISION_LABELS } from "./types";
 import type { Account, AccountType, JournalEntry, JournalLine, JournalSourceType, NormalBalance } from "./types";
 
@@ -20,56 +22,6 @@ export { DIVISION_LABELS };
  * Proyek), supaya gampang dibaca/di-maintain tanpa perlu buka dua tempat
  * (kode + definisi view database) buat ngerti satu angka.
  */
-
-/**
- * Supabase (PostgREST) memotong hasil query DIAM-DIAM di 1000 baris
- * (`max_rows`), dan daftar `.in(...)` dikirim lewat URL yang punya batas
- * panjang. Laporan di bawah dulu mengambil semua ID jurnal sekaligus lalu
- * `.in("journal_entry_id", semuaId)` -- aman saat jurnal masih sedikit,
- * tapi begitu ratusan/ribuan jurnal otomatis terposting, angkanya akan
- * salah tanpa error. Dua helper ini mengambil per halaman & per potongan ID.
- */
-const PAGE_SIZE = 1000;
-const IN_CHUNK_SIZE = 150;
-/** Titik awal keyset pagination -- semua UUID lebih besar dari UUID nol. */
-const NIL_UUID = "00000000-0000-0000-0000-000000000000";
-
-type PageResult<T> = { data: T[] | null; error: { message: string } | null };
-type AllRowsResult<T> = { data: T[]; error: { message: string } | null };
-
-/**
- * Keyset pagination (`id > id terakhir`, urut id) -- bukan offset/range:
- * dengan offset, jurnal yang ditulis bersamaan saat laporan sedang diambil
- * bisa menggeser halaman sehingga ada baris terlewat atau terhitung dua kali.
- * Setiap query WAJIB menyertakan kolom `id`.
- */
-async function fetchAllPages<T extends { id: string }>(
-  page: (afterId: string) => PromiseLike<PageResult<T>>
-): Promise<AllRowsResult<T>> {
-  const rows: T[] = [];
-  let afterId = NIL_UUID;
-  for (;;) {
-    const { data, error } = await page(afterId);
-    if (error) return { data: rows, error };
-    rows.push(...(data ?? []));
-    if (!data || data.length < PAGE_SIZE) return { data: rows, error: null };
-    afterId = data[data.length - 1].id;
-  }
-}
-
-async function fetchInChunks<T extends { id: string }>(
-  ids: string[],
-  page: (chunk: string[], afterId: string) => PromiseLike<PageResult<T>>
-): Promise<AllRowsResult<T>> {
-  const rows: T[] = [];
-  for (let i = 0; i < ids.length; i += IN_CHUNK_SIZE) {
-    const chunk = ids.slice(i, i + IN_CHUNK_SIZE);
-    const result = await fetchAllPages<T>((afterId) => page(chunk, afterId));
-    if (result.error) return { data: rows, error: result.error };
-    rows.push(...result.data);
-  }
-  return { data: rows, error: null };
-}
 
 export type IncomeStatementLine = {
   accountCode: string;
@@ -417,7 +369,7 @@ export async function getBalanceSheet(asOfDate: string): Promise<BalanceSheet> {
  * - selain itu (Pendapatan, Beban, Piutang, Hutang jangka pendek) ->
  *   Operasional, karena semuanya berasal dari aktivitas usaha sehari-hari
  */
-export type CashFlowCategory = "Operasional" | "Investasi" | "Pendanaan" | "Lainnya";
+export type { CashFlowCategory };
 
 export type CashFlowLine = {
   entryId: string;
@@ -599,39 +551,17 @@ export async function getCashFlowStatement(startDate: string, endDate: string): 
     linesByEntry.set(line.journal_entry_id, bucket);
   }
 
-  function classifyCategory(counterAccountId: string | undefined): CashFlowCategory {
-    if (!counterAccountId) return "Lainnya";
-    const counter = accountById.get(counterAccountId);
-    if (!counter) return "Lainnya";
-    if (cashAccountIds.includes(counter.id)) return "Lainnya"; // transfer internal Kas <-> Bank
-    if (counter.account_subtype === "Aset Tetap") return "Investasi";
-    if (counter.account_type === "Modal") return "Pendanaan";
-    // Dana investor (migrasi 0084) dibukukan sebagai utang (akun 2-1300),
-    // bukan Modal -- tapi secara arus kas ini tetap aktivitas Pendanaan,
-    // bukan Operasional. Dicek per kode akun (bukan account_type "Kewajiban"
-    // secara umum) supaya utang operasional biasa (Hutang Usaha/
-    // Reimbursement/Pajak) tetap benar masuk Operasional seperti sebelumnya.
-    if (counter.account_code === "2-1300") return "Pendanaan";
-    return "Operasional";
-  }
-
   const lines: CashFlowLine[] = [];
   for (const [entryId, entryLines] of linesByEntry) {
     const entry = entryById.get(entryId);
     if (!entry) continue;
     const cashLines = entryLines.filter((l) => cashAccountIds.includes(l.account_id));
     if (cashLines.length === 0) continue;
-    // Akun lawan = baris non-kas dengan nominal TERBESAR (seri: kode akun
-    // terkecil) -- tidak bergantung urutan baris dari database. Untuk jurnal
-    // 2 baris (mayoritas) hasilnya sama dengan sebelumnya.
-    const counterLine = entryLines
-      .filter((l) => !cashAccountIds.includes(l.account_id))
-      .sort(
-        (a, b) =>
-          b.debit + b.credit - (a.debit + a.credit) ||
-          (accountById.get(a.account_id)?.account_code ?? "").localeCompare(accountById.get(b.account_id)?.account_code ?? "")
-      )[0];
-    const category = classifyCategory(counterLine?.account_id);
+    const counterLine = pickCounterLine(entryLines, cashAccountIds, accountById);
+    const category = classifyCashFlowCategory(
+      counterLine ? accountById.get(counterLine.account_id) : undefined,
+      cashAccountIds
+    );
     const counterAccountName = counterLine ? (accountById.get(counterLine.account_id)?.account_name ?? "-") : "-";
 
     for (const line of cashLines) {

@@ -114,8 +114,10 @@ export async function getPortalSummaryByToken(
   if (!link || link.revoked) return null;
   if (link.expires_at && new Date(link.expires_at) < new Date()) return null;
 
-  // Fire-and-forget: catat kapan terakhir link ini dibuka.
-  void admin
+  // Catat kapan terakhir link ini dibuka. Harus di-await: query builder
+  // Supabase baru mengirim request saat di-await/then -- `void admin...`
+  // dulu tidak pernah terkirim sehingga last_accessed_at selalu kosong.
+  await admin
     .from("client_portal_links")
     .update({ last_accessed_at: new Date().toISOString() })
     .eq("id", link.id);

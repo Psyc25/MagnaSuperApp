@@ -479,12 +479,23 @@ export async function deleteEvent(id: string): Promise<MutationResult> {
     return { ok: false, error: GENERIC_ERROR };
   }
 
-  for (const link of links ?? []) {
+  // Pengeluaran yang dicatat LANGSUNG ke event ini (opsi "Event (Lintas
+  // Divisi)" di Realisasi Event) + pengeluaran milik booking/proyek yang
+  // dikaitkan. event_links menamai proyek booth 'production_booth_project',
+  // sedangkan event_expenses memakai 'production_booth'.
+  const expenseSources = [
+    { source_type: "event_tracking", source_id: id },
+    ...(links ?? []).map((link) => ({
+      source_type: link.source_type === "production_booth_project" ? "production_booth" : link.source_type,
+      source_id: link.source_id,
+    })),
+  ];
+  for (const source of expenseSources) {
     const { count, error: expenseError } = await supabase
       .from("event_expenses")
       .select("id", { count: "exact", head: true })
-      .eq("source_type", link.source_type)
-      .eq("source_id", link.source_id);
+      .eq("source_type", source.source_type)
+      .eq("source_id", source.source_id);
 
     if (expenseError) {
       console.error("[events] deleteEvent: gagal cek pengeluaran:", expenseError.message);
@@ -666,9 +677,22 @@ export async function updateEventChecklistProgress(
   // tulis log TIDAK membatalkan update status/PIC di atas (sudah berhasil
   // & sudah dilihat user) -- cukup dicatat ke console, konsisten dengan
   // pola `void logActivity(...)` di tempat lain di file ini.
-  const { error: logError } = await supabase
-    .from("event_checklist_status_log")
-    .insert({ checklist_item_id: id, status: input.status, pic: input.picId });
+  // Dicatat dengan fase item SAAT INI (model 8 tahap) -- kolom `status` lama
+  // yang dikirim klien sudah tidak bergerak sejak 0077a (hampir selalu
+  // "Belum Mulai"), jadi riwayat PIC dulu menampilkan tahap yang salah.
+  const { data: phaseRow } = await supabase
+    .from("event_checklist_items")
+    .select("current_phase")
+    .eq("id", id)
+    .maybeSingle<{ current_phase: ChecklistPhase | null }>();
+  const currentPhase = phaseRow?.current_phase ?? null;
+  const { error: logError } = await supabase.from("event_checklist_status_log").insert({
+    checklist_item_id: id,
+    status: currentPhase ? CHECKLIST_PHASE_LABELS[currentPhase] : input.status,
+    pic: input.picId,
+    phase: currentPhase,
+    sub_status: null,
+  });
   if (logError) {
     console.error("[events] gagal tulis riwayat status checklist:", logError.message);
   }
@@ -681,7 +705,7 @@ export async function updateEventChecklistProgress(
 type ChecklistStatusLogRow = {
   id: string;
   checklist_item_id: string;
-  status: ChecklistStatusLogEntry["status"];
+  status: string;
   pic: string | null;
   changed_at: string;
 };
@@ -891,9 +915,12 @@ export async function addEventLink(
   label: string
 ): Promise<MutationResult> {
   const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   const { error } = await supabase
     .from("event_links")
-    .insert({ event_id: eventId, source_type: sourceType, source_id: sourceId });
+    .insert({ event_id: eventId, source_type: sourceType, source_id: sourceId, created_by: user?.id ?? null });
 
   if (error) {
     console.error("[events] addEventLink gagal:", error.message);
@@ -1518,7 +1545,9 @@ export async function bulkAdvanceChecklistPhase(
   // Milestone level EVENT (bukan per-item) -- notifikasi ke 3 divisi +
   // akses penuh cuma kalau SEMUA item event ini sudah mencapai fase target,
   // supaya tidak spam notifikasi tiap kali satu batch kecil ditandai.
-  void (async () => {
+  // Di-await (bukan fire-and-forget): di serverless, query cek milestone yang
+  // berjalan setelah action selesai bisa terputus sebelum notifikasi terkirim.
+  await (async () => {
     const { data: event } = await supabase.from("events").select("name").eq("id", eventId).maybeSingle<{ name: string }>();
     const { data: allItems } = await supabase
       .from("event_checklist_items")

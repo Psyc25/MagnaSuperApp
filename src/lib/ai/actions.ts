@@ -6,6 +6,8 @@ import { getAgentPromptBuilder } from "./agent-prompts";
 import { buildOperationalPrompt, buildSystemPrompt, buildUserContext } from "./system-prompt";
 import { getToolsForAgent, getToolsForUser } from "./tools";
 import { executeToolCall } from "./tool-handlers";
+import { classifyReply } from "./reply-classifier";
+import { modelForAgent, resolveAIConfig } from "./config";
 import type { AIAttachment, ImageContent, MessageContent, PendingAction, TextContent, ToolCall, ToolDefinition } from "./types";
 
 export type AIMessage = {
@@ -26,45 +28,10 @@ type ChatMessage = {
   tool_call_id?: string;
 };
 
-/**
- * Multi-Provider AI System
- * Mendukung: 9Router lokal, OpenAI, atau provider OpenAI-compatible lainnya.
- *
- * Environment variables:
- * - AI_API_URL: Base URL API (default: localhost:20128/v1)
- * - AI_API_KEY: API key untuk provider
- * - AI_PROVIDER: "9router" | "openai" | "groq" | "together" (optional, auto-detect)
- */
-const AI_API_URL = process.env.AI_API_URL || "http://localhost:20128/v1";
-const AI_API_KEY = process.env.AI_API_KEY || "";
-const AI_PROVIDER = process.env.AI_PROVIDER || "auto";
-
-// Provider-specific configurations
-const PROVIDER_CONFIGS: Record<string, { baseUrl: string; modelMap: Record<string, string> }> = {
-  openai: {
-    baseUrl: "https://api.openai.com/v1",
-    modelMap: {
-      "gh/gpt-4o-mini-2024-07-18": "gpt-4o-mini",
-      "gpt-4o-mini": "gpt-4o-mini",
-    },
-  },
-  groq: {
-    baseUrl: "https://api.groq.com/openai/v1",
-    modelMap: {
-      "gh/gpt-4o-mini-2024-07-18": "llama-3.3-70b-versatile",
-      "gpt-4o-mini": "llama-3.3-70b-versatile",
-      "llama-3.1-8b-instant": "llama-3.3-70b-versatile",
-    },
-  },
-  together: {
-    baseUrl: "https://api.together.xyz/v1",
-    modelMap: {
-      "gh/gpt-4o-mini-2024-07-18": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-      "gpt-4o-mini": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-    },
-  },
-};
-
+// Penyedia AI OpenAI-compatible dari env (AI_API_URL/AI_API_KEY/AI_MODEL) --
+// 9Router lokal saat development, penyedia cloud (mis. OpenRouter) di
+// production. Lihat src/lib/ai/config.ts.
+const AI_CONFIG = resolveAIConfig(process.env);
 /** Batas putaran tool per pesan — cukup untuk "cari ID dulu, lalu aksi"
  * tanpa membiarkan model berputar terus memakan kuota. */
 const MAX_TOOL_ROUNDS = 4;
@@ -72,95 +39,8 @@ const AI_TIMEOUT_MS = 45_000;
 /** Suhu rendah untuk tool calling — jawaban data harus konsisten, bukan kreatif. */
 const TOOL_TEMPERATURE = 0.3;
 
-const CONFIRM_WORDS = new Set([
-  "ya", "iya", "yes", "y", "ok", "oke", "okay", "okey", "lanjut", "lanjutkan", "konfirmasi", "setuju", "benar",
-  "betul", "simpan", "boleh", "silakan", "siap", "sip", "gas", "yup", "yap",
-]);
-const CANCEL_WORDS = new Set(["batal", "batalkan", "tidak", "gak", "nggak", "enggak", "no", "cancel", "jangan"]);
-/** Kata pelengkap yang boleh menyertai jawaban ya/batal ("ya simpan saja",
- * "tidak jadi", "oke deh"). */
-const FILLER_WORDS = new Set(["saja", "aja", "usah", "dong", "deh", "kok", "jadi", "sudah", "udah", "kak", "min", "please", "tolong"]);
 
-/**
- * "ya lanjut" / "oke simpan aja" = konfirmasi; "tidak jadi" = batal. Dulu cuma
- * satu kata persis yang dikenali, jadi "Ya, lanjut" diam-diam MEMBUANG aksi
- * yang sedang menunggu konfirmasi. Kalimat yang mengandung hal lain (mis.
- * "ya tapi tanggalnya ganti") tetap diteruskan ke AI.
- */
-function classifyReply(text: string): "confirm" | "cancel" | null {
-  const words = text.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
-  if (words.length === 0 || words.length > 5) return null;
-  const onlyFrom = (set: Set<string>) => words.every((w) => set.has(w) || FILLER_WORDS.has(w));
-  if (words.some((w) => CANCEL_WORDS.has(w)) && onlyFrom(CANCEL_WORDS)) return "cancel";
-  if (words.some((w) => CONFIRM_WORDS.has(w)) && onlyFrom(CONFIRM_WORDS)) return "confirm";
-  return null;
-}
-
-/**
- * Determine AI availability and configuration
- */
-function getAIConfig(): { available: boolean; baseUrl: string; apiKey: string; provider: string; error?: string } {
-  const isLocalhost = AI_API_URL.includes("localhost") || AI_API_URL.includes("127.0.0.1");
-  const isProduction = process.env.NODE_ENV === "production";
-
-  // Auto-detect provider from URL or explicit setting
-  let detectedProvider = AI_PROVIDER;
-  if (AI_PROVIDER === "auto") {
-    if (AI_API_URL.includes("openai.com")) detectedProvider = "openai";
-    else if (AI_API_URL.includes("groq.com")) detectedProvider = "groq";
-    else if (AI_API_URL.includes("together.xyz")) detectedProvider = "together";
-    else if (isLocalhost) detectedProvider = "9router";
-    else detectedProvider = "custom";
-  }
-
-  // Check if we have a valid configuration
-  if (isProduction && isLocalhost) {
-    // In production with localhost URL - check if we have an API key for a cloud provider
-    if (AI_API_KEY) {
-      // User has an API key - maybe they want to use a cloud provider
-      // Check if AI_PROVIDER is explicitly set to a cloud provider
-      if (AI_PROVIDER !== "auto" && AI_PROVIDER !== "9router" && PROVIDER_CONFIGS[AI_PROVIDER]) {
-        const config = PROVIDER_CONFIGS[AI_PROVIDER];
-        return {
-          available: true,
-          baseUrl: config.baseUrl,
-          apiKey: AI_API_KEY,
-          provider: AI_PROVIDER,
-        };
-      }
-    }
-
-    return {
-      available: false,
-      baseUrl: AI_API_URL,
-      apiKey: AI_API_KEY,
-      provider: detectedProvider,
-      error: "AI belum dikonfigurasi untuk production. Set AI_API_URL dan AI_API_KEY di environment variables Vercel.\n\nContoh:\n• OpenAI: AI_API_URL=https://api.openai.com/v1 + AI_API_KEY=sk-...\n• Groq (gratis): AI_API_URL=https://api.groq.com/openai/v1 + AI_API_KEY=gsk_...",
-    };
-  }
-
-  // Local development with localhost - always available (9Router)
-  if (!isProduction && isLocalhost) {
-    return {
-      available: true,
-      baseUrl: AI_API_URL,
-      apiKey: AI_API_KEY,
-      provider: "9router",
-    };
-  }
-
-  // Custom URL (non-localhost) - available if URL is set
-  return {
-    available: true,
-    baseUrl: AI_API_URL,
-    apiKey: AI_API_KEY,
-    provider: detectedProvider,
-  };
-}
-
-const AI_CONFIG = getAIConfig();
-
-export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: string }> {
+export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: string; notice?: string }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -183,6 +63,8 @@ export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: 
   }
 
   return {
+    // Diberi tahu sejak halaman dibuka, bukan baru setelah user mengetik.
+    notice: AI_CONFIG.available ? undefined : AI_CONFIG.unavailableReason,
     messages: (data ?? []).map((row) => ({
       id: row.id,
       role: row.role as "user" | "assistant",
@@ -194,20 +76,7 @@ export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: 
 }
 
 /**
- * Map model name based on provider
- */
-function mapModelForProvider(model: string, provider: string): string {
-  const config = PROVIDER_CONFIGS[provider];
-  if (config?.modelMap[model]) {
-    return config.modelMap[model];
-  }
-  // For 9router or custom providers, use model as-is
-  return model;
-}
-
-/**
- * Panggil AI API (OpenAI-compatible) dengan dukungan tool calling.
- * Mendukung 9Router lokal, OpenAI, Groq, Together, dan provider lainnya.
+ * Panggil penyedia AI (OpenAI-compatible API) dengan dukungan tool calling.
  */
 async function callAIWithTools(
   agent: AIAgent,
@@ -217,14 +86,13 @@ async function callAIWithTools(
 ): Promise<{ content: string; toolCalls?: ToolCall[] }> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...AI_CONFIG.extraHeaders,
   };
   if (AI_CONFIG.apiKey) {
     headers["Authorization"] = `Bearer ${AI_CONFIG.apiKey}`;
   }
 
-  // Map model name for the provider
-  const model = mapModelForProvider(agent.model, AI_CONFIG.provider);
-
+  const model = modelForAgent(AI_CONFIG, agent.model);
   const body: Record<string, unknown> = {
     model,
     messages,
@@ -247,25 +115,31 @@ async function callAIWithTools(
       signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
   } catch (err) {
-    console.error(`[AI/${AI_CONFIG.provider}] fetch gagal:`, err);
+    console.error(`[ai] fetch ke ${AI_CONFIG.provider} gagal:`, err);
     if ((err as { name?: string } | null)?.name === "TimeoutError") {
       throw new Error("Asisten AI tidak merespons, coba lagi sebentar lagi.");
     }
-    throw new Error("Tidak dapat terhubung ke layanan AI. Pastikan konfigurasi sudah benar.");
+    throw new Error(
+      AI_CONFIG.provider === "9router"
+        ? "AI tidak tersedia. Pastikan 9Router berjalan di localhost:20128, atau isi AI_API_URL/AI_API_KEY ke penyedia AI online."
+        : "Layanan AI tidak bisa dihubungi. Coba lagi sebentar lagi."
+    );
   }
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error(`[AI/${AI_CONFIG.provider}] API error:`, response.status, errText);
+    // Detail mentah hanya ke log server -- pesan ke user dibuat jelas tanpa
+    // membocorkan respons penyedia.
+    console.error(`[ai] ${AI_CONFIG.provider} API error:`, response.status, errText.slice(0, 500));
 
-    if (response.status === 401) {
-      throw new Error(`API key tidak valid untuk ${AI_CONFIG.provider}. Cek AI_API_KEY di environment variables.`);
+    if (response.status === 401 || response.status === 403) {
+      throw new Error("API key AI tidak valid atau tidak punya akses. Admin perlu memeriksa AI_API_KEY.");
     }
-    if (response.status === 429) throw new Error("Rate limit tercapai, coba lagi nanti");
-    if (response.status === 404) {
-      throw new Error(`Model tidak ditemukan. Pastikan AI_API_URL dan model sudah benar.`);
-    }
-    throw new Error(`Error ${response.status}: ${errText.slice(0, 200)}`);
+    if (response.status === 402) throw new Error("Kredit/saldo penyedia AI habis. Admin perlu mengisi ulang.");
+    if (response.status === 404) throw new Error(`Model AI "${model}" tidak dikenal penyedia. Admin perlu memeriksa AI_MODEL.`);
+    if (response.status === 429) throw new Error("Batas pemakaian AI tercapai, coba lagi beberapa saat lagi.");
+    if (response.status >= 500) throw new Error("Layanan AI sedang bermasalah, coba lagi sebentar lagi.");
+    throw new Error("Permintaan ke AI ditolak. Coba ulangi dengan pesan yang lebih singkat.");
   }
 
   // Parse response - handle SSE format yang mungkin append "data: [DONE]"
@@ -282,8 +156,8 @@ async function callAIWithTools(
   try {
     data = JSON.parse(responseText);
   } catch {
-    console.error(`[AI/${AI_CONFIG.provider}] respons bukan JSON:`, responseText.slice(0, 500));
-    throw new Error("Respons AI tidak dapat dibaca. Coba lagi atau hubungi admin.");
+    console.error("[ai] respons penyedia bukan JSON:", responseText.slice(0, 500));
+    throw new Error("Respons Asisten AI tidak bisa dibaca, coba lagi.");
   }
   const choice = data.choices?.[0];
 
@@ -301,11 +175,8 @@ export async function sendAIMessage(
    * dikompres di klien (maks 1024px, lihat utils/image.ts). */
   imageBase64?: string
 ): Promise<{ message: AIMessage; error?: string } | { message?: undefined; error: string }> {
-  // Check if AI is available
   if (!AI_CONFIG.available) {
-    return {
-      error: AI_CONFIG.error || "Fitur AI belum dikonfigurasi. Hubungi admin."
-    };
+    return { error: AI_CONFIG.unavailableReason ?? "Asisten AI belum dikonfigurasi." };
   }
 
   const supabase = await createClient();

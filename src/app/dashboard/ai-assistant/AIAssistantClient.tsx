@@ -11,10 +11,12 @@ export function AIAssistantClient({
   initialMessages,
   userName,
   initialAgentId,
+  initialNotice,
 }: {
   initialMessages: AIMessage[];
   userName: string;
   initialAgentId?: string;
+  initialNotice?: string;
 }) {
   const {
     messages,
@@ -33,7 +35,7 @@ export function AIAssistantClient({
     inputRef,
     endRef,
     fileInputRef,
-  } = useAIChat({ initialMessages, initialAgentId });
+  } = useAIChat({ initialMessages, initialAgentId, initialNotice });
 
   // Auto scroll
   useEffect(() => {

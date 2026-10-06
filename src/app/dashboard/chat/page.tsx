@@ -57,7 +57,7 @@ export default async function ChatPage({
             Obrolan Tim
           </h1>
           <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
-            Ketik <span className="font-semibold text-zinc-700 dark:text-zinc-300">@username</span> untuk menandai
+            Ketik <span className="font-semibold text-zinc-700 dark:text-zinc-300">@nama panggilan</span> untuk menandai
             rekan kerja — otomatis mengirim notifikasi ke orang yang ditandai.
           </p>
         </div>

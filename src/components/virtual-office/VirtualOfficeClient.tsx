@@ -138,7 +138,9 @@ export function VirtualOfficeClient({
     });
 
     channel.on("presence", { event: "sync" }, () => {
-      const ids = Object.keys(channel.presenceState());
+      // Kunci presence dipilih klien sendiri, jadi hanya id yang ada di roster
+      // yang dihitung -- kunci karangan tidak menggelembungkan jumlah "online".
+      const ids = Object.keys(channel.presenceState()).filter((id) => rosterById.has(id));
       setOnlineIds(ids);
       for (const id of Array.from(remoteRef.current.keys())) {
         if (!ids.includes(id)) remoteRef.current.delete(id);
@@ -160,7 +162,7 @@ export function VirtualOfficeClient({
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [currentUser.id]);
+  }, [currentUser.id, rosterById]);
 
   // Keyboard controls
   useEffect(() => {

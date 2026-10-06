@@ -156,3 +156,42 @@ production (±1.250 objek), ke dua arah:
   mengklaim (Modal Pemilik). Form kini menampilkan penjelasan tiap status.
   Diuji di database hasil rebuild: Transfer BCA → Bank Operasional,
   Cash → Kas Kecil, Tidak Perlu → Modal Pemilik.
+
+## QC Lanjutan (sweep seluruh modul) — 5–6 Oktober 2026
+
+Sweep 9 area (Magnarent, Magnativ, Production, Event, Keuangan & investor,
+halaman publik & login, admin & fitur bersama, Kantor Virtual, lapisan
+keamanan database). Setiap temuan dicek ulang dengan membaca kode
+pemanggilnya sebelum diperbaiki.
+
+**Keamanan (sudah diterapkan ke production)**
+- KRITIS: signup publik Supabase masih aktif, dan akun tanpa divisi jatuh ke
+  "production" (baca/tulis data Production). Diblokir di database (0094,
+  trigger deferred saat COMMIT supaya akun buatan admin tetap jalan).
+- KRITIS: 8 tabel Production + bucket gambar kerja bisa dibaca/diubah tanpa
+  login (fallback divisi yang sama). Tertutup oleh 0094, diverifikasi.
+- Daftar file di 15 bucket Storage bisa dibuat siapa pun tanpa login
+  (0095). URL publik untuk tampilan tetap jalan.
+- Upgrade Next.js 16.3.8 (kerentanan kritis), open redirect setelah login,
+  helper jurnal invoice yang terekspos sebagai Server Action.
+
+**Bug & integritas data**: tombol Selesai/Batalkan booking, DP basi yang
+mengecilkan piutang, stok material tertimpa data lama, hapus event/proyek/
+klien yang meninggalkan data yatim, riwayat fase checklist yang hilang,
+jurnal invoice yang tidak ditunggu & salah periode, tanggal UTC vs WIB di
+banyak tempat, upload foto >1MB yang selalu gagal, data yang terpotong di
+1000 baris, pesan chat yang terlewat, input harga kelipatan Rp1.000, dll.
+
+**Kualitas**: 81 unit test + CI (lint, test, rebuild semua migrasi dari
+database kosong), index 29 foreign key & 10 policy RLS lebih efisien (0092).
+
+**Menunggu keputusan Owner** (lihat `supabase/pending/README.md`): migrasi
+RLS 0096 (ditolak saat diterapkan), 0097 (hapus akun staf), 0098 (log
+aktivitas & event_links). Juga: matikan "Allow new users to sign up" di
+Supabase, aktifkan Leaked Password Protection, ganti template email reset
+password ke `token_hash` (reset gagal kalau dibuka di perangkat lain), isi
+`AI_API_URL`, jalankan 0087. Belum dikerjakan karena perlu keputusan atau
+perubahan fungsi database: kolom nominal `integer` (maks Rp2,1 miliar),
+tanggal WIB di fungsi DB (jurnal pengajuan modal, terima PO, nomor invoice),
+subrent menambah kapasitas, check-in tanpa dedupe, angka contoh (mock) di
+Kantor Virtual, persetujuan fase checklist yang hanya dijaga di server action.

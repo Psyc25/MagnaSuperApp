@@ -12,6 +12,7 @@ import { cn } from "@/lib/cn";
 import { addProjectPhoto, deleteProjectPhoto } from "@/lib/production/extras-actions";
 import { DOCUMENTATION_TAHAP, type DocumentationTahap, type ProjectPhoto } from "@/lib/production/extras-types";
 import { GLASS_BORDER, GLASS_INPUT, GLASS_SURFACE } from "@/lib/glass";
+import { prepareUploadFiles } from "@/lib/shared/image";
 
 const GRADIENT = "linear-gradient(135deg, #F59E0B 0%, #EF4444 100%)";
 const ALL_PROJECTS_FILTER = "Semua Proyek";
@@ -93,13 +94,19 @@ export function DocumentationGallery({ photos }: { photos: ProjectPhoto[] }) {
       return;
     }
 
+    setSubmitting(true);
+    const prepared = await prepareUploadFiles([file]);
+    if (!prepared.ok) {
+      setSubmitting(false);
+      setError(prepared.error);
+      return;
+    }
     const formData = new FormData();
     formData.set("projectId", addProjectId);
     formData.set("tahap", addTahap);
     formData.set("caption", addCaption.trim());
-    formData.set("photo", file);
+    formData.set("photo", prepared.files[0]);
 
-    setSubmitting(true);
     const result = await addProjectPhoto(formData);
     setSubmitting(false);
 

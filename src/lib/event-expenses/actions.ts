@@ -13,6 +13,7 @@ import type {
   ExpenseSourceType,
   ReimbursementStatus,
 } from "./types";
+import { exceedsDbAmount, MAX_DB_AMOUNT_MESSAGE } from "@/lib/shared/utils";
 
 const MODULE_PATH = "/dashboard/realisasi-event";
 const GENERIC_ERROR = "Terjadi kesalahan, coba lagi.";
@@ -54,6 +55,7 @@ function validateExpenseInput(input: AddEventExpenseInput): string | null {
   if (!input.picName?.trim()) return "PIC yang mengeluarkan dana wajib diisi.";
   if (!input.paymentMethod?.trim()) return "Metode pembayaran wajib diisi.";
   if (!Number.isFinite(input.amount) || input.amount <= 0) return "Nominal harus lebih dari 0.";
+  if (exceedsDbAmount(input.amount)) return MAX_DB_AMOUNT_MESSAGE;
   if (input.sourceType !== "umum" && !input.sourceId) {
     return 'Pilih event/proyek terkait, atau pilih "Finance/Umum" kalau tidak terikat event.';
   }
@@ -67,9 +69,15 @@ export async function addEventExpense(
   if (validationError) return { ok: false, error: validationError };
 
   const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   const { data, error } = await supabase
     .from("event_expenses")
     .insert({
+      // Siapa yang MEMASUKKAN data (beda dari pic_name = siapa yang
+      // membayar); ikut disalin ke jurnal otomatis oleh post_event_expense_journal.
+      created_by: user?.id ?? null,
       expense_date: input.expenseDate,
       division: input.division,
       source_type: input.sourceType,
@@ -329,6 +337,8 @@ export async function loadMoreEventExpenses(
     .from("event_expenses")
     .select("*")
     .order("expense_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .range(offset, offset + LOAD_MORE_BATCH - 1)
     .returns<EventExpenseRow[]>();
 

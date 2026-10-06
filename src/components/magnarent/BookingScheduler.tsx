@@ -4,11 +4,13 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import {
   AlertTriangle,
   BadgeCheck,
+  Ban,
   Calendar,
   Check,
   ClipboardCheck,
   FileSignature,
   Pencil,
+  PackageCheck,
   PackageSearch,
   Plus,
   Search,
@@ -121,6 +123,7 @@ export function BookingScheduler() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Booking | null>(null);
+  const [statusTarget, setStatusTarget] = useState<{ booking: Booking; status: "Selesai" | "Dibatalkan" } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>(ALL_FILTER);
   // Tahap 28a: checklist kondisi alat + jaminan — dibuka lewat tombol baru di baris.
@@ -299,10 +302,19 @@ export function BookingScheduler() {
       showToast(result.error, "error");
       return;
     }
-    showToast(
-      status === "Dikonfirmasi" ? `Pesanan "${b.namaKlien}" dikonfirmasi.` : `Pesanan "${b.namaKlien}" dibatalkan.`,
-      status === "Dikonfirmasi" ? "success" : "error"
-    );
+    const message: Record<BookingStatus, string> = {
+      Menunggu: `Pesanan "${b.namaKlien}" menunggu konfirmasi.`,
+      Dikonfirmasi: `Pesanan "${b.namaKlien}" dikonfirmasi.`,
+      Selesai: `Pesanan "${b.namaKlien}" ditandai selesai -- unit kembali tersedia.`,
+      Dibatalkan: `Pesanan "${b.namaKlien}" dibatalkan -- unit kembali tersedia.`,
+    };
+    showToast(message[status], status === "Dibatalkan" ? "error" : "success");
+  }
+
+  async function confirmStatusChange() {
+    if (!statusTarget) return;
+    await handleQuickStatus(statusTarget.booking, statusTarget.status);
+    setStatusTarget(null);
   }
 
   return (
@@ -456,6 +468,28 @@ export function BookingScheduler() {
                             className="rounded-full p-1.5 text-emerald-600 transition-colors hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10"
                           >
                             <Check className="h-4 w-4" />
+                          </button>
+                        )}
+                        {b.status === "Dikonfirmasi" && (
+                          <button
+                            type="button"
+                            onClick={() => setStatusTarget({ booking: b, status: "Selesai" })}
+                            title="Tandai selesai (alat sudah kembali)"
+                            aria-label="Tandai selesai"
+                            className="rounded-full p-1.5 text-emerald-600 transition-colors hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10"
+                          >
+                            <PackageCheck className="h-4 w-4" />
+                          </button>
+                        )}
+                        {(b.status === "Menunggu" || b.status === "Dikonfirmasi") && (
+                          <button
+                            type="button"
+                            onClick={() => setStatusTarget({ booking: b, status: "Dibatalkan" })}
+                            title="Batalkan pesanan"
+                            aria-label="Batalkan pesanan"
+                            className="rounded-full p-1.5 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+                          >
+                            <Ban className="h-4 w-4" />
                           </button>
                         )}
                         <button
@@ -782,6 +816,27 @@ export function BookingScheduler() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        open={statusTarget !== null}
+        onClose={() => setStatusTarget(null)}
+        onConfirm={confirmStatusChange}
+        title={statusTarget?.status === "Selesai" ? "Tandai Pesanan Selesai" : "Batalkan Pesanan"}
+        confirmLabel={statusTarget?.status === "Selesai" ? "Tandai Selesai" : "Batalkan Pesanan"}
+        cancelLabel="Kembali"
+        confirmVariant={statusTarget?.status === "Selesai" ? "primary" : "danger"}
+        description={
+          statusTarget && (
+            <>
+              {statusTarget.status === "Selesai" ? "Tandai selesai" : "Batalkan"} pesanan{" "}
+              <strong>{statusTarget.booking.namaKlien}</strong> untuk <strong>{itemName(statusTarget.booking.itemId)}</strong> (
+              {formatDateID(statusTarget.booking.tanggalMulai)} s/d {formatDateID(statusTarget.booking.tanggalSelesai)})? Unit
+              alat kembali tersedia untuk tanggal tersebut. Status ini final -- pesanan tidak bisa dibuka lagi, buat pesanan baru
+              kalau diperlukan.
+            </>
+          )
+        }
+      />
 
       <ConfirmDialog
         open={deleteTarget !== null}

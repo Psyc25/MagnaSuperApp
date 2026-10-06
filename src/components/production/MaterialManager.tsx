@@ -142,7 +142,9 @@ export function MaterialManager() {
     };
 
     setSubmitting(true);
-    const result = editingId ? await updateMaterial(editingId, payload) : await addMaterial(payload);
+    // Stok saat form dibuka -- server menolak kalau stok sudah berubah sejak itu.
+    const loadedStock = editingId ? materials.find((m) => m.id === editingId)?.stock : undefined;
+    const result = editingId ? await updateMaterial(editingId, payload, loadedStock) : await addMaterial(payload);
     setSubmitting(false);
 
     if (!result.ok) {
@@ -441,7 +443,7 @@ export function MaterialManager() {
               id="material-price-per-unit"
               type="number"
               min={0}
-              step={1000}
+              step={1}
               value={form.pricePerUnit}
               onChange={(e) => setForm((f) => ({ ...f, pricePerUnit: e.target.value }))}
               className="w-full rounded-xl border border-black/10 bg-transparent px-3.5 py-2.5 text-sm text-zinc-900 outline-none ring-amber-500/40 focus:ring-2 dark:border-white/10 dark:text-white"

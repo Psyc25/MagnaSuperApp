@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { NICKNAME_RULE, isValidNickname, normalizeNickname } from "@/lib/shared/nickname";
 import type { LanguagePreference, ThemePreference } from "@/lib/supabase/types";
 
 const GENERIC_ERROR = "Terjadi kesalahan, coba lagi.";
@@ -13,7 +15,7 @@ export type ProfileUpdateResult = { ok: true; avatarUrl: string | null } | { ok:
 /**
  * Tahap 27 — halaman Pengaturan. Semua fungsi di sini SENGAJA cuma
  * menyentuh kolom non-privileged (full_name, avatar, tema, bahasa) —
- * division/role/username sekarang dijaga trigger
+ * kecuali `updateNickname` di bawah. division/role/username dijaga trigger
  * `protect_privileged_profile_columns` (migrasi 0023) di level database,
  * jadi bukan cuma "tidak ditawarkan di form ini", tapi memang tidak bisa
  * lewat jalur mana pun selain admin.
@@ -135,4 +137,60 @@ export async function updateLanguagePreference(language: LanguagePreference): Pr
 
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+export type NicknameUpdateResult = { ok: true; nickname: string } | { ok: false; error: string };
+
+/**
+ * Ganti nama panggilan SENDIRI (dipakai untuk @tag di Chat). Kolomnya
+ * `profiles.username`, yang dijaga trigger protect_privileged_profile_columns
+ * dari update langsung oleh pemilik akun -- dulu karena username dipakai
+ * login. Sekarang login lewat email, jadi pemilik akun boleh menggantinya;
+ * update dijalankan lewat service role, dan server sendiri yang memastikan
+ * baris yang diubah HANYA milik pemanggil (id dari sesi, bukan dari form).
+ */
+export async function updateNickname(input: string): Promise<NicknameUpdateResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sesi sudah berakhir, silakan masuk ulang." };
+
+  const nickname = normalizeNickname(input);
+  if (!isValidNickname(nickname)) return { ok: false, error: NICKNAME_RULE };
+
+  const admin = createAdminClient();
+  const { data: taken } = await admin
+    .from("profiles")
+    .select("id")
+    .eq("username", nickname)
+    .neq("id", user.id)
+    .maybeSingle();
+  if (taken) return { ok: false, error: `Nama panggilan "@${nickname}" sudah dipakai orang lain.` };
+
+  // app_metadata DULUAN: trigger on_auth_user_created jalan AFTER INSERT OR
+  // UPDATE di auth.users (migrasi 0089) dan menyalin app_metadata.username ke
+  // profiles setiap kali baris auth berubah -- termasuk setiap login. Kalau
+  // cuma profiles yang diubah, nama panggilan balik ke nilai lama saat login
+  // berikutnya. Update ini sendiri juga memicu trigger itu, jadi profiles
+  // ikut terisi; update profiles di bawah hanya untuk memastikan.
+  const { data: fresh } = await admin.auth.admin.getUserById(user.id);
+  const { error: metaError } = await admin.auth.admin.updateUserById(user.id, {
+    app_metadata: { ...(fresh?.user?.app_metadata ?? user.app_metadata ?? {}), username: nickname },
+  });
+  if (metaError) {
+    const duplicate = /duplicate|unique/i.test(metaError.message);
+    if (duplicate) return { ok: false, error: `Nama panggilan "@${nickname}" sudah dipakai orang lain.` };
+    console.error("[settings] updateNickname (app_metadata) gagal:", metaError.message);
+    return { ok: false, error: GENERIC_ERROR };
+  }
+
+  const { error } = await admin.from("profiles").update({ username: nickname }).eq("id", user.id);
+  if (error) {
+    console.error("[settings] updateNickname (profiles) gagal:", error.message);
+    return { ok: false, error: GENERIC_ERROR };
+  }
+
+  revalidatePath("/", "layout");
+  return { ok: true, nickname };
 }

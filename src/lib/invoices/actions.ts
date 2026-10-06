@@ -6,8 +6,9 @@ import { logActivity } from "@/lib/activity/log";
 import { invoiceItemToRow, rowToInvoice, type InvoiceRow } from "./mappers";
 import { renderInvoicePdf } from "./pdf";
 import { triggerInvoiceWhatsAppWebhook } from "./whatsapp";
-import { postInvoiceLunasJournal, deleteInvoiceJournal } from "@/lib/accounting/actions";
+import { postInvoiceLunasJournal, deleteInvoiceJournal } from "@/lib/accounting/invoice-journal";
 import type { Invoice, InvoiceDivision, InvoiceSourceType, InvoiceStatus } from "./types";
+import { exceedsDbAmount, MAX_DB_AMOUNT_MESSAGE, todayISO } from "@/lib/shared/utils";
 
 const MODULE_PATH = "/dashboard/admin/faktur";
 const GENERIC_ERROR = "Terjadi kesalahan, coba lagi.";
@@ -63,17 +64,24 @@ export type InvoiceFormInput = {
  * baris item-nya sendiri. `qtyLabel`/`unitLabel`/`note` cuma presentasi,
  * diteruskan apa adanya tanpa masuk hitungan.
  */
-function buildItemRows(items: InvoiceItemInput[]): { rows: ReturnType<typeof invoiceItemToRow>[]; subtotal: number } | null {
-  if (!Array.isArray(items) || items.length === 0) return null;
+type BuiltItems = { rows: ReturnType<typeof invoiceItemToRow>[]; subtotal: number };
+
+function buildItemRows(items: InvoiceItemInput[]): BuiltItems | { error: string } {
+  const EMPTY_ERROR = "Minimal satu baris item dengan deskripsi, qty, dan harga yang valid.";
+  if (!Array.isArray(items) || items.length === 0) return { error: EMPTY_ERROR };
 
   const rows: ReturnType<typeof invoiceItemToRow>[] = [];
   let subtotal = 0;
-  for (const item of items) {
+  for (const [index, item] of items.entries()) {
     const description = item.description?.trim();
     const qty = Number(item.qty);
     const unitPrice = Number(item.unitPrice);
+    // Baris yang benar-benar kosong (belum diisi) dilewati. Baris yang
+    // terisi sebagian DITOLAK -- dulu ikut dilewati diam-diam, jadi total
+    // invoice yang tersimpan & terkirim ke klien lebih kecil dari pratinjau.
+    if (!description && !(Number(item.unitPrice) > 0)) continue;
     if (!description || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
-      continue;
+      return { error: `Baris item #${index + 1}: deskripsi, qty lebih dari 0, dan harga (0 atau lebih) wajib diisi.` };
     }
     const itemSubtotal = Math.round(qty * unitPrice);
     subtotal += itemSubtotal;
@@ -90,7 +98,7 @@ function buildItemRows(items: InvoiceItemInput[]): { rows: ReturnType<typeof inv
     );
   }
 
-  if (rows.length === 0) return null;
+  if (rows.length === 0) return { error: EMPTY_ERROR };
   return { rows, subtotal };
 }
 
@@ -117,7 +125,7 @@ export async function createInvoice(input: InvoiceFormInput): Promise<CreateResu
   if (validationError) return { ok: false, error: validationError };
 
   const built = buildItemRows(input.items);
-  if (!built) return { ok: false, error: "Minimal satu baris item dengan deskripsi, qty, dan harga yang valid." };
+  if ("error" in built) return { ok: false, error: built.error };
 
   const shippingCost = sanitizeMoneyInput(input.shippingCost);
   const depositAmount = sanitizeMoneyInput(input.depositAmount);
@@ -125,6 +133,7 @@ export async function createInvoice(input: InvoiceFormInput): Promise<CreateResu
   // depositAmount SENGAJA tidak ditambahkan ke sini — lihat komentar
   // sanitizeMoneyInput di atas.
   const total = built.subtotal + shippingCost;
+  if (exceedsDbAmount(total, depositAmount)) return { ok: false, error: MAX_DB_AMOUNT_MESSAGE };
 
   const supabase = await createClient();
   const {
@@ -159,7 +168,9 @@ export async function createInvoice(input: InvoiceFormInput): Promise<CreateResu
       bank_account_number: input.bankAccountNumber?.trim() || null,
       payment_note: input.paymentNote?.trim() || null,
       terms_conditions: input.termsConditions?.trim() || null,
-      issued_date: input.issuedDate || undefined,
+      // Tanggal WIB dari server -- default kolom (current_date) memakai jam UTC
+      // database, jadi invoice 00:00-06:59 WIB dulu bertanggal kemarin.
+      issued_date: input.issuedDate || todayISO(),
       due_date: input.dueDate || null,
       catatan: input.catatan?.trim() || null,
       created_by: user?.id ?? null,
@@ -182,11 +193,12 @@ export async function updateInvoice(id: string, input: InvoiceFormInput): Promis
   if (validationError) return { ok: false, error: validationError };
 
   const built = buildItemRows(input.items);
-  if (!built) return { ok: false, error: "Minimal satu baris item dengan deskripsi, qty, dan harga yang valid." };
+  if ("error" in built) return { ok: false, error: built.error };
 
   const shippingCost = sanitizeMoneyInput(input.shippingCost);
   const depositAmount = sanitizeMoneyInput(input.depositAmount);
   const total = built.subtotal + shippingCost;
+  if (exceedsDbAmount(total, depositAmount)) return { ok: false, error: MAX_DB_AMOUNT_MESSAGE };
 
   const supabase = await createClient();
   const { data: updated, error } = await supabase
@@ -232,7 +244,9 @@ export async function updateInvoice(id: string, input: InvoiceFormInput): Promis
   // Laba-Rugi/Neraca nanti masih pakai angka lama. Lihat komentar di
   // postInvoiceLunasJournal (src/lib/accounting/actions.ts).
   if (updated.status === "Lunas") {
-    void postInvoiceLunasJournal({
+    // Di-await: di serverless, posting yang tidak ditunggu bisa terputus
+    // setelah respons dikirim -> pendapatan hilang/terduplikasi.
+    await postInvoiceLunasJournal({
       id,
       invoiceNumber: updated.invoice_number,
       division: updated.division,
@@ -265,7 +279,7 @@ export async function deleteInvoice(id: string): Promise<MutationResult> {
   if (invoiceRow?.pdf_storage_path) {
     await supabase.storage.from(PDF_BUCKET).remove([invoiceRow.pdf_storage_path]);
   }
-  void deleteInvoiceJournal(id);
+  await deleteInvoiceJournal(id);
   revalidatePath(MODULE_PATH);
   void logActivity({ module: "admin", action: "delete", entityType: "invoice", entityLabel: invoiceRow?.invoice_number });
   return { ok: true };
@@ -292,7 +306,9 @@ export async function markInvoiceStatus(id: string, status: InvoiceStatus): Prom
   // jurnal yang sudah terlanjur ada, supaya tidak ada pendapatan tercatat
   // untuk invoice yang sebenarnya belum/tidak jadi lunas.
   if (status === "Lunas") {
-    void postInvoiceLunasJournal({
+    // Di-await: di serverless, posting yang tidak ditunggu bisa terputus
+    // setelah respons dikirim -> pendapatan hilang/terduplikasi.
+    await postInvoiceLunasJournal({
       id,
       invoiceNumber: invoiceRow.invoice_number,
       division: invoiceRow.division,
@@ -302,7 +318,7 @@ export async function markInvoiceStatus(id: string, status: InvoiceStatus): Prom
       createdBy: invoiceRow.created_by,
     });
   } else {
-    void deleteInvoiceJournal(id);
+    await deleteInvoiceJournal(id);
   }
 
   revalidatePath(MODULE_PATH);

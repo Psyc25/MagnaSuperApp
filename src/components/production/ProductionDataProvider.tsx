@@ -15,7 +15,7 @@ type ProductionDataContextValue = {
   purchaseOrders: PurchaseOrder[];
 
   addMaterial: (input: Omit<MaterialItem, "id">) => Promise<MutationResult>;
-  updateMaterial: (id: string, input: Omit<MaterialItem, "id">) => Promise<MutationResult>;
+  updateMaterial: (id: string, input: Omit<MaterialItem, "id">, expectedStock?: number) => Promise<MutationResult>;
   deleteMaterial: (id: string) => Promise<MutationResult>;
   getActiveProjectsForMaterial: (materialId: string) => BoothProject[];
   getAvailableStockFor: (materialId: string, excludeProjectId?: string) => number;
@@ -23,7 +23,7 @@ type ProductionDataContextValue = {
   addProject: (input: NewBoothProjectInput) => Promise<SaveBoothProjectResult>;
   updateProject: (id: string, input: NewBoothProjectInput) => Promise<SaveBoothProjectResult>;
   deleteProject: (id: string) => Promise<MutationResult>;
-  updateProjectStatus: (id: string, status: BoothStatus) => Promise<MutationResult>;
+  updateProjectStatus: (id: string, status: BoothStatus, fromStatus?: BoothStatus) => Promise<MutationResult>;
 
   addPurchaseOrder: (input: Omit<PurchaseOrder, "id" | "status" | "receivedDate">) => Promise<MutationResult>;
   receivePurchaseOrder: (id: string) => Promise<MutationResult>;
@@ -57,7 +57,8 @@ export function ProductionDataProvider({
 }) {
   const addMaterial = useCallback((input: Omit<MaterialItem, "id">) => actions.addMaterial(input), []);
   const updateMaterial = useCallback(
-    (id: string, input: Omit<MaterialItem, "id">) => actions.updateMaterial(id, input),
+    (id: string, input: Omit<MaterialItem, "id">, expectedStock?: number) =>
+      actions.updateMaterial(id, input, expectedStock),
     []
   );
   const deleteMaterial = useCallback((id: string) => actions.deleteMaterial(id), []);
@@ -69,7 +70,7 @@ export function ProductionDataProvider({
   );
   const deleteProject = useCallback((id: string) => actions.deleteProject(id), []);
   const updateProjectStatus = useCallback(
-    (id: string, status: BoothStatus) => actions.updateProjectStatus(id, status),
+    (id: string, status: BoothStatus, fromStatus?: BoothStatus) => actions.updateProjectStatus(id, status, fromStatus),
     []
   );
 

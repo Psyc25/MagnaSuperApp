@@ -21,6 +21,7 @@ import {
   type CheckStage,
   type DepositJenis,
 } from "@/lib/magnarent/extras-types";
+import { prepareUploadFiles } from "@/lib/shared/image";
 import { useSyncedState } from "@/lib/shared/use-synced-state";
 
 const STAGE_LABEL: Record<CheckStage, string> = { keluar: "Saat Keluar", kembali: "Saat Kembali" };
@@ -42,12 +43,15 @@ function CheckStagePanel({
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSave() {
-    const formData = new FormData();
-    const files = fileInputRef.current?.files;
-    if (files) {
-      for (const file of Array.from(files)) formData.append("photos", file);
-    }
     setSubmitting(true);
+    const prepared = await prepareUploadFiles(Array.from(fileInputRef.current?.files ?? []));
+    if (!prepared.ok) {
+      setSubmitting(false);
+      showToast(prepared.error, "error");
+      return;
+    }
+    const formData = new FormData();
+    for (const file of prepared.files) formData.append("photos", file);
     const result = await saveBookingCheck(bookingId, stage, catatan, formData);
     setSubmitting(false);
     if (!result.ok) {
