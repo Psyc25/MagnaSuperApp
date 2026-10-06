@@ -1,7 +1,9 @@
 /**
  * Konfigurasi AI Agents untuk MagnaSuperApp.
  * 5 specialized agents, masing-masing dengan keahlian berbeda.
- * Menggunakan 9Router lokal — GRATIS!
+ * Penyedia AI diatur lewat env (lihat src/lib/ai/config.ts): 9Router lokal saat
+ * development, penyedia OpenAI-compatible (mis. OpenRouter) di production.
+ * `model` di bawah = nama model 9Router; di penyedia lain diganti AI_MODEL.
  */
 
 export type AIAgent = {

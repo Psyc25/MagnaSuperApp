@@ -13,6 +13,8 @@ export type UseAIChatOptions = {
   initialMessages?: AIMessage[];
   /** Initial agent ID */
   initialAgentId?: string;
+  /** Peringatan awal dari server (mis. AI belum dikonfigurasi). */
+  initialNotice?: string;
 };
 
 export type UseAIChatReturn = {
@@ -43,7 +45,7 @@ export type UseAIChatReturn = {
 };
 
 export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
-  const { loadOnMount = false, initialMessages = [], initialAgentId } = options;
+  const { loadOnMount = false, initialMessages = [], initialAgentId, initialNotice } = options;
 
   // Agent state
   const [selectedAgent, setSelectedAgent] = useState<AIAgent>(
@@ -55,7 +57,7 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialNotice ?? null);
   const [loaded, setLoaded] = useState(initialMessages.length > 0);
 
   // Image state
@@ -83,11 +85,13 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
     if (loaded) return;
     setLoading(true);
     try {
-      const { messages: m, error: e } = await getAIMessages();
+      const { messages: m, error: e, notice } = await getAIMessages();
       if (e) {
         setError(e);
       } else {
         setMessages(m);
+        // AI belum dikonfigurasi: riwayat tetap tampil, peringatan langsung terlihat.
+        if (notice) setError(notice);
       }
     } catch {
       setError("Gagal memuat riwayat");
@@ -105,10 +109,13 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
     if (!loadOnMount || loaded) return;
     let cancelled = false;
     getAIMessages()
-      .then(({ messages: m, error: e }) => {
+      .then(({ messages: m, error: e, notice }) => {
         if (cancelled) return;
         if (e) setError(e);
-        else setMessages(m);
+        else {
+          setMessages(m);
+          if (notice) setError(notice);
+        }
       })
       .catch(() => {
         if (!cancelled) setError("Gagal memuat riwayat");

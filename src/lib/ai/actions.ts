@@ -7,6 +7,7 @@ import { buildOperationalPrompt, buildSystemPrompt, buildUserContext } from "./s
 import { getToolsForAgent, getToolsForUser } from "./tools";
 import { executeToolCall } from "./tool-handlers";
 import { classifyReply } from "./reply-classifier";
+import { modelForAgent, resolveAIConfig } from "./config";
 import type { AIAttachment, ImageContent, MessageContent, PendingAction, TextContent, ToolCall, ToolDefinition } from "./types";
 
 export type AIMessage = {
@@ -27,9 +28,10 @@ type ChatMessage = {
   tool_call_id?: string;
 };
 
-// 9Router lokal (OpenAI-compatible) — GRATIS, tanpa token eksternal.
-const NINEROUTER_URL = process.env.AI_API_URL || "http://localhost:20128/v1";
-const NINEROUTER_KEY = process.env.AI_API_KEY || "";
+// Penyedia AI OpenAI-compatible dari env (AI_API_URL/AI_API_KEY/AI_MODEL) --
+// 9Router lokal saat development, penyedia cloud (mis. OpenRouter) di
+// production. Lihat src/lib/ai/config.ts.
+const AI_CONFIG = resolveAIConfig(process.env);
 /** Batas putaran tool per pesan — cukup untuk "cari ID dulu, lalu aksi"
  * tanpa membiarkan model berputar terus memakan kuota. */
 const MAX_TOOL_ROUNDS = 4;
@@ -37,12 +39,8 @@ const AI_TIMEOUT_MS = 45_000;
 /** Suhu rendah untuk tool calling — jawaban data harus konsisten, bukan kreatif. */
 const TOOL_TEMPERATURE = 0.3;
 
-// Check if AI is available (localhost won't work in production)
-const isLocalhost = NINEROUTER_URL.includes("localhost") || NINEROUTER_URL.includes("127.0.0.1");
-const isProduction = process.env.NODE_ENV === "production";
-const AI_AVAILABLE = !isProduction || !isLocalhost;
 
-export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: string }> {
+export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: string; notice?: string }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -65,6 +63,8 @@ export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: 
   }
 
   return {
+    // Diberi tahu sejak halaman dibuka, bukan baru setelah user mengetik.
+    notice: AI_CONFIG.available ? undefined : AI_CONFIG.unavailableReason,
     messages: (data ?? []).map((row) => ({
       id: row.id,
       role: row.role as "user" | "assistant",
@@ -76,7 +76,7 @@ export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: 
 }
 
 /**
- * Panggil 9Router lokal (OpenAI-compatible API) dengan dukungan tool calling.
+ * Panggil penyedia AI (OpenAI-compatible API) dengan dukungan tool calling.
  */
 async function callAIWithTools(
   agent: AIAgent,
@@ -86,13 +86,15 @@ async function callAIWithTools(
 ): Promise<{ content: string; toolCalls?: ToolCall[] }> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...AI_CONFIG.extraHeaders,
   };
-  if (NINEROUTER_KEY) {
-    headers["Authorization"] = `Bearer ${NINEROUTER_KEY}`;
+  if (AI_CONFIG.apiKey) {
+    headers["Authorization"] = `Bearer ${AI_CONFIG.apiKey}`;
   }
 
+  const model = modelForAgent(AI_CONFIG, agent.model);
   const body: Record<string, unknown> = {
-    model: agent.model,
+    model,
     messages,
     temperature: tools.length > 0 ? TOOL_TEMPERATURE : agent.temperature,
     max_tokens: agent.maxTokens,
@@ -106,27 +108,38 @@ async function callAIWithTools(
 
   let response: Response;
   try {
-    response = await fetch(`${NINEROUTER_URL}/chat/completions`, {
+    response = await fetch(`${AI_CONFIG.baseUrl}/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
   } catch (err) {
-    console.error("9Router fetch gagal:", err);
+    console.error(`[ai] fetch ke ${AI_CONFIG.provider} gagal:`, err);
     if ((err as { name?: string } | null)?.name === "TimeoutError") {
       throw new Error("Asisten AI tidak merespons, coba lagi sebentar lagi.");
     }
-    throw new Error("AI tidak tersedia. Pastikan 9Router berjalan di localhost:20128 atau gunakan AI API alternatif.");
+    throw new Error(
+      AI_CONFIG.provider === "9router"
+        ? "AI tidak tersedia. Pastikan 9Router berjalan di localhost:20128, atau isi AI_API_URL/AI_API_KEY ke penyedia AI online."
+        : "Layanan AI tidak bisa dihubungi. Coba lagi sebentar lagi."
+    );
   }
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error("9Router API error:", response.status, errText);
+    // Detail mentah hanya ke log server -- pesan ke user dibuat jelas tanpa
+    // membocorkan respons penyedia.
+    console.error(`[ai] ${AI_CONFIG.provider} API error:`, response.status, errText.slice(0, 500));
 
-    if (response.status === 401) throw new Error("API key tidak valid. Cek AI_API_KEY di .env.local");
-    if (response.status === 429) throw new Error("Rate limit tercapai, coba lagi nanti");
-    throw new Error(`Error ${response.status}: ${errText.slice(0, 200)}`);
+    if (response.status === 401 || response.status === 403) {
+      throw new Error("API key AI tidak valid atau tidak punya akses. Admin perlu memeriksa AI_API_KEY.");
+    }
+    if (response.status === 402) throw new Error("Kredit/saldo penyedia AI habis. Admin perlu mengisi ulang.");
+    if (response.status === 404) throw new Error(`Model AI "${model}" tidak dikenal penyedia. Admin perlu memeriksa AI_MODEL.`);
+    if (response.status === 429) throw new Error("Batas pemakaian AI tercapai, coba lagi beberapa saat lagi.");
+    if (response.status >= 500) throw new Error("Layanan AI sedang bermasalah, coba lagi sebentar lagi.");
+    throw new Error("Permintaan ke AI ditolak. Coba ulangi dengan pesan yang lebih singkat.");
   }
 
   // Parse response - handle SSE format yang mungkin append "data: [DONE]"
@@ -143,7 +156,7 @@ async function callAIWithTools(
   try {
     data = JSON.parse(responseText);
   } catch {
-    console.error("9Router respons bukan JSON:", responseText.slice(0, 500));
+    console.error("[ai] respons penyedia bukan JSON:", responseText.slice(0, 500));
     throw new Error("Respons Asisten AI tidak bisa dibaca, coba lagi.");
   }
   const choice = data.choices?.[0];
@@ -162,11 +175,8 @@ export async function sendAIMessage(
    * dikompres di klien (maks 1024px, lihat utils/image.ts). */
   imageBase64?: string
 ): Promise<{ message: AIMessage; error?: string } | { message?: undefined; error: string }> {
-  // Check if AI is available
-  if (!AI_AVAILABLE) {
-    return {
-      error: "AI tidak tersedia di production. Untuk menggunakan AI, jalankan aplikasi di local dengan 9Router, atau konfigurasi AI_API_URL di environment variables."
-    };
+  if (!AI_CONFIG.available) {
+    return { error: AI_CONFIG.unavailableReason ?? "Asisten AI belum dikonfigurasi." };
   }
 
   const supabase = await createClient();
