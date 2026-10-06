@@ -9,6 +9,7 @@ import { rowToInvoice, type InvoiceRow } from "@/lib/invoices/mappers";
 import type { InvoiceSourceOption } from "@/lib/invoices/types";
 import { InvoiceManager } from "@/components/invoices/InvoiceManager";
 import { ToastProvider } from "@/components/ui/ToastProvider";
+import { fetchAllPages, PAGE_SIZE } from "@/lib/shared/paginate";
 
 /**
  * Faktur/Invoice terpusat — HANYA akses penuh, pola sama seperti "Katalog
@@ -24,20 +25,36 @@ export default async function FakturPage() {
   }
 
   const supabase = await createClient();
-  const [invoicesRes, bookingsRes, inventoryRes, projectsRes, boothRes, clientsRes] = await Promise.all([
-    supabase.from("invoices").select("*").order("created_at", { ascending: false }).limit(200).returns<InvoiceRow[]>(),
-    supabase.from("magnarent_bookings").select("*").returns<BookingRow[]>(),
+  // Invoice: SEMUA yang belum Lunas (piutang -- harus selalu bisa ditemukan,
+  // ditandai Lunas, dan dikirim ulang) + 300 invoice Lunas terbaru. Dulu
+  // hanya 200 invoice terbaru, jadi piutang lama hilang dari halaman ini
+  // padahal pengingat jatuh tempo terus menautkan ke sini. Tabel sumber
+  // (pilihan "dari booking/proyek") juga diambil per halaman (batas 1000).
+  const [openInvoicesRes, paidInvoicesRes, bookingsRes, inventoryRes, projectsRes, boothRes, clientsRes] = await Promise.all([
+    fetchAllPages<InvoiceRow>((afterId) =>
+      supabase.from("invoices").select("*").neq("status", "Lunas").gt("id", afterId).order("id").limit(PAGE_SIZE).returns<InvoiceRow[]>()
+    ),
+    supabase.from("invoices").select("*").eq("status", "Lunas").order("created_at", { ascending: false }).limit(300).returns<InvoiceRow[]>(),
+    fetchAllPages<BookingRow>((afterId) =>
+      supabase.from("magnarent_bookings").select("*").gt("id", afterId).order("id").limit(PAGE_SIZE).returns<BookingRow[]>()
+    ),
     supabase.from("magnarent_inventory").select("*").returns<InventoryRow[]>(),
-    supabase.from("magnative_projects").select("*").returns<ProjectRow[]>(),
-    supabase.from("production_booth_projects").select("*").returns<BoothProjectRow[]>(),
+    fetchAllPages<ProjectRow>((afterId) =>
+      supabase.from("magnative_projects").select("*").gt("id", afterId).order("id").limit(PAGE_SIZE).returns<ProjectRow[]>()
+    ),
+    fetchAllPages<BoothProjectRow>((afterId) =>
+      supabase.from("production_booth_projects").select("*").gt("id", afterId).order("id").limit(PAGE_SIZE).returns<BoothProjectRow[]>()
+    ),
     supabase.from("magnative_clients").select("*").returns<ClientRow[]>(),
   ]);
 
-  const invoices = (invoicesRes.data ?? []).map(rowToInvoice);
-  const bookings = (bookingsRes.data ?? []).map(rowToBooking);
+  const invoices = [...openInvoicesRes.data, ...(paidInvoicesRes.data ?? [])]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .map(rowToInvoice);
+  const bookings = bookingsRes.data.map(rowToBooking);
   const inventory = (inventoryRes.data ?? []).map(rowToInventory);
-  const projects = (projectsRes.data ?? []).map(rowToProject);
-  const boothProjects = (boothRes.data ?? []).map(rowToBoothProject);
+  const projects = projectsRes.data.map(rowToProject);
+  const boothProjects = boothRes.data.map(rowToBoothProject);
   const clients = (clientsRes.data ?? []).map(rowToClient);
 
   const sourceOptions: InvoiceSourceOption[] = [

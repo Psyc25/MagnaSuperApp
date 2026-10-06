@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { fetchInChunks, PAGE_SIZE } from "@/lib/shared/paginate";
 import {
   computeChecklistItemProgress,
   type ChecklistPhase,
@@ -175,15 +176,24 @@ async function attachChecklistProgress(
 ): Promise<EventSummary[]> {
   if (events.length === 0) return events;
   const ids = events.map((e) => e.id);
-  const { data, error } = await supabase
-    .from("event_checklist_items")
-    .select("id, event_id, status, needs_production, current_phase")
-    .in("event_id", ids);
+  // Per halaman & per potongan id: total item checklist semua event mudah
+  // melewati batas 1000 baris PostgREST (template ~90 item/event), dan dulu
+  // event terbaru yang progresnya hilang/salah.
+  type ProgressRow = { id: string; event_id: string; status: string; needs_production: boolean; current_phase: ChecklistPhase };
+  const { data: rows, error } = await fetchInChunks<ProgressRow>(ids, (chunk, afterId) =>
+    supabase
+      .from("event_checklist_items")
+      .select("id, event_id, status, needs_production, current_phase")
+      .in("event_id", chunk)
+      .gt("id", afterId)
+      .order("id")
+      .limit(PAGE_SIZE)
+      .returns<ProgressRow[]>()
+  );
   if (error) {
     console.error("[events] attachChecklistProgress gagal:", error.message);
     return events;
   }
-  const rows = data ?? [];
 
   // Progres granular (Tahap 51) butuh sub-status Design/Mockup/Sample tiap
   // item yang masih di salah satu dari 3 fase itu -- satu query tambahan,
@@ -237,16 +247,22 @@ async function fetchPhaseReviewsByItem(
 ): Promise<Map<string, ChecklistPhaseReview[]>> {
   const map = new Map<string, ChecklistPhaseReview[]>();
   if (itemIds.length === 0) return map;
-  const { data, error } = await supabase
-    .from("event_checklist_phase_reviews")
-    .select("id, checklist_item_id, phase, sub_status, revision_count, photo_url, submitted_by, approved_by, approved_at, updated_at")
-    .in("checklist_item_id", itemIds)
-    .returns<PhaseReviewRow[]>();
+  // Dipotong per 150 id (URL .in() punya batas panjang) & per halaman.
+  const { data, error } = await fetchInChunks<PhaseReviewRow>(itemIds, (chunk, afterId) =>
+    supabase
+      .from("event_checklist_phase_reviews")
+      .select("id, checklist_item_id, phase, sub_status, revision_count, photo_url, submitted_by, approved_by, approved_at, updated_at")
+      .in("checklist_item_id", chunk)
+      .gt("id", afterId)
+      .order("id")
+      .limit(PAGE_SIZE)
+      .returns<PhaseReviewRow[]>()
+  );
   if (error) {
     console.error("[events] fetchPhaseReviewsByItem gagal:", error.message);
     return map;
   }
-  for (const row of data ?? []) {
+  for (const row of data) {
     const bucket = map.get(row.checklist_item_id) ?? [];
     bucket.push({
       id: row.id,

@@ -337,6 +337,8 @@ export async function loadMoreEventExpenses(
     .from("event_expenses")
     .select("*")
     .order("expense_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .range(offset, offset + LOAD_MORE_BATCH - 1)
     .returns<EventExpenseRow[]>();
 

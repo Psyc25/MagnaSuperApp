@@ -9,6 +9,7 @@ import {
   type EventExpenseRow,
 } from "./mappers";
 import type { EventExpense, ExpenseSourceOption } from "./types";
+import { fetchAllPages, fetchInChunks, PAGE_SIZE } from "@/lib/shared/paginate";
 
 /** Baris ringkas dari `public.events` (modul Tracking Progress Event,
  * migrasi 0053) — cuma kolom yang dipakai untuk membangun opsi "Event/
@@ -43,17 +44,29 @@ export async function getEventExpensesPageData(): Promise<{
   hasMore: boolean;
 }> {
   const supabase = await createClient();
-  const [expensesRes, proofsRes, bookingsRes, projectsRes, boothRes, eventsRes] = await Promise.all([
+  const [expensesRes, bookingsRes, projectsRes, boothRes, eventsRes] = await Promise.all([
     supabase
       .from("event_expenses")
       .select("*")
+      // Urutan deterministik (tanggal sama -> created_at -> id) supaya
+      // "Muat Lebih Banyak" tidak mengulang/melewatkan baris di batas 500.
       .order("expense_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(500)
       .returns<EventExpenseRow[]>(),
-    supabase.from("event_expense_proofs").select("*").returns<EventExpenseProofRow[]>(),
-    supabase.from("magnarent_bookings").select("*").returns<BookingRow[]>(),
-    supabase.from("magnative_projects").select("*").returns<ProjectRow[]>(),
-    supabase.from("production_booth_projects").select("*").returns<BoothProjectRow[]>(),
+    // Sumber (pilihan form + label tabel) diambil per halaman: dulu dibatasi
+    // 1000 baris sehingga booking/proyek terbaru tidak bisa dipilih dan
+    // pengeluaran yang terkait tampil "—".
+    fetchAllPages<BookingRow>((afterId) =>
+      supabase.from("magnarent_bookings").select("*").gt("id", afterId).order("id").limit(PAGE_SIZE).returns<BookingRow[]>()
+    ),
+    fetchAllPages<ProjectRow>((afterId) =>
+      supabase.from("magnative_projects").select("*").gt("id", afterId).order("id").limit(PAGE_SIZE).returns<ProjectRow[]>()
+    ),
+    fetchAllPages<BoothProjectRow>((afterId) =>
+      supabase.from("production_booth_projects").select("*").gt("id", afterId).order("id").limit(PAGE_SIZE).returns<BoothProjectRow[]>()
+    ),
     // Tambahan migrasi 0082 — event umum lintas-divisi (modul Tracking
     // Progress Event, migrasi 0053) ikut jadi opsi "Event/Proyek Terkait"
     // supaya pengeluaran seperti bon/nota untuk event ini bisa dikaitkan
@@ -61,8 +74,17 @@ export async function getEventExpensesPageData(): Promise<{
     supabase.from("events").select("id, name, client_name, status").returns<EventRow[]>(),
   ]);
 
+  // Bukti hanya untuk pengeluaran yang dimuat, per potongan id -- dulu SEMUA
+  // bukti diambil tanpa urutan dan terpotong di 1000 baris, sehingga bukti
+  // pengeluaran terbaru tampil "Belum diunggah".
+  const expenseIds = (expensesRes.data ?? []).map((r) => r.id);
+  const proofsRes = await fetchInChunks<EventExpenseProofRow>(expenseIds, (chunk, afterId) =>
+    supabase.from("event_expense_proofs").select("*").in("expense_id", chunk).gt("id", afterId).order("id").limit(PAGE_SIZE).returns<EventExpenseProofRow[]>()
+  );
+  if (proofsRes.error) console.error("[event-expenses] gagal memuat bukti:", proofsRes.error.message);
+
   const proofsByExpense = new Map<string, EventExpenseProofRow[]>();
-  for (const proof of proofsRes.data ?? []) {
+  for (const proof of proofsRes.data) {
     const list = proofsByExpense.get(proof.expense_id) ?? [];
     list.push(proof);
     proofsByExpense.set(proof.expense_id, list);
@@ -77,9 +99,9 @@ export async function getEventExpensesPageData(): Promise<{
     )
   );
 
-  const bookings = (bookingsRes.data ?? []).map(rowToBooking);
-  const projects = (projectsRes.data ?? []).map(rowToProject);
-  const boothProjects = (boothRes.data ?? []).map(rowToBoothProject);
+  const bookings = bookingsRes.data.map(rowToBooking);
+  const projects = projectsRes.data.map(rowToProject);
+  const boothProjects = boothRes.data.map(rowToBoothProject);
   const events = eventsRes.data ?? [];
 
   // Sumber yang "Dibatalkan" SENGAJA tetap disertakan (ditandai
