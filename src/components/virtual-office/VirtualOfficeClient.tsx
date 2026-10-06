@@ -13,6 +13,8 @@ import {
   MapPin,
   MessageSquare,
   Palette,
+  Send,
+  Smile,
   Users,
   Zap,
 } from "lucide-react";
@@ -43,6 +45,7 @@ import {
   type RoomId,
 } from "@/lib/virtual-office/house";
 import { getAgentById, type AIAgent } from "@/lib/ai/agents";
+import { EMOTE_DURATION_MS, QUICK_EMOTES } from "@/lib/virtual-office/presence";
 import { HouseScene, toScene } from "./HouseScene";
 import { AgentNPC, DeskAvatar, PlayerAvatar, RemoteAvatar, SleeperAvatar, type Dir, type RemotePos } from "./Avatars";
 import { CharacterEditor } from "./CharacterEditor";
@@ -93,7 +96,8 @@ export function VirtualOfficeClient({
     [roster]
   );
 
-  const { onlineIds, presenceMeta, remoteRef, broadcastMove, updatePresence } = useVirtualOfficePresence();
+  const { onlineIds, presenceMeta, remoteRef, remoteEmoteRef, broadcastMove, broadcastEmote, updatePresence } =
+    useVirtualOfficePresence();
 
   const posRef = useRef<Pos>({ ...SPAWN });
   const dirRef = useRef<Dir>("up");
@@ -106,6 +110,10 @@ export function VirtualOfficeClient({
   const [nearby, setNearby] = useState<OfficeRosterEntry | null>(null);
   const [nearbyAgent, setNearbyAgent] = useState<AIAgent | null>(null);
   const [nearOwnerDoor, setNearOwnerDoor] = useState(false);
+  const [myEmote, setMyEmote] = useState<string | null>(null);
+  const [emotePickerOpen, setEmotePickerOpen] = useState(false);
+  const [emoteDraft, setEmoteDraft] = useState("");
+  const myEmoteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Begitu halaman Kantor Virtual dibuka, tandai presence sendiri
   // "inOffice: true" (avatar ikut berjalan live di peta semua orang) --
@@ -149,6 +157,30 @@ export function VirtualOfficeClient({
   const pressVirtual = useCallback((key: string, down: boolean) => {
     if (down) keysRef.current.add(key);
     else keysRef.current.delete(key);
+  }, []);
+
+  // Emote/chat bubble ephemeral: tampil di avatar sendiri secara instan
+  // (tidak nunggu round-trip broadcast) + dikirim ke semua orang lain lewat
+  // channel presence yang sama supaya muncul di avatarnya juga. Bukan chat
+  // history -- hilang sendiri setelah EMOTE_DURATION_MS.
+  const sendEmote = useCallback(
+    (content: string) => {
+      const trimmed = content.trim();
+      if (!trimmed) return;
+      if (myEmoteTimeoutRef.current) clearTimeout(myEmoteTimeoutRef.current);
+      setMyEmote(trimmed);
+      broadcastEmote(trimmed);
+      myEmoteTimeoutRef.current = setTimeout(() => setMyEmote(null), EMOTE_DURATION_MS);
+      setEmotePickerOpen(false);
+      setEmoteDraft("");
+    },
+    [broadcastEmote]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (myEmoteTimeoutRef.current) clearTimeout(myEmoteTimeoutRef.current);
+    };
   }, []);
 
   const handleSaved = useCallback(
@@ -230,12 +262,27 @@ export function VirtualOfficeClient({
 
           <HouseScene ownerDoorOpen={isOwner} />
 
-          <PlayerAvatar posRef={posRef} dirRef={dirRef} look={look} label={`${firstName(currentUser.fullName)} (Kamu)`} />
+          <PlayerAvatar
+            posRef={posRef}
+            dirRef={dirRef}
+            look={look}
+            label={`${firstName(currentUser.fullName)} (Kamu)`}
+            emote={myEmote}
+          />
 
           {othersInOffice.map((id) => {
             const entry = rosterById.get(id);
             if (!entry) return null;
-            return <RemoteAvatar key={id} id={id} remoteRef={remoteRef} look={lookFor(entry)} label={firstName(entry.fullName)} />;
+            return (
+              <RemoteAvatar
+                key={id}
+                id={id}
+                remoteRef={remoteRef}
+                remoteEmoteRef={remoteEmoteRef}
+                look={lookFor(entry)}
+                label={firstName(entry.fullName)}
+              />
+            );
           })}
 
           {othersElsewhere.map((id) => {
@@ -270,6 +317,55 @@ export function VirtualOfficeClient({
             setNearOwnerDoor={setNearOwnerDoor}
           />
         </Canvas>
+
+        <div className="absolute left-3 bottom-3 flex flex-col items-start gap-2">
+          {emotePickerOpen && (
+            <div className="flex flex-col gap-2 rounded-xl border border-white/10 bg-slate-900/95 p-2.5 shadow-xl">
+              <div className="flex gap-1.5">
+                {QUICK_EMOTES.map((e) => (
+                  <button
+                    key={e}
+                    type="button"
+                    onClick={() => sendEmote(e)}
+                    className="grid h-9 w-9 place-items-center rounded-lg bg-slate-800 text-lg transition-colors hover:bg-slate-700"
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
+              <form
+                onSubmit={(ev) => {
+                  ev.preventDefault();
+                  sendEmote(emoteDraft);
+                }}
+                className="flex items-center gap-1.5"
+              >
+                <input
+                  value={emoteDraft}
+                  onChange={(ev) => setEmoteDraft(ev.target.value.slice(0, 40))}
+                  placeholder="Tulis sesuatu..."
+                  maxLength={40}
+                  className="w-36 rounded-lg border border-white/10 bg-slate-800 px-2.5 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                />
+                <button
+                  type="submit"
+                  aria-label="Kirim"
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-600 text-white hover:bg-violet-500"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                </button>
+              </form>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setEmotePickerOpen((v) => !v)}
+            aria-label="Emote"
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-slate-800/90 text-white/80 shadow-lg transition-colors hover:bg-slate-700"
+          >
+            <Smile className="h-5 w-5" />
+          </button>
+        </div>
 
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex flex-wrap justify-center gap-2 px-3">
           {nearbyAgent && (

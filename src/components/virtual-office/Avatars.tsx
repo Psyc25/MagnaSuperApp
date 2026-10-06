@@ -1,12 +1,13 @@
 "use client";
 
-import { Suspense, forwardRef, useRef } from "react";
+import { Suspense, forwardRef, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Billboard, Text } from "@react-three/drei";
 import * as THREE from "three";
 import type { AIAgent } from "@/lib/ai/agents";
 import type { AvatarLook } from "@/lib/virtual-office/avatar-look";
 import { SPAWN, type Dir, type Pos, type RemotePos } from "@/lib/virtual-office/house";
+import { EMOTE_DURATION_MS } from "@/lib/virtual-office/presence";
 import { toScene } from "./HouseScene";
 
 // Re-export supaya kode lama yang mengimpor Dir/RemotePos dari "./Avatars"
@@ -118,11 +119,13 @@ function Accessory({ look }: { look: AvatarLook }) {
   return null;
 }
 
-/** Karakter chibi. `sleeping`: rebah telentang (dipakai di Kamar Staff). */
+/** Karakter chibi. `sleeping`: rebah telentang (dipakai di Kamar Staff).
+ * `emote`: teks/emoji ephemeral yang numpang tampil di atas kepala (lihat
+ * presence.ts EMOTE_DURATION_MS) -- null/undefined = tidak ada bubble. */
 export const ChibiAvatar = forwardRef<
   THREE.Group,
-  { look: AvatarLook; label: string; isSelf?: boolean; sleeping?: boolean }
->(function ChibiAvatar({ look, label, isSelf = false, sleeping = false }, ref) {
+  { look: AvatarLook; label: string; isSelf?: boolean; sleeping?: boolean; emote?: string | null }
+>(function ChibiAvatar({ look, label, isSelf = false, sleeping = false, emote = null }, ref) {
   return (
     <group ref={ref}>
       <group rotation={sleeping ? [-Math.PI / 2, 0, 0] : [0, 0, 0]} position={sleeping ? [0, 6, 20] : [0, 0, 0]}>
@@ -198,6 +201,20 @@ export const ChibiAvatar = forwardRef<
         </Text>
         </Suspense>
       </Billboard>
+
+      {emote && !sleeping && (
+        <Billboard position={[0, 80, 0]}>
+          <Suspense fallback={null}>
+            <mesh>
+              <planeGeometry args={[Math.min(emote.length * 6 + 10, 90), 16]} />
+              <meshBasicMaterial color="#1e293b" transparent opacity={0.85} />
+            </mesh>
+            <Text fontSize={10} color="#ffffff" anchorX="center" anchorY="middle" maxWidth={80}>
+              {emote}
+            </Text>
+          </Suspense>
+        </Billboard>
+      )}
     </group>
   );
 });
@@ -207,11 +224,13 @@ export function PlayerAvatar({
   dirRef,
   look,
   label,
+  emote,
 }: {
   posRef: { current: Pos };
   dirRef: { current: Dir };
   look: AvatarLook;
   label: string;
+  emote?: string | null;
 }) {
   const groupRef = useRef<THREE.Group | null>(null);
   const lastRef = useRef<Pos | null>(null);
@@ -229,22 +248,26 @@ export function PlayerAvatar({
     g.rotation.y = dirToRadians(dirRef.current);
   });
 
-  return <ChibiAvatar ref={groupRef} look={look} label={label} isSelf />;
+  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} isSelf />;
 }
 
 export function RemoteAvatar({
   id,
   remoteRef,
+  remoteEmoteRef,
   look,
   label,
 }: {
   id: string;
   remoteRef: { current: Map<string, RemotePos> };
+  remoteEmoteRef?: { current: Map<string, { content: string; at: number }> };
   look: AvatarLook;
   label: string;
 }) {
   const groupRef = useRef<THREE.Group | null>(null);
   const targetRef = useRef(new THREE.Vector3());
+  const lastEmoteAtRef = useRef(0);
+  const [emote, setEmote] = useState<string | null>(null);
 
   useFrame(() => {
     const g = groupRef.current;
@@ -255,9 +278,19 @@ export function RemoteAvatar({
     if (g.position.distanceTo(targetRef.current.set(x, y, z)) > 300) g.position.copy(targetRef.current);
     else g.position.lerp(targetRef.current, 0.15);
     if (rp) g.rotation.y = dirToRadians(rp.dir);
+
+    // Bubble emote cuma update state (re-render) saat berubah/kadaluarsa --
+    // bukan tiap frame -- sama seperti pola lastXRef di GameLoop.
+    const e = remoteEmoteRef?.current.get(id);
+    if (e && e.at !== lastEmoteAtRef.current && Date.now() - e.at < EMOTE_DURATION_MS) {
+      lastEmoteAtRef.current = e.at;
+      setEmote(e.content);
+    } else if (emote && (!e || Date.now() - e.at >= EMOTE_DURATION_MS)) {
+      setEmote(null);
+    }
   });
 
-  return <ChibiAvatar ref={groupRef} look={look} label={label} />;
+  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} />;
 }
 
 /** Orang yang sedang "online" (membuka MagnaSuperApp) tapi TIDAK sedang di

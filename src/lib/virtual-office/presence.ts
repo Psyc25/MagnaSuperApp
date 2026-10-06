@@ -47,3 +47,12 @@ export type ResolvedPresence = {
   inOffice: boolean;
   status: PresenceStatus | null;
 };
+
+/** Emote/chat bubble ephemeral di atas avatar -- broadcast "emote" terpisah
+ * dari presence.track() (bukan status permanen, cuma numpang lewat beberapa
+ * detik), jadi tidak ikut tersimpan/replay saat orang baru join channel. */
+export const EMOTE_DURATION_MS = 4000;
+
+export type EmotePayload = { id: string; content: string };
+
+export const QUICK_EMOTES = ["👍", "😂", "❤️", "😮", "👋", "✅"] as const;
