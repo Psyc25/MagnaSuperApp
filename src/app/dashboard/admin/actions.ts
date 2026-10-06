@@ -153,7 +153,23 @@ export async function deleteStaffAccount(formData: FormData) {
   const { error } = await admin.auth.admin.deleteUser(userId);
   if (error) {
     console.error("[admin] deleteStaffAccount gagal:", error.message);
-    redirect(`/dashboard/admin/pengguna?error=${encodeURIComponent(GENERIC_ERROR)}`);
+    // Hapus permanen bisa ditolak foreign key (staf yang pernah mengisi
+    // checklist event / membuat link portal). Dulu admin cuma dapat "coba
+    // lagi" dan staf yang sudah keluar TETAP bisa login. Sebagai gantinya
+    // akun dinonaktifkan (ban) -- tidak bisa login/refresh sesi lagi, tapi
+    // riwayat yang mengacu ke akun ini tetap utuh.
+    const { error: banError } = await admin.auth.admin.updateUserById(userId, { ban_duration: "876000h" });
+    if (banError) {
+      console.error("[admin] deleteStaffAccount: nonaktifkan juga gagal:", banError.message);
+      redirect(`/dashboard/admin/pengguna?error=${encodeURIComponent(GENERIC_ERROR)}`);
+    }
+    revalidatePath("/dashboard/admin/pengguna");
+    void logActivity({ module: "admin", action: "update", entityType: "staf", entityLabel: staffName, detail: "dinonaktifkan" });
+    redirect(
+      `/dashboard/admin/pengguna?notice=${encodeURIComponent(
+        "Akun tidak bisa dihapus permanen karena masih tercatat di riwayat (mis. checklist event atau link portal klien), jadi akun DINONAKTIFKAN: tidak bisa login lagi."
+      )}`
+    );
   }
 
   revalidatePath("/dashboard/admin/pengguna");
