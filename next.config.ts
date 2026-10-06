@@ -7,6 +7,11 @@ import type { NextConfig } from "next";
  * (400 Bad Request) memuat gambar dari domain yang tidak dikenal.
  */
 const nextConfig: NextConfig = {
+  // Hasil "Konten" di pencarian global (fungsi DB global_search, migrasi
+  // 0036) menautkan ke /dashboard/magnative/konten yang tidak pernah ada.
+  async redirects() {
+    return [{ source: "/dashboard/magnative/konten", destination: "/dashboard/magnative/sosial-media", permanent: false }];
+  },
   experimental: {
     serverActions: {
       // Default 1MB membuat hampir semua foto kamera HP gagal diunggah lewat

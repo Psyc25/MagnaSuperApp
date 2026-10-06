@@ -839,7 +839,7 @@ export function ProductManager({ products }: { products: Product[] }) {
                 id="product-price"
                 type="number"
                 min={0}
-                step={1000}
+                step={1}
                 value={form.price}
                 onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
                 className="w-full rounded-xl border border-black/10 bg-transparent px-3.5 py-2.5 text-sm text-zinc-900 outline-none ring-teal-500/40 focus:ring-2 dark:border-white/10 dark:text-white"

@@ -18,9 +18,9 @@ export type MagnarentSummary = { bookingAktif: number; bookingBulanIni: number }
 
 export async function getMagnarentSummary(): Promise<MagnarentSummary> {
   const supabase = await createClient();
-  const startOfMonth = new Date();
-  startOfMonth.setDate(1);
-  startOfMonth.setHours(0, 0, 0, 0);
+  // Awal bulan menurut WIB (server Vercel berjalan di UTC -- dulu 7 jam
+  // pertama bulan baru masih menghitung seluruh bulan lalu).
+  const startOfMonth = `${todayISO().slice(0, 7)}-01T00:00:00+07:00`;
 
   const [aktif, bulanIni] = await Promise.all([
     supabase
@@ -30,7 +30,7 @@ export async function getMagnarentSummary(): Promise<MagnarentSummary> {
     supabase
       .from("magnarent_bookings")
       .select("id", { count: "exact", head: true })
-      .gte("created_at", startOfMonth.toISOString()),
+      .gte("created_at", startOfMonth),
   ]);
 
   return {

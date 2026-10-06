@@ -488,7 +488,7 @@ function CrewPiecePaymentPanel({ crewId, crewName }: { crewId: string; crewName:
             id={`piece-rate-${crewId}`}
             type="number"
             min={0}
-            step={1000}
+            step={1}
             value={form.ratePerUnit}
             onChange={(e) => setForm((f) => ({ ...f, ratePerUnit: e.target.value }))}
             className="w-28 rounded-lg border border-black/10 bg-transparent px-2 py-1.5 text-xs text-zinc-900 outline-none ring-amber-500/40 focus:ring-2 dark:border-white/10 dark:text-white"
@@ -712,7 +712,7 @@ function SubcontractPanel({ projectId }: { projectId: string }) {
               id="sub-biaya"
               type="number"
               min={0}
-              step={1000}
+              step={1}
               value={form.biayaJasa}
               onChange={(e) => setForm((f) => ({ ...f, biayaJasa: e.target.value }))}
               placeholder="0"

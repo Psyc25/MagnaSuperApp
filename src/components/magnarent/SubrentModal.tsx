@@ -177,7 +177,7 @@ export function SubrentModal({
             <input
               type="number"
               min={0}
-              step={1000}
+              step={1}
               value={form.hargaSewaTotal}
               onChange={(e) => setForm((f) => ({ ...f, hargaSewaTotal: e.target.value }))}
               placeholder="Kosongkan kalau belum diketahui"

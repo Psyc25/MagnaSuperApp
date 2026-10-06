@@ -233,7 +233,7 @@ export function ProjectTaskModal({ project, onClose }: { project: Project; onClo
                 id="task-harga"
                 type="number"
                 min={0}
-                step={1000}
+                step={1}
                 value={form.biayaEstimasi}
                 onChange={(e) => setForm((f) => ({ ...f, biayaEstimasi: e.target.value }))}
                 placeholder="mis. 40000"

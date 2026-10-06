@@ -488,8 +488,11 @@ export function ChatClient({
     setComposerText("");
     removeSelectedFile();
     setReplyTarget(null);
-    cursorRef.current[activeRoom] = latestActivityIso(result.message);
-    setMessagesByRoom((prev) => ({ ...prev, [activeRoom]: [...(prev[activeRoom] ?? []), result.message] }));
+    // Kursor polling SENGAJA tidak dimajukan ke waktu pesan sendiri: pesan
+    // orang lain yang masuk di antara polling terakhir dan kirim ini akan
+    // terlewat selamanya. Poll berikutnya ikut mengembalikan pesan ini dan
+    // mergeMessages membuang duplikatnya (by id).
+    setMessagesByRoom((prev) => ({ ...prev, [activeRoom]: mergeMessages(prev[activeRoom] ?? [], [result.message]) }));
   }
 
   return (
