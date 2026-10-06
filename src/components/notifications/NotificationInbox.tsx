@@ -7,7 +7,7 @@ import { listMyNotifications, markAllNotificationsRead, markNotificationRead } f
 import type { AppNotification } from "@/lib/notifications/types";
 import { useT } from "@/lib/i18n/LocaleProvider";
 import { cn } from "@/lib/cn";
-import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+import { DROPDOWN_SURFACE, GLASS_BORDER } from "@/lib/glass";
 
 const POLL_MS = 45_000;
 
@@ -127,7 +127,7 @@ export function NotificationInbox() {
       </button>
 
       {open && (
-        <div className={cn("animate-fade-in fixed inset-x-4 top-[4.5rem] z-40 overflow-hidden rounded-2xl border shadow-xl shadow-black/10 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:z-auto sm:mt-2 sm:w-96", GLASS_SURFACE, GLASS_BORDER)}>
+        <div className={cn("animate-fade-in fixed inset-x-4 top-[4.5rem] z-50 overflow-hidden rounded-2xl border shadow-xl shadow-black/10 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:z-50 sm:mt-2 sm:w-96", DROPDOWN_SURFACE, GLASS_BORDER)}>
           <div className="flex items-center justify-between border-b border-black/5 px-4 py-3 dark:border-white/10">
             <p className="text-sm font-semibold text-zinc-900 dark:text-white">{t("Notifikasi")}</p>
             {unreadCount > 0 && (
