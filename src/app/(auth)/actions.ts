@@ -4,13 +4,8 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { safeRedirectTarget } from "@/lib/shared/safe-redirect";
 
-function safeRedirectTarget(value: FormDataEntryValue | null): string {
-  const target = typeof value === "string" ? value : "";
-  // Hanya izinkan path relatif internal ("/dashboard/...") — mencegah
-  // open-redirect kalau ada yang mengutak-atik query string redirectTo.
-  return target.startsWith("/") && !target.startsWith("//") ? target : "/dashboard";
-}
 
 /**
  * Login pakai USERNAME, bukan email — email asli tiap staf cuma dipakai
