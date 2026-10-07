@@ -319,6 +319,123 @@ export const QUERY_TOOLS: ToolDefinition[] = [
       parameters: { type: "object", properties: {} },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_maintenance_logs",
+      description: "Ambil riwayat servis/maintenance alat Magnarent. Bisa difilter per alat.",
+      parameters: {
+        type: "object",
+        properties: {
+          itemId: { type: "string", description: "ID alat (dari get_inventory/search_global)" },
+          itemName: { type: "string", description: "Nama alat (partial match) kalau ID belum diketahui" },
+          limit: { type: "number", description: "Jumlah maksimal hasil (default: 20)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_deliveries",
+      description: "Ambil jadwal pengiriman/pengambilan alat Magnarent (sopir, jam, status). Bisa difilter status atau nama klien.",
+      parameters: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["Belum Dijadwalkan", "Dijadwalkan", "Selesai"], description: "Filter status penjadwalan" },
+          clientName: { type: "string", description: "Filter nama klien booking (partial match)" },
+          limit: { type: "number", description: "Jumlah maksimal hasil (default: 20)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_project_tasks",
+      description: "Ambil daftar task/sub-pekerjaan dalam proyek Magnativ (venue, dekorasi, izin, dst). Bisa difilter proyek atau status.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek (dari get_projects)" },
+          projectName: { type: "string", description: "Nama proyek (partial match) kalau ID belum diketahui" },
+          status: { type: "string", enum: ["Belum Mulai", "Berjalan", "Selesai"], description: "Filter status task" },
+          limit: { type: "number", description: "Jumlah maksimal hasil (default: 20)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_content_posts",
+      description: "Ambil kalender konten/jadwal posting sosmed klien Magnativ. Bisa difilter status atau nama klien.",
+      parameters: {
+        type: "object",
+        properties: {
+          status: { type: "string", description: "Filter status post (contoh: Draft, Review, Approved, Posted)" },
+          clientName: { type: "string", description: "Filter nama klien (partial match)" },
+          limit: { type: "number", description: "Jumlah maksimal hasil (default: 20)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_equipment",
+      description: "Ambil daftar alat/perkakas Production (bukan material habis pakai): alat berat, perkakas listrik/manual, beserta kondisinya.",
+      parameters: {
+        type: "object",
+        properties: {
+          category: { type: "string", enum: ["Alat Berat", "Perkakas Listrik", "Perkakas Manual", "Lainnya"], description: "Filter kategori alat" },
+          condition: { type: "string", enum: ["Baik", "Perlu Servis", "Rusak"], description: "Filter kondisi alat" },
+          searchName: { type: "string", description: "Cari berdasarkan nama alat" },
+          limit: { type: "number", description: "Jumlah maksimal hasil (default: 20)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_project_crew",
+      description: "Ambil daftar kru yang ditugaskan ke satu proyek booth Production.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek booth (dari get_projects)" },
+          projectName: { type: "string", description: "Nama proyek (partial match) kalau ID belum diketahui" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_chart_of_accounts",
+      description: "Ambil daftar akun (Chart of Accounts) akuntansi: kode, nama, tipe (Aset/Kewajiban/Modal/Pendapatan/Beban), saldo normal.",
+      parameters: {
+        type: "object",
+        properties: {
+          activeOnly: { type: "boolean", description: "Jika true, hanya akun yang masih aktif" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_journal_entries",
+      description: "Ambil jurnal manual akuntansi terbaru (tanggal, deskripsi, baris debit/kredit per akun). Tidak termasuk jurnal auto-posting dari invoice/pengeluaran.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Jumlah maksimal hasil (default: 20, maks: 100)" },
+        },
+      },
+    },
+  },
 ];
 
 /**
@@ -469,6 +586,127 @@ export const ACTION_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "add_maintenance_log",
+      description: "Catat alat Magnarent masuk servis/maintenance. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          itemId: { type: "string", description: "ID alat (dari get_inventory/search_global)" },
+          itemName: { type: "string", description: "Nama alat (untuk ringkasan konfirmasi)" },
+          tanggal: { type: "string", description: "Tanggal servis (YYYY-MM-DD, default: hari ini)" },
+          jenis: { type: "string", enum: ["Servis Rutin", "Perbaikan", "Lainnya"], description: "Jenis servis" },
+          biaya: { type: "number", description: "Biaya servis (Rupiah)" },
+          keterangan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["itemId", "jenis", "biaya"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "schedule_delivery",
+      description: "Jadwalkan pengiriman (keluar) atau pengambilan (kembali) alat untuk satu booking. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "ID booking (dari get_bookings)" },
+          stage: { type: "string", enum: ["pengiriman", "pengambilan"], description: "Tahap: pengiriman (keluar) atau pengambilan (kembali)" },
+          status: { type: "string", enum: ["Belum Dijadwalkan", "Dijadwalkan", "Selesai"], description: "Status penjadwalan" },
+          driverName: { type: "string", description: "Nama sopir" },
+          jadwalTanggal: { type: "string", description: "Tanggal jadwal (YYYY-MM-DD)" },
+          jadwalJam: { type: "string", description: "Jam jadwal (contoh: 14:00)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["bookingId", "stage", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_project_task",
+      description: "Tambah task/sub-pekerjaan baru ke proyek Magnativ (venue, dekorasi, izin, dst). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek (dari get_projects)" },
+          projectName: { type: "string", description: "Nama proyek (untuk ringkasan konfirmasi)" },
+          title: { type: "string", description: "Judul task" },
+          detail: { type: "string", description: "Detail/deskripsi task" },
+          status: { type: "string", enum: ["Belum Mulai", "Berjalan", "Selesai"], description: "Status awal (default: Belum Mulai)" },
+          dueDate: { type: "string", description: "Tenggat (YYYY-MM-DD)" },
+          biayaEstimasi: { type: "number", description: "Estimasi biaya task (Rupiah)" },
+        },
+        required: ["projectId", "title"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_project_task_status",
+      description: "Ubah status task proyek Magnativ. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          taskId: { type: "string", description: "ID task (dari get_project_tasks)" },
+          status: { type: "string", enum: ["Belum Mulai", "Berjalan", "Selesai"], description: "Status baru" },
+        },
+        required: ["taskId", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "receive_purchase_order",
+      description: "Tandai purchase order Production sebagai Diterima -- stok material terkait otomatis bertambah. HARUS konfirmasi dengan user sebelum menandai.",
+      parameters: {
+        type: "object",
+        properties: {
+          poId: { type: "string", description: "ID purchase order (dari get_purchase_orders)" },
+        },
+        required: ["poId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_production_status",
+      description: "Ubah status proyek booth Production (Desain/Produksi/Finishing/Instalasi). Tidak bisa dipakai untuk proyek yang sudah Selesai/Dibatalkan. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek booth (dari get_projects)" },
+          status: { type: "string", enum: ["Desain", "Produksi", "Finishing", "Instalasi", "Selesai", "Dibatalkan"], description: "Status baru" },
+        },
+        required: ["projectId", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_capital_request",
+      description: "Buat pengajuan modal event baru untuk investor (estimasi billing & modal). HANYA bisa dipakai akun akses penuh. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          eventName: { type: "string", description: "Nama event" },
+          location: { type: "string", description: "Lokasi event" },
+          eventDate: { type: "string", description: "Tanggal event (YYYY-MM-DD)" },
+          billingEstimate: { type: "number", description: "Estimasi total billing (Rupiah)" },
+          modalEstimate: { type: "number", description: "Estimasi modal yang dibutuhkan (Rupiah)" },
+        },
+        required: ["eventName", "location", "billingEstimate", "modalEstimate"],
+      },
+    },
+  },
 ];
 
 /**
@@ -499,6 +737,21 @@ export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
     get_purchase_orders: ctx.canAccessPurchaseOrders,
     get_expenses: ctx.canAccessExpenses,
     get_daily_summary: true,
+    get_maintenance_logs: ctx.canAccessMagnarent,
+    get_deliveries: ctx.canAccessMagnarent,
+    add_maintenance_log: ctx.canAccessMagnarent,
+    schedule_delivery: ctx.canAccessMagnarent,
+    get_project_tasks: ctx.canAccessMagnative,
+    get_content_posts: ctx.canAccessMagnative,
+    add_project_task: ctx.canAccessMagnative,
+    update_project_task_status: ctx.canAccessMagnative,
+    get_equipment: ctx.canAccessProduction,
+    get_project_crew: ctx.canAccessProduction,
+    receive_purchase_order: ctx.canAccessPurchaseOrders,
+    update_production_status: ctx.canAccessProduction,
+    get_chart_of_accounts: ctx.canAccessAccounting,
+    get_journal_entries: ctx.canAccessAccounting,
+    create_capital_request: ctx.canAccessAdmin,
   };
   return AI_TOOLS.filter((t) => allowed[t.function.name]);
 }
@@ -517,10 +770,47 @@ export function isActionTool(toolName: string): boolean {
 export function getToolsForAgent(agentId: string): ToolDefinition[] {
   // Tool mappings per specialty
   const COMMON_TOOLS = ["search_global", "get_daily_summary", "get_events", "get_event_detail"];
-  const MAGNARENT_TOOLS = [...COMMON_TOOLS, "get_bookings", "get_inventory", "check_availability", "create_booking", "update_booking_status"];
-  const MAGNATIVE_TOOLS = [...COMMON_TOOLS, "get_clients", "get_projects"];
-  const PRODUCTION_TOOLS = [...COMMON_TOOLS, "get_materials", "get_projects", "get_purchase_orders"];
-  const FINANCE_TOOLS = [...COMMON_TOOLS, "create_event_expense", "get_invoices", "get_expenses", "get_capital_requests"];
+  const MAGNARENT_TOOLS = [
+    ...COMMON_TOOLS,
+    "get_bookings",
+    "get_inventory",
+    "check_availability",
+    "create_booking",
+    "update_booking_status",
+    "get_maintenance_logs",
+    "get_deliveries",
+    "add_maintenance_log",
+    "schedule_delivery",
+  ];
+  const MAGNATIVE_TOOLS = [
+    ...COMMON_TOOLS,
+    "get_clients",
+    "get_projects",
+    "get_project_tasks",
+    "get_content_posts",
+    "add_project_task",
+    "update_project_task_status",
+  ];
+  const PRODUCTION_TOOLS = [
+    ...COMMON_TOOLS,
+    "get_materials",
+    "get_projects",
+    "get_purchase_orders",
+    "get_equipment",
+    "get_project_crew",
+    "receive_purchase_order",
+    "update_production_status",
+  ];
+  const FINANCE_TOOLS = [
+    ...COMMON_TOOLS,
+    "create_event_expense",
+    "get_invoices",
+    "get_expenses",
+    "get_capital_requests",
+    "get_chart_of_accounts",
+    "get_journal_entries",
+    "create_capital_request",
+  ];
   const EVENT_TOOLS = [...COMMON_TOOLS, "create_event_expense"];
 
   const filterByNames = (names: string[]) =>

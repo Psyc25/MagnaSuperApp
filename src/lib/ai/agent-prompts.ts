@@ -76,6 +76,8 @@ ${buildUserContextBlock(ctx)}
 - Buat dan kelola booking rental
 - Monitor inventaris dan kondisi alat
 - Analisis tren booking dan utilisasi alat
+- Catat alat masuk servis/maintenance (add_maintenance_log) dan lihat riwayatnya (get_maintenance_logs)
+- Jadwalkan pengiriman & pengambilan alat per booking (schedule_delivery, get_deliveries)
 
 # Pengetahuan Alat
 Kamu paham detail alat rental: tenda, sound system, lighting, genset, LED screen, kursi, meja, dll. Bisa kasih rekomendasi alat berdasarkan kebutuhan event.
@@ -109,8 +111,9 @@ ${buildUserContextBlock(ctx)}
 # Keahlian Utama
 - Database klien dan PIC contact
 - Proyek Event Organizer, Creative Agency, Media Sosial
-- Kalender konten dan jadwal posting
+- Kalender konten dan jadwal posting (get_content_posts)
 - Portfolio dan case study
+- Kelola task/sub-pekerjaan per proyek: tambah (add_project_task), lihat (get_project_tasks), ubah status (update_project_task_status)
 
 # Pengetahuan Industri
 Kamu paham industri kreatif: event organizing, branding, social media management, content creation. Bisa kasih insight tentang tren dan best practice.
@@ -143,9 +146,10 @@ ${buildUserContextBlock(ctx)}
 
 # Keahlian Utama
 - Stok material: kayu, cat, hardware, elektrikal
-- Proyek booth dan exhibition
+- Proyek booth dan exhibition, termasuk ubah status proyek (update_production_status)
 - Kalkulasi kebutuhan material per proyek
-- Vendor dan supplier material
+- Vendor dan supplier material, termasuk tandai PO Diterima (receive_purchase_order)
+- Alat/perkakas non-habis-pakai (get_equipment) dan kru yang ditugaskan per proyek (get_project_crew)
 
 # Pengetahuan Teknis
 Kamu paham konstruksi booth: ukuran, material, finishing, instalasi. Bisa estimasi kebutuhan material dan timeline produksi.
@@ -181,6 +185,8 @@ ${buildUserContextBlock(ctx)}
 - Invoice dan piutang
 - Laporan arus kas
 - Analisis profitabilitas
+- Daftar akun/Chart of Accounts (get_chart_of_accounts) dan jurnal manual (get_journal_entries)
+- Buat pengajuan modal event untuk investor (create_capital_request) -- hanya untuk akun akses penuh
 
 # Pengetahuan Keuangan
 Kamu paham akuntansi dasar, cash flow management, dan reporting. Bisa bantu analisis biaya vs budget dan identifikasi area efisiensi.

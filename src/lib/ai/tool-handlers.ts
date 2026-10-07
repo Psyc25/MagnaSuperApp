@@ -21,6 +21,15 @@ import { getAvailableUnitsInRange } from "@/lib/magnarent/availability";
 import { rowToBooking, rowToInventory, type BookingRow, type InventoryRow } from "@/lib/magnarent/mappers";
 import type { BookingStatus, PaymentStatus } from "@/lib/magnarent/types";
 import { BOOKING_TRANSITIONS } from "@/lib/magnarent/booking-status";
+import { addMaintenanceLog, saveDelivery } from "@/lib/magnarent/extras-actions";
+import { MAINTENANCE_JENIS, DELIVERY_STATUS, type MaintenanceJenis, type DeliveryStage, type DeliveryStatus } from "@/lib/magnarent/extras-types";
+import { addProjectTask, updateProjectTaskStatus } from "@/lib/magnative/actions";
+import type { ProjectTaskStatus } from "@/lib/magnative/types";
+import { getEquipment, getProjectCrew } from "@/lib/production/extras-actions";
+import { receivePurchaseOrder, updateProjectStatus } from "@/lib/production/actions";
+import type { BoothStatus } from "@/lib/production/types";
+import { getChartOfAccounts, getManualJournalEntries } from "@/lib/accounting/data";
+import { addCapitalRequest } from "@/lib/capital-requests/actions";
 import { addEventExpense } from "@/lib/event-expenses/actions";
 import {
   EXPENSE_CATEGORIES,
@@ -97,6 +106,22 @@ export async function executeToolCall(
         return await handleGetExpenses(supabase, ctx, args);
       case "get_daily_summary":
         return await handleGetDailySummary(supabase, ctx);
+      case "get_maintenance_logs":
+        return await handleGetMaintenanceLogs(supabase, ctx, args);
+      case "get_deliveries":
+        return await handleGetDeliveries(supabase, ctx, args);
+      case "get_project_tasks":
+        return await handleGetProjectTasks(supabase, ctx, args);
+      case "get_content_posts":
+        return await handleGetContentPosts(supabase, ctx, args);
+      case "get_equipment":
+        return await handleGetEquipment(ctx, args);
+      case "get_project_crew":
+        return await handleGetProjectCrew(supabase, ctx, args);
+      case "get_chart_of_accounts":
+        return await handleGetChartOfAccounts(ctx, args);
+      case "get_journal_entries":
+        return await handleGetJournalEntries(ctx, args);
 
       // Action tools (sudah dikonfirmasi)
       case "create_booking":
@@ -105,6 +130,20 @@ export async function executeToolCall(
         return await handleUpdateBookingStatus(supabase, ctx, args);
       case "create_event_expense":
         return await handleCreateEventExpense(supabase, ctx, args);
+      case "add_maintenance_log":
+        return await handleAddMaintenanceLog(ctx, args);
+      case "schedule_delivery":
+        return await handleScheduleDelivery(ctx, args);
+      case "add_project_task":
+        return await handleAddProjectTask(ctx, args);
+      case "update_project_task_status":
+        return await handleUpdateProjectTaskStatus(supabase, ctx, args);
+      case "receive_purchase_order":
+        return await handleReceivePurchaseOrder(supabase, ctx, args);
+      case "update_production_status":
+        return await handleUpdateProductionStatus(supabase, ctx, args);
+      case "create_capital_request":
+        return await handleCreateCapitalRequest(ctx, args);
 
       default:
         return { success: false, error: `Tool tidak dikenal: ${toolName}` };
@@ -449,6 +488,139 @@ async function handleCheckAvailability(supabase: SupabaseClient, ctx: UserContex
   };
 }
 
+async function handleGetMaintenanceLogs(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const itemId = str(args.itemId);
+  const itemName = str(args.itemName);
+  const itemEmbed = itemName ? "item:magnarent_inventory!inner(id, name)" : "item:magnarent_inventory(id, name)";
+  let query = supabase
+    .from("magnarent_maintenance_logs")
+    .select(`id, tanggal, jenis, keterangan, biaya, ${itemEmbed}`)
+    .order("tanggal", { ascending: false });
+  if (itemId) query = query.eq("item_id", itemId);
+  if (itemName) query = query.ilike("item.name", likePattern(itemName));
+
+  const { data, error } = await query.limit(limitOf(args));
+  if (error) return dbError("get_maintenance_logs", error.message);
+  return { success: true, data: { logs: data ?? [], count: (data ?? []).length } };
+}
+
+async function handleGetDeliveries(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const status = str(args.status);
+  const clientName = str(args.clientName);
+  const bookingEmbed = clientName
+    ? "booking:magnarent_bookings!inner(id, nama_klien, tanggal_mulai, tanggal_selesai)"
+    : "booking:magnarent_bookings(id, nama_klien, tanggal_mulai, tanggal_selesai)";
+  let query = supabase
+    .from("magnarent_deliveries")
+    .select(`id, booking_id, stage, driver_name, jadwal_tanggal, jadwal_jam, status, catatan, ${bookingEmbed}`)
+    .order("jadwal_tanggal", { ascending: true, nullsFirst: false });
+  if (status) query = query.eq("status", status);
+  if (clientName) query = query.ilike("booking.nama_klien", likePattern(clientName));
+
+  const { data, error } = await query.limit(limitOf(args));
+  if (error) return dbError("get_deliveries", error.message);
+  return { success: true, data: { deliveries: data ?? [], count: (data ?? []).length } };
+}
+
+async function handleGetProjectTasks(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const projectId = str(args.projectId);
+  const projectName = str(args.projectName);
+  const status = str(args.status);
+  const projectEmbed = projectName ? "project:magnative_projects!inner(id, name)" : "project:magnative_projects(id, name)";
+  let query = supabase
+    .from("magnative_project_tasks")
+    .select(`id, title, detail, status, due_date, pic, vendor_id, biaya_estimasi, ${projectEmbed}`)
+    .order("sort_order", { ascending: true });
+  if (projectId) query = query.eq("project_id", projectId);
+  if (projectName) query = query.ilike("project.name", likePattern(projectName));
+  if (status) query = query.eq("status", status);
+
+  const { data, error } = await query.limit(limitOf(args));
+  if (error) return dbError("get_project_tasks", error.message);
+  return { success: true, data: { tasks: data ?? [], count: (data ?? []).length } };
+}
+
+async function handleGetContentPosts(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const status = str(args.status);
+  const clientName = str(args.clientName);
+  const clientEmbed = clientName ? "client:magnative_clients!inner(id, name)" : "client:magnative_clients(id, name)";
+  let query = supabase
+    .from("magnative_content_posts")
+    .select(`id, title, platform, tanggal_posting, status, catatan, feedback_revisi, ${clientEmbed}`)
+    .order("tanggal_posting", { ascending: false });
+  if (status) query = query.eq("status", status);
+  if (clientName) query = query.ilike("client.name", likePattern(clientName));
+
+  const { data, error } = await query.limit(limitOf(args));
+  if (error) return dbError("get_content_posts", error.message);
+  return { success: true, data: { posts: data ?? [], count: (data ?? []).length } };
+}
+
+async function handleGetEquipment(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  let equipment = await getEquipment();
+  const category = str(args.category);
+  if (category) equipment = equipment.filter((e) => e.kategori === category);
+  const condition = str(args.condition);
+  if (condition) equipment = equipment.filter((e) => e.kondisi === condition);
+  const search = str(args.searchName)?.toLowerCase();
+  if (search) equipment = equipment.filter((e) => e.name.toLowerCase().includes(search));
+
+  const limited = equipment.slice(0, limitOf(args));
+  return { success: true, data: { equipment: limited, count: limited.length } };
+}
+
+async function handleGetProjectCrew(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  let projectId = str(args.projectId);
+  const projectName = str(args.projectName);
+  if (!projectId && projectName) {
+    const { data } = await supabase
+      .from("production_booth_projects")
+      .select("id, name")
+      .ilike("name", likePattern(projectName))
+      .limit(5);
+    if (!data || data.length === 0) return { success: false, error: "Proyek tidak ditemukan." };
+    if (data.length > 1) {
+      return {
+        success: true,
+        data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: data },
+      };
+    }
+    projectId = data[0].id;
+  }
+  if (!projectId) return { success: false, error: "ID atau nama proyek harus diisi." };
+
+  const crew = await getProjectCrew(projectId);
+  return { success: true, data: { crew, count: crew.length } };
+}
+
+async function handleGetChartOfAccounts(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessAccounting) return denied("Akuntansi");
+
+  const accounts = await getChartOfAccounts();
+  const result = args.activeOnly === true ? accounts.filter((a) => a.isActive) : accounts;
+  return { success: true, data: { accounts: result, count: result.length } };
+}
+
+async function handleGetJournalEntries(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessAccounting) return denied("Akuntansi");
+
+  const limit = num(args.limit);
+  const entries = await getManualJournalEntries(limit && limit > 0 ? Math.min(Math.floor(limit), 100) : 20);
+  return { success: true, data: { entries, count: entries.length } };
+}
+
 // ============================================================================
 // ACTION HANDLERS (dijalankan setelah konfirmasi)
 // ============================================================================
@@ -638,6 +810,159 @@ async function handleCreateEventExpense(supabase: SupabaseClient, ctx: UserConte
   };
 }
 
+const BOOTH_STATUSES: BoothStatus[] = ["Desain", "Produksi", "Finishing", "Instalasi", "Selesai", "Dibatalkan"];
+const PROJECT_TASK_STATUSES: ProjectTaskStatus[] = ["Belum Mulai", "Berjalan", "Selesai"];
+
+async function handleAddMaintenanceLog(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const itemId = str(args.itemId);
+  const jenis = str(args.jenis) as MaintenanceJenis | undefined;
+  const biaya = num(args.biaya);
+  if (!itemId || !jenis || !MAINTENANCE_JENIS.includes(jenis) || biaya === undefined || biaya < 0) {
+    return { success: false, error: "Data servis belum lengkap (alat, jenis, biaya)." };
+  }
+
+  const result = await addMaintenanceLog(itemId, {
+    tanggal: isoDate(args.tanggal) ?? todayJakarta(),
+    jenis,
+    keterangan: str(args.keterangan),
+    biaya,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Log servis (${jenis}) berhasil dicatat.` } };
+}
+
+async function handleScheduleDelivery(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const bookingId = str(args.bookingId);
+  const stage = str(args.stage) as DeliveryStage | undefined;
+  const status = str(args.status) as DeliveryStatus | undefined;
+  if (!bookingId || (stage !== "pengiriman" && stage !== "pengambilan") || !status || !DELIVERY_STATUS.includes(status)) {
+    return { success: false, error: "Data pengiriman belum lengkap (booking, tahap, status)." };
+  }
+
+  const result = await saveDelivery(bookingId, stage, {
+    driverName: str(args.driverName),
+    jadwalTanggal: isoDate(args.jadwalTanggal),
+    jadwalJam: str(args.jadwalJam),
+    status,
+    catatan: str(args.catatan),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Penjadwalan ${stage} berhasil disimpan.` } };
+}
+
+async function handleAddProjectTask(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const projectId = str(args.projectId);
+  const title = str(args.title);
+  if (!projectId || !title) return { success: false, error: "Proyek dan judul task harus diisi." };
+  const status = (str(args.status) as ProjectTaskStatus | undefined) ?? "Belum Mulai";
+  if (!PROJECT_TASK_STATUSES.includes(status)) return { success: false, error: "Status task tidak valid." };
+
+  const result = await addProjectTask({
+    projectId,
+    title,
+    detail: str(args.detail),
+    status,
+    dueDate: isoDate(args.dueDate),
+    pic: str(args.pic),
+    sortOrder: num(args.sortOrder) ?? 0,
+    vendorId: str(args.vendorId),
+    biayaEstimasi: num(args.biayaEstimasi) ?? 0,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Task "${title}" berhasil ditambahkan.` } };
+}
+
+async function handleUpdateProjectTaskStatus(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const taskId = str(args.taskId);
+  const status = str(args.status) as ProjectTaskStatus | undefined;
+  if (!taskId || !status || !PROJECT_TASK_STATUSES.includes(status)) {
+    return { success: false, error: "ID task atau status tidak valid." };
+  }
+
+  const { data: task } = await supabase.from("magnative_project_tasks").select("title").eq("id", taskId).maybeSingle<{ title: string }>();
+  if (!task) return { success: false, error: "Task tidak ditemukan." };
+
+  const result = await updateProjectTaskStatus(taskId, status);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Status task "${task.title}" berhasil diubah ke "${status}".` } };
+}
+
+async function handleReceivePurchaseOrder(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessPurchaseOrders) return denied("Purchase Order");
+
+  const poId = str(args.poId);
+  if (!poId) return { success: false, error: "ID purchase order harus diisi." };
+
+  const { data: po } = await supabase
+    .from("production_purchase_orders")
+    .select("supplier_name, status")
+    .eq("id", poId)
+    .maybeSingle<{ supplier_name: string; status: string }>();
+  if (!po) return { success: false, error: "Purchase order tidak ditemukan." };
+  if (po.status !== "Dipesan") return { success: false, error: `PO ini sudah berstatus "${po.status}".` };
+
+  const result = await receivePurchaseOrder(poId);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `PO ke ${po.supplier_name} ditandai Diterima, stok material sudah bertambah.` } };
+}
+
+async function handleUpdateProductionStatus(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const projectId = str(args.projectId);
+  const status = str(args.status) as BoothStatus | undefined;
+  if (!projectId || !status || !BOOTH_STATUSES.includes(status)) {
+    return { success: false, error: "ID proyek atau status tidak valid." };
+  }
+
+  const { data: project } = await supabase
+    .from("production_booth_projects")
+    .select("name, status")
+    .eq("id", projectId)
+    .maybeSingle<{ name: string; status: BoothStatus }>();
+  if (!project) return { success: false, error: "Proyek tidak ditemukan." };
+  if (project.status === "Selesai" || project.status === "Dibatalkan") {
+    return { success: false, error: `Proyek berstatus "${project.status}" hanya bisa diubah lewat form edit proyek.` };
+  }
+
+  const result = await updateProjectStatus(projectId, status, project.status);
+  if (!result.ok) return { success: false, error: result.error };
+  return {
+    success: true,
+    data: { message: `Status proyek "${project.name}" berhasil diubah dari "${project.status}" ke "${status}".` },
+  };
+}
+
+async function handleCreateCapitalRequest(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessAdmin) return denied("Pengajuan Modal");
+
+  const eventName = str(args.eventName);
+  const location = str(args.location);
+  const billingEstimate = num(args.billingEstimate);
+  const modalEstimate = num(args.modalEstimate);
+  if (!eventName || !location || billingEstimate === undefined || modalEstimate === undefined) {
+    return { success: false, error: "Nama event, lokasi, estimasi billing & modal harus diisi." };
+  }
+
+  const result = await addCapitalRequest({
+    eventName,
+    location,
+    eventDate: isoDate(args.eventDate),
+    billingEstimate,
+    modalEstimate,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Pengajuan modal untuk "${eventName}" berhasil dibuat, menunggu keputusan investor.` } };
+}
+
 // ============================================================================
 // KONFIRMASI
 // ============================================================================
@@ -705,6 +1030,99 @@ async function buildConfirmationResponse(
       `- Metode bayar: ${str(args.paymentMethod) ?? "Cash"}`,
       `- Dibayar oleh: ${str(args.reimbursementStatus) ?? "Dibayar Perusahaan"}`,
       `- Catatan: ${str(args.notes) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "add_maintenance_log") {
+    const itemId = str(args.itemId);
+    const { data: item } = itemId
+      ? await supabase.from("magnarent_inventory").select("name").eq("id", itemId).maybeSingle<{ name: string }>()
+      : { data: null };
+    if (!item) return { success: false, error: "Alat tidak ditemukan. Cari dulu ID alat yang benar." };
+    description = [
+      "Catat servis alat:",
+      `- Alat: ${item.name}`,
+      `- Tanggal: ${isoDate(args.tanggal) ?? `${todayJakarta()} (hari ini)`}`,
+      `- Jenis: ${args.jenis}`,
+      `- Biaya: ${rupiah(args.biaya)}`,
+      `- Keterangan: ${str(args.keterangan) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "schedule_delivery") {
+    const bookingId = str(args.bookingId);
+    const { data: booking } = bookingId
+      ? await supabase.from("magnarent_bookings").select("nama_klien").eq("id", bookingId).maybeSingle<{ nama_klien: string }>()
+      : { data: null };
+    if (!booking) return { success: false, error: "Booking tidak ditemukan. Cari dulu ID booking yang benar." };
+    description = [
+      `Jadwalkan ${args.stage}:`,
+      `- Klien: ${booking.nama_klien}`,
+      `- Status: ${args.status}`,
+      `- Sopir: ${str(args.driverName) ?? "-"}`,
+      `- Jadwal: ${str(args.jadwalTanggal) ?? "-"} ${str(args.jadwalJam) ?? ""}`.trim(),
+      `- Catatan: ${str(args.catatan) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "add_project_task") {
+    const projectId = str(args.projectId);
+    const { data: project } = projectId
+      ? await supabase.from("magnative_projects").select("name").eq("id", projectId).maybeSingle<{ name: string }>()
+      : { data: null };
+    if (!project) return { success: false, error: "Proyek tidak ditemukan. Cari dulu ID proyek yang benar." };
+    description = [
+      "Tambah task proyek:",
+      `- Proyek: ${project.name}`,
+      `- Judul: ${args.title}`,
+      `- Status: ${str(args.status) ?? "Belum Mulai"}`,
+      `- Tenggat: ${str(args.dueDate) ?? "-"}`,
+      `- Estimasi biaya: ${args.biayaEstimasi !== undefined ? rupiah(args.biayaEstimasi) : "-"}`,
+    ].join("\n");
+  } else if (toolName === "update_project_task_status") {
+    const taskId = str(args.taskId);
+    const { data: task } = taskId
+      ? await supabase
+          .from("magnative_project_tasks")
+          .select("title, status")
+          .eq("id", taskId)
+          .maybeSingle<{ title: string; status: string }>()
+      : { data: null };
+    if (!task) return { success: false, error: "Task tidak ditemukan. Cari dulu ID task yang benar." };
+    description = ["Ubah status task:", `- Task: ${task.title}`, `- Status: ${task.status} → ${args.status}`].join("\n");
+  } else if (toolName === "receive_purchase_order") {
+    const poId = str(args.poId);
+    const { data: po } = poId
+      ? await supabase
+          .from("production_purchase_orders")
+          .select("supplier_name, qty, status")
+          .eq("id", poId)
+          .maybeSingle<{ supplier_name: string; qty: number; status: string }>()
+      : { data: null };
+    if (!po) return { success: false, error: "Purchase order tidak ditemukan. Cari dulu ID PO yang benar." };
+    description = [
+      "Tandai PO Diterima:",
+      `- Supplier: ${po.supplier_name}`,
+      `- Qty: ${po.qty}`,
+      `- Status sekarang: ${po.status} → Diterima`,
+      "- Stok material terkait otomatis bertambah.",
+    ].join("\n");
+  } else if (toolName === "update_production_status") {
+    const projectId = str(args.projectId);
+    const { data: project } = projectId
+      ? await supabase
+          .from("production_booth_projects")
+          .select("name, status")
+          .eq("id", projectId)
+          .maybeSingle<{ name: string; status: string }>()
+      : { data: null };
+    if (!project) return { success: false, error: "Proyek tidak ditemukan. Cari dulu ID proyek yang benar." };
+    description = ["Ubah status proyek booth:", `- Proyek: ${project.name}`, `- Status: ${project.status} → ${args.status}`].join(
+      "\n"
+    );
+  } else if (toolName === "create_capital_request") {
+    description = [
+      "Buat pengajuan modal:",
+      `- Event: ${args.eventName}`,
+      `- Lokasi: ${args.location}`,
+      `- Tanggal: ${str(args.eventDate) ?? "-"}`,
+      `- Estimasi billing: ${rupiah(args.billingEstimate)}`,
+      `- Estimasi modal: ${rupiah(args.modalEstimate)}`,
+      "- Akan dikirim ke investor untuk diputuskan.",
     ].join("\n");
   } else {
     description = `Jalankan ${toolName}`;

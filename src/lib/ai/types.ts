@@ -34,6 +34,8 @@ export type UserContext = {
   canAccessCapital: boolean;
   /** Purchase order Production (RLS: divisi production/akses penuh, investor). */
   canAccessPurchaseOrders: boolean;
+  /** Akuntansi: Chart of Accounts & Jurnal Manual (akses penuh/finance saja -- data buku besar). */
+  canAccessAccounting: boolean;
 };
 
 export type ToolDefinition = {

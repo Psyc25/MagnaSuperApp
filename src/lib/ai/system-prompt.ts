@@ -225,5 +225,6 @@ export function buildUserContext(profile: {
     canAccessInvoices: full || division === "investor" || division === "finance",
     canAccessCapital: full || division === "investor",
     canAccessPurchaseOrders: full || division === "production" || division === "investor",
+    canAccessAccounting: full || division === "finance",
   };
 }
