@@ -44,7 +44,12 @@ const AI_TIMEOUT_MS = 45_000;
 const TOOL_TEMPERATURE = 0.3;
 
 
-export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: string; notice?: string }> {
+export async function getAIMessages(
+  /** Agen yang sedang dibuka (nova/reno/crea/fabr/finn); default NOVA.
+   * Tiap agen punya riwayat chat sendiri -- lihat kolom agent_id (migrasi
+   * add_agent_id_to_ai_assistant_messages, 2026-10-07). */
+  agentId?: string
+): Promise<{ messages: AIMessage[]; error?: string; notice?: string }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -52,10 +57,13 @@ export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: 
     return { messages: [], error: "Tidak terautentikasi" };
   }
 
+  const agent = (agentId && getAgentById(agentId)) || getDefaultAgent();
+
   const { data, error } = await supabase
     .from("ai_assistant_messages")
     .select("id, role, content, created_at, metadata")
     .eq("user_id", user.id)
+    .eq("agent_id", agent.id)
     .order("created_at", { ascending: true })
     .limit(100);
 
@@ -74,6 +82,7 @@ export async function getAIMessages(): Promise<{ messages: AIMessage[]; error?: 
       role: row.role as "user" | "assistant",
       content: row.content,
       createdAt: row.created_at,
+      agentId: agent.id,
       pendingAction: row.metadata?.pendingAction as PendingAction | undefined,
     })),
   };
@@ -219,6 +228,7 @@ export async function sendAIMessage(
     .from("ai_assistant_messages")
     .select("id, metadata")
     .eq("user_id", user.id)
+    .eq("agent_id", agent.id)
     .eq("role", "assistant")
     .order("created_at", { ascending: false })
     .limit(1);
@@ -247,7 +257,7 @@ export async function sendAIMessage(
       return { error: "Aksi ini sudah diproses sebelumnya." };
     }
 
-    await supabase.from("ai_assistant_messages").insert({ user_id: user.id, role: "user", content: text });
+    await supabase.from("ai_assistant_messages").insert({ user_id: user.id, agent_id: agent.id, role: "user", content: text });
 
     const result = await executeToolCall(supabase, userContext, pendingAction.tool, pendingAction.args, true);
 
@@ -263,7 +273,7 @@ export async function sendAIMessage(
 
     const { data: assistantMsg, error: assistantErr } = await supabase
       .from("ai_assistant_messages")
-      .insert({ user_id: user.id, role: "assistant", content: responseContent, metadata: {} })
+      .insert({ user_id: user.id, agent_id: agent.id, role: "assistant", content: responseContent, metadata: {} })
       .select("id, role, content, created_at")
       .single();
 
@@ -287,10 +297,10 @@ export async function sendAIMessage(
   }
 
   if (isCancel && pendingAction) {
-    await supabase.from("ai_assistant_messages").insert({ user_id: user.id, role: "user", content: text });
+    await supabase.from("ai_assistant_messages").insert({ user_id: user.id, agent_id: agent.id, role: "user", content: text });
     const { data: cancelMsg, error: cancelErr } = await supabase
       .from("ai_assistant_messages")
-      .insert({ user_id: user.id, role: "assistant", content: "Baik, aksi dibatalkan. Tidak ada data yang diubah.", metadata: {} })
+      .insert({ user_id: user.id, agent_id: agent.id, role: "assistant", content: "Baik, aksi dibatalkan. Tidak ada data yang diubah.", metadata: {} })
       .select("id, role, content, created_at")
       .single();
     if (cancelErr) return { error: "Gagal menyimpan respons" };
@@ -303,7 +313,7 @@ export async function sendAIMessage(
   const userMsgMetadata = imageBase64 ? { hasImage: true } : {};
   const { data: userMsg, error: userErr } = await supabase
     .from("ai_assistant_messages")
-    .insert({ user_id: user.id, role: "user", content: text || "(gambar)", metadata: userMsgMetadata })
+    .insert({ user_id: user.id, agent_id: agent.id, role: "user", content: text || "(gambar)", metadata: userMsgMetadata })
     .select("id, role, content, created_at")
     .single();
 
@@ -319,6 +329,7 @@ export async function sendAIMessage(
     .from("ai_assistant_messages")
     .select("role, content")
     .eq("user_id", user.id)
+    .eq("agent_id", agent.id)
     .order("created_at", { ascending: false })
     .limit(10);
 
@@ -421,7 +432,7 @@ export async function sendAIMessage(
   const metadata = pendingActionToSave ? { pendingAction: pendingActionToSave } : {};
   const { data: assistantMsg, error: assistantErr } = await supabase
     .from("ai_assistant_messages")
-    .insert({ user_id: user.id, role: "assistant", content: finalContent, metadata })
+    .insert({ user_id: user.id, agent_id: agent.id, role: "assistant", content: finalContent, metadata })
     .select("id, role, content, created_at, metadata")
     .single();
 
@@ -433,21 +444,28 @@ export async function sendAIMessage(
       role: "assistant",
       content: assistantMsg.content,
       createdAt: assistantMsg.created_at,
+      agentId: agent.id,
       pendingAction: pendingActionToSave,
     },
   };
 }
 
-export async function clearAIHistory(): Promise<{ ok: boolean; error?: string }> {
+export async function clearAIHistory(
+  /** Hapus riwayat agen ini saja (nova/reno/crea/fabr/finn). Kalau kosong,
+   * hapus SEMUA riwayat user di semua agen -- dipakai cuma untuk kasus lama,
+   * UI sekarang selalu kirim agen yang sedang dibuka. */
+  agentId?: string
+): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) return { ok: false, error: "Tidak terautentikasi" };
 
-  const { error } = await supabase
-    .from("ai_assistant_messages")
-    .delete()
-    .eq("user_id", user.id);
+  let query = supabase.from("ai_assistant_messages").delete().eq("user_id", user.id);
+  const agent = agentId ? getAgentById(agentId) : undefined;
+  if (agent) query = query.eq("agent_id", agent.id);
+
+  const { error } = await query;
 
   if (error) return { ok: false, error: error.message };
   return { ok: true };

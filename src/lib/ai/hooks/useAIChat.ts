@@ -36,7 +36,7 @@ export type UseAIChatReturn = {
   loadMessages: () => Promise<void>;
   selectImage: (file: File | null) => void;
   removeImage: () => void;
-  selectAgent: (agent: AIAgent) => void;
+  selectAgent: (agent: AIAgent) => Promise<void>;
 
   // Refs
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -85,7 +85,7 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
     if (loaded) return;
     setLoading(true);
     try {
-      const { messages: m, error: e, notice } = await getAIMessages();
+      const { messages: m, error: e, notice } = await getAIMessages(selectedAgent.id);
       if (e) {
         setError(e);
       } else {
@@ -99,7 +99,7 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
       setLoading(false);
       setLoaded(true);
     }
-  }, [loaded]);
+  }, [loaded, selectedAgent.id]);
 
   // Muat riwayat saat mount kalau diminta -- fetch langsung + penanda batal
   // (bukan memanggil loadMessages, yang men-set state secara sinkron di
@@ -108,7 +108,7 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
   useEffect(() => {
     if (!loadOnMount || loaded) return;
     let cancelled = false;
-    getAIMessages()
+    getAIMessages(selectedAgent.id)
       .then(({ messages: m, error: e, notice }) => {
         if (cancelled) return;
         if (e) setError(e);
@@ -126,6 +126,7 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- cuma untuk muatan awal (sekali), ganti agen ditangani selectAgent
   }, [loadOnMount, loaded]);
 
   const selectImage = useCallback((file: File | null) => {
@@ -165,9 +166,27 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
     }
   }, [imagePreviewUrl]);
 
-  const selectAgent = useCallback((agent: AIAgent) => {
+  // Ganti agen = ganti "room" chat sepenuhnya -- riwayat lama (punya agen
+  // sebelumnya) harus dikosongkan dan diganti riwayat agen baru, BUKAN cuma
+  // ganti warna/ikon di atas pesan yang sama (bug lama: semua room kelihatan
+  // isi chat NOVA karena riwayat tidak pernah di-refetch per agen).
+  const selectAgent = useCallback(async (agent: AIAgent) => {
     setSelectedAgent(agent);
     setError(null);
+    setMessages([]);
+    setLoading(true);
+    try {
+      const { messages: m, error: e, notice } = await getAIMessages(agent.id);
+      if (e) setError(e);
+      else {
+        setMessages(m);
+        if (notice) setError(notice);
+      }
+    } catch {
+      setError("Gagal memuat riwayat");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   const send = useCallback(async () => {
@@ -230,11 +249,11 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
   }, [input, selectedImage, sending, selectedAgent, removeImage]);
 
   const clear = useCallback(async () => {
-    await clearAIHistory();
+    await clearAIHistory(selectedAgent.id);
     setMessages([]);
     setError(null);
     removeImage();
-  }, [removeImage]);
+  }, [removeImage, selectedAgent.id]);
 
   return {
     messages,

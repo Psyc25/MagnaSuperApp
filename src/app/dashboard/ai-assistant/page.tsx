@@ -19,10 +19,10 @@ export default async function AIAssistantPage({
     redirect("/dashboard");
   }
 
-  const { messages, notice } = await getAIMessages();
   const params = await searchParams;
   const agentId = params.agent;
   const agent = agentId ? getAgentById(agentId) ?? getDefaultAgent() : getDefaultAgent();
+  const { messages, notice } = await getAIMessages(agent.id);
 
   return (
     <div className="flex h-[calc(100vh-4rem)] flex-col p-4 md:p-8">
