@@ -692,6 +692,166 @@ export const ACTION_TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "add_inventory_item",
+      description: "Tambah alat baru ke inventaris Magnarent. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nama alat" },
+          category: { type: "string", description: "Kategori alat (contoh: Tenda, Sound System, Kursi)" },
+          location: { type: "string", description: "Gudang/lokasi fisik" },
+          pricePerDay: { type: "number", description: "Harga sewa per hari (Rupiah)" },
+          totalUnit: { type: "number", description: "Total unit yang dimiliki" },
+          unitMaintenance: { type: "number", description: "Unit yang sedang maintenance (default: 0)" },
+          pricePerWeek: { type: "number", description: "Harga sewa per minggu (opsional)" },
+          pricePerMonth: { type: "number", description: "Harga sewa per bulan (opsional)" },
+        },
+        required: ["name", "category", "location", "pricePerDay", "totalUnit"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_inventory_item",
+      description: "Ubah data alat inventaris Magnarent (harga, lokasi, total unit, dst). Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          itemId: { type: "string", description: "ID alat (dari get_inventory/search_global)" },
+          name: { type: "string", description: "Nama alat baru" },
+          category: { type: "string", description: "Kategori baru" },
+          location: { type: "string", description: "Lokasi baru" },
+          pricePerDay: { type: "number", description: "Harga sewa per hari baru" },
+          totalUnit: { type: "number", description: "Total unit baru" },
+          unitMaintenance: { type: "number", description: "Unit maintenance baru" },
+          pricePerWeek: { type: "number", description: "Harga sewa per minggu baru" },
+          pricePerMonth: { type: "number", description: "Harga sewa per bulan baru" },
+        },
+        required: ["itemId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_client",
+      description: "Tambah klien baru ke Magnativ. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nama klien" },
+          industry: { type: "string", description: "Industri klien" },
+          picName: { type: "string", description: "Nama PIC klien" },
+          picPhone: { type: "string", description: "Nomor telepon PIC" },
+          picEmail: { type: "string", description: "Email PIC" },
+          status: { type: "string", enum: ["Prospek", "Aktif", "Selesai", "Tidak Lanjut"], description: "Status klien (default: Prospek)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["name", "industry", "picName"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_client",
+      description: "Ubah data klien Magnativ. Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          clientId: { type: "string", description: "ID klien (dari get_clients/search_global)" },
+          name: { type: "string", description: "Nama baru" },
+          industry: { type: "string", description: "Industri baru" },
+          picName: { type: "string", description: "Nama PIC baru" },
+          picPhone: { type: "string", description: "Telepon PIC baru" },
+          picEmail: { type: "string", description: "Email PIC baru" },
+          status: { type: "string", enum: ["Prospek", "Aktif", "Selesai", "Tidak Lanjut"], description: "Status baru" },
+          catatan: { type: "string", description: "Catatan baru" },
+        },
+        required: ["clientId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_material",
+      description: "Tambah material baru ke gudang Production. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nama material" },
+          category: { type: "string", enum: ["Kayu & Panel", "Cat & Finishing", "Hardware & Rangka", "Elektrikal", "Lainnya"], description: "Kategori material" },
+          unit: { type: "string", enum: ["pcs", "lembar", "batang", "meter", "kg", "liter", "set"], description: "Satuan" },
+          location: { type: "string", description: "Lokasi gudang" },
+          stock: { type: "number", description: "Stok awal" },
+          minStock: { type: "number", description: "Ambang batas stok menipis" },
+          pricePerUnit: { type: "number", description: "Harga per satuan (Rupiah)" },
+        },
+        required: ["name", "category", "unit", "location", "stock", "minStock", "pricePerUnit"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_material",
+      description: "Ubah data material Production (stok, harga, lokasi, dst). Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          materialId: { type: "string", description: "ID material (dari get_materials/search_global)" },
+          name: { type: "string", description: "Nama baru" },
+          category: { type: "string", enum: ["Kayu & Panel", "Cat & Finishing", "Hardware & Rangka", "Elektrikal", "Lainnya"], description: "Kategori baru" },
+          unit: { type: "string", enum: ["pcs", "lembar", "batang", "meter", "kg", "liter", "set"], description: "Satuan baru" },
+          location: { type: "string", description: "Lokasi baru" },
+          stock: { type: "number", description: "Stok baru" },
+          minStock: { type: "number", description: "Ambang batas baru" },
+          pricePerUnit: { type: "number", description: "Harga per satuan baru" },
+        },
+        required: ["materialId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_purchase_order",
+      description: "Buat purchase order material baru ke supplier. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          supplierName: { type: "string", description: "Nama supplier" },
+          materialId: { type: "string", description: "ID material terkait (dari get_materials), opsional" },
+          qty: { type: "number", description: "Jumlah yang dipesan" },
+          unitPrice: { type: "number", description: "Harga per satuan (Rupiah)" },
+          orderDate: { type: "string", description: "Tanggal pesan (YYYY-MM-DD, default: hari ini)" },
+          expectedDate: { type: "string", description: "Perkiraan tanggal datang (YYYY-MM-DD)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["supplierName", "qty", "unitPrice"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mark_invoice_status",
+      description: "Ubah status faktur/invoice (Draft/Terkirim/Lunas). Status Lunas otomatis posting jurnal pendapatan. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          invoiceId: { type: "string", description: "ID invoice (dari get_invoices)" },
+          status: { type: "string", enum: ["Draft", "Terkirim", "Lunas"], description: "Status baru" },
+        },
+        required: ["invoiceId", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "create_capital_request",
       description: "Buat pengajuan modal event baru untuk investor (estimasi billing & modal). HANYA bisa dipakai akun akses penuh. HARUS konfirmasi dengan user sebelum menyimpan.",
       parameters: {
@@ -752,6 +912,14 @@ export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
     get_chart_of_accounts: ctx.canAccessAccounting,
     get_journal_entries: ctx.canAccessAccounting,
     create_capital_request: ctx.canAccessAdmin,
+    add_inventory_item: ctx.canAccessMagnarent,
+    update_inventory_item: ctx.canAccessMagnarent,
+    add_client: ctx.canAccessMagnative,
+    update_client: ctx.canAccessMagnative,
+    add_material: ctx.canAccessProduction,
+    update_material: ctx.canAccessProduction,
+    add_purchase_order: ctx.canAccessPurchaseOrders,
+    mark_invoice_status: ctx.canAccessInvoices,
   };
   return AI_TOOLS.filter((t) => allowed[t.function.name]);
 }
@@ -781,6 +949,8 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_deliveries",
     "add_maintenance_log",
     "schedule_delivery",
+    "add_inventory_item",
+    "update_inventory_item",
   ];
   const MAGNATIVE_TOOLS = [
     ...COMMON_TOOLS,
@@ -790,6 +960,8 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_content_posts",
     "add_project_task",
     "update_project_task_status",
+    "add_client",
+    "update_client",
   ];
   const PRODUCTION_TOOLS = [
     ...COMMON_TOOLS,
@@ -800,6 +972,9 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_project_crew",
     "receive_purchase_order",
     "update_production_status",
+    "add_material",
+    "update_material",
+    "add_purchase_order",
   ];
   const FINANCE_TOOLS = [
     ...COMMON_TOOLS,
@@ -810,6 +985,7 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_chart_of_accounts",
     "get_journal_entries",
     "create_capital_request",
+    "mark_invoice_status",
   ];
   const EVENT_TOOLS = [...COMMON_TOOLS, "create_event_expense"];
 

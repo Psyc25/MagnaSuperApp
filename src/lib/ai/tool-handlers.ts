@@ -16,20 +16,22 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ToolResult, UserContext } from "./types";
 import { isActionTool } from "./tools";
-import { addBooking, updateBookingStatus } from "@/lib/magnarent/actions";
+import { addBooking, updateBookingStatus, addInventoryItem, updateInventoryItem } from "@/lib/magnarent/actions";
 import { getAvailableUnitsInRange } from "@/lib/magnarent/availability";
 import { rowToBooking, rowToInventory, type BookingRow, type InventoryRow } from "@/lib/magnarent/mappers";
-import type { BookingStatus, PaymentStatus } from "@/lib/magnarent/types";
+import type { BookingStatus, PaymentStatus, InventoryItem } from "@/lib/magnarent/types";
 import { BOOKING_TRANSITIONS } from "@/lib/magnarent/booking-status";
 import { addMaintenanceLog, saveDelivery } from "@/lib/magnarent/extras-actions";
 import { MAINTENANCE_JENIS, DELIVERY_STATUS, type MaintenanceJenis, type DeliveryStage, type DeliveryStatus } from "@/lib/magnarent/extras-types";
-import { addProjectTask, updateProjectTaskStatus } from "@/lib/magnative/actions";
-import type { ProjectTaskStatus } from "@/lib/magnative/types";
+import { addProjectTask, updateProjectTaskStatus, addClient, updateClient } from "@/lib/magnative/actions";
+import type { ProjectTaskStatus, Client, ClientStatus } from "@/lib/magnative/types";
 import { getEquipment, getProjectCrew } from "@/lib/production/extras-actions";
-import { receivePurchaseOrder, updateProjectStatus } from "@/lib/production/actions";
-import type { BoothStatus } from "@/lib/production/types";
+import { receivePurchaseOrder, updateProjectStatus, addMaterial, updateMaterial, addPurchaseOrder } from "@/lib/production/actions";
+import type { BoothStatus, MaterialItem, MaterialCategory, MaterialUnit } from "@/lib/production/types";
 import { getChartOfAccounts, getManualJournalEntries } from "@/lib/accounting/data";
 import { addCapitalRequest } from "@/lib/capital-requests/actions";
+import { markInvoiceStatus } from "@/lib/invoices/actions";
+import type { InvoiceStatus } from "@/lib/invoices/types";
 import { addEventExpense } from "@/lib/event-expenses/actions";
 import {
   EXPENSE_CATEGORIES,
@@ -144,6 +146,22 @@ export async function executeToolCall(
         return await handleUpdateProductionStatus(supabase, ctx, args);
       case "create_capital_request":
         return await handleCreateCapitalRequest(ctx, args);
+      case "add_inventory_item":
+        return await handleAddInventoryItem(ctx, args);
+      case "update_inventory_item":
+        return await handleUpdateInventoryItem(supabase, ctx, args);
+      case "add_client":
+        return await handleAddClient(ctx, args);
+      case "update_client":
+        return await handleUpdateClient(supabase, ctx, args);
+      case "add_material":
+        return await handleAddMaterial(ctx, args);
+      case "update_material":
+        return await handleUpdateMaterial(supabase, ctx, args);
+      case "add_purchase_order":
+        return await handleAddPurchaseOrder(ctx, args);
+      case "mark_invoice_status":
+        return await handleMarkInvoiceStatus(supabase, ctx, args);
 
       default:
         return { success: false, error: `Tool tidak dikenal: ${toolName}` };
@@ -963,6 +981,230 @@ async function handleCreateCapitalRequest(ctx: UserContext, args: Args): Promise
   return { success: true, data: { message: `Pengajuan modal untuk "${eventName}" berhasil dibuat, menunggu keputusan investor.` } };
 }
 
+const CLIENT_STATUSES: ClientStatus[] = ["Prospek", "Aktif", "Selesai", "Tidak Lanjut"];
+const MATERIAL_CATEGORIES: MaterialCategory[] = ["Kayu & Panel", "Cat & Finishing", "Hardware & Rangka", "Elektrikal", "Lainnya"];
+const MATERIAL_UNITS: MaterialUnit[] = ["pcs", "lembar", "batang", "meter", "kg", "liter", "set"];
+const INVOICE_STATUSES: InvoiceStatus[] = ["Draft", "Terkirim", "Lunas"];
+
+async function handleAddInventoryItem(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const name = str(args.name);
+  const category = str(args.category);
+  const location = str(args.location);
+  const pricePerDay = num(args.pricePerDay);
+  const totalUnit = num(args.totalUnit);
+  if (!name || !category || !location || pricePerDay === undefined || totalUnit === undefined) {
+    return { success: false, error: "Nama, kategori, lokasi, harga per hari, dan total unit harus diisi." };
+  }
+
+  const result = await addInventoryItem({
+    name,
+    category,
+    location,
+    pricePerDay,
+    totalUnit,
+    unitMaintenance: num(args.unitMaintenance) ?? 0,
+    pricePerWeek: num(args.pricePerWeek),
+    pricePerMonth: num(args.pricePerMonth),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Alat "${name}" berhasil ditambahkan ke inventaris.` } };
+}
+
+async function handleUpdateInventoryItem(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const itemId = str(args.itemId);
+  if (!itemId) return { success: false, error: "ID alat harus diisi." };
+  const { data: current } = await supabase.from("magnarent_inventory").select("*").eq("id", itemId).maybeSingle<InventoryRow>();
+  if (!current) return { success: false, error: "Alat tidak ditemukan." };
+
+  const merged: Omit<InventoryItem, "id"> = {
+    name: str(args.name) ?? current.name,
+    category: str(args.category) ?? current.category,
+    location: str(args.location) ?? current.location,
+    pricePerDay: num(args.pricePerDay) ?? current.price_per_day,
+    totalUnit: num(args.totalUnit) ?? current.total_unit,
+    unitMaintenance: num(args.unitMaintenance) ?? current.unit_maintenance,
+    pricePerWeek: num(args.pricePerWeek) ?? current.price_per_week ?? undefined,
+    pricePerMonth: num(args.pricePerMonth) ?? current.price_per_month ?? undefined,
+  };
+  const result = await updateInventoryItem(itemId, merged);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Alat "${merged.name}" berhasil diperbarui.` } };
+}
+
+async function handleAddClient(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const name = str(args.name);
+  const industry = str(args.industry);
+  const picName = str(args.picName);
+  if (!name || !industry || !picName) return { success: false, error: "Nama klien, industri, dan nama PIC harus diisi." };
+  const status = (str(args.status) as ClientStatus | undefined) ?? "Prospek";
+  if (!CLIENT_STATUSES.includes(status)) return { success: false, error: "Status klien tidak valid." };
+
+  const result = await addClient({
+    name,
+    industry,
+    picName,
+    picPhone: str(args.picPhone),
+    picEmail: str(args.picEmail),
+    status,
+    catatan: str(args.catatan),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Klien "${name}" berhasil ditambahkan.` } };
+}
+
+async function handleUpdateClient(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const clientId = str(args.clientId);
+  if (!clientId) return { success: false, error: "ID klien harus diisi." };
+  const { data: current } = await supabase
+    .from("magnative_clients")
+    .select("name, industry, pic_name, pic_phone, pic_email, status, catatan")
+    .eq("id", clientId)
+    .maybeSingle<{
+      name: string;
+      industry: string;
+      pic_name: string;
+      pic_phone: string | null;
+      pic_email: string | null;
+      status: ClientStatus;
+      catatan: string | null;
+    }>();
+  if (!current) return { success: false, error: "Klien tidak ditemukan." };
+  const status = (str(args.status) as ClientStatus | undefined) ?? current.status;
+  if (!CLIENT_STATUSES.includes(status)) return { success: false, error: "Status klien tidak valid." };
+
+  const merged: Omit<Client, "id"> = {
+    name: str(args.name) ?? current.name,
+    industry: str(args.industry) ?? current.industry,
+    picName: str(args.picName) ?? current.pic_name,
+    picPhone: str(args.picPhone) ?? current.pic_phone ?? undefined,
+    picEmail: str(args.picEmail) ?? current.pic_email ?? undefined,
+    status,
+    catatan: str(args.catatan) ?? current.catatan ?? undefined,
+  };
+  const result = await updateClient(clientId, merged);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Klien "${merged.name}" berhasil diperbarui.` } };
+}
+
+async function handleAddMaterial(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const name = str(args.name);
+  const category = str(args.category) as MaterialCategory | undefined;
+  const unit = str(args.unit) as MaterialUnit | undefined;
+  const location = str(args.location);
+  const stock = num(args.stock);
+  const minStock = num(args.minStock);
+  const pricePerUnit = num(args.pricePerUnit);
+  if (
+    !name ||
+    !category ||
+    !MATERIAL_CATEGORIES.includes(category) ||
+    !unit ||
+    !MATERIAL_UNITS.includes(unit) ||
+    !location ||
+    stock === undefined ||
+    minStock === undefined ||
+    pricePerUnit === undefined
+  ) {
+    return { success: false, error: "Nama, kategori, satuan, lokasi, stok, ambang batas, dan harga harus diisi dengan benar." };
+  }
+
+  const result = await addMaterial({ name, category, unit, location, stock, minStock, pricePerUnit });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Material "${name}" berhasil ditambahkan.` } };
+}
+
+async function handleUpdateMaterial(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const materialId = str(args.materialId);
+  if (!materialId) return { success: false, error: "ID material harus diisi." };
+  const { data: current } = await supabase
+    .from("production_materials")
+    .select("name, category, unit, location, stock, min_stock, price_per_unit")
+    .eq("id", materialId)
+    .maybeSingle<{
+      name: string;
+      category: MaterialCategory;
+      unit: MaterialUnit;
+      location: string;
+      stock: number;
+      min_stock: number;
+      price_per_unit: number;
+    }>();
+  if (!current) return { success: false, error: "Material tidak ditemukan." };
+
+  const merged: Omit<MaterialItem, "id"> = {
+    name: str(args.name) ?? current.name,
+    category: (str(args.category) as MaterialCategory | undefined) ?? current.category,
+    unit: (str(args.unit) as MaterialUnit | undefined) ?? current.unit,
+    location: str(args.location) ?? current.location,
+    stock: num(args.stock) ?? current.stock,
+    minStock: num(args.minStock) ?? current.min_stock,
+    pricePerUnit: num(args.pricePerUnit) ?? current.price_per_unit,
+  };
+  const result = await updateMaterial(materialId, merged, current.stock);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Material "${merged.name}" berhasil diperbarui.` } };
+}
+
+async function handleAddPurchaseOrder(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessPurchaseOrders) return denied("Purchase Order");
+
+  const supplierName = str(args.supplierName);
+  const qty = num(args.qty);
+  const unitPrice = num(args.unitPrice);
+  if (!supplierName || qty === undefined || qty <= 0 || unitPrice === undefined || unitPrice < 0) {
+    return { success: false, error: "Supplier, qty, dan harga per satuan harus diisi dengan benar." };
+  }
+
+  const result = await addPurchaseOrder({
+    materialId: str(args.materialId),
+    vendorId: str(args.vendorId),
+    supplierName,
+    qty,
+    unitPrice,
+    orderDate: isoDate(args.orderDate) ?? todayJakarta(),
+    expectedDate: isoDate(args.expectedDate),
+    catatan: str(args.catatan),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `PO ke ${supplierName} (qty ${qty}) berhasil dibuat.` } };
+}
+
+async function handleMarkInvoiceStatus(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessInvoices) return denied("Invoice");
+
+  const invoiceId = str(args.invoiceId);
+  const status = str(args.status) as InvoiceStatus | undefined;
+  if (!invoiceId || !status || !INVOICE_STATUSES.includes(status)) {
+    return { success: false, error: "ID invoice atau status tidak valid." };
+  }
+
+  const { data: invoice } = await supabase
+    .from("invoices")
+    .select("invoice_number, status")
+    .eq("id", invoiceId)
+    .maybeSingle<{ invoice_number: string; status: string }>();
+  if (!invoice) return { success: false, error: "Invoice tidak ditemukan." };
+
+  const result = await markInvoiceStatus(invoiceId, status);
+  if (!result.ok) return { success: false, error: result.error };
+  return {
+    success: true,
+    data: { message: `Status invoice ${invoice.invoice_number} berhasil diubah dari "${invoice.status}" ke "${status}".` },
+  };
+}
+
 // ============================================================================
 // KONFIRMASI
 // ============================================================================
@@ -1123,6 +1365,76 @@ async function buildConfirmationResponse(
       `- Estimasi billing: ${rupiah(args.billingEstimate)}`,
       `- Estimasi modal: ${rupiah(args.modalEstimate)}`,
       "- Akan dikirim ke investor untuk diputuskan.",
+    ].join("\n");
+  } else if (toolName === "add_inventory_item") {
+    description = [
+      "Tambah alat baru:",
+      `- Nama: ${args.name}`,
+      `- Kategori: ${args.category}`,
+      `- Lokasi: ${args.location}`,
+      `- Harga/hari: ${rupiah(args.pricePerDay)}`,
+      `- Total unit: ${args.totalUnit}`,
+    ].join("\n");
+  } else if (toolName === "update_inventory_item") {
+    const itemId = str(args.itemId);
+    const { data: item } = itemId
+      ? await supabase.from("magnarent_inventory").select("name").eq("id", itemId).maybeSingle<{ name: string }>()
+      : { data: null };
+    if (!item) return { success: false, error: "Alat tidak ditemukan. Cari dulu ID alat yang benar." };
+    description = [`Ubah data alat "${item.name}":`, "- Field yang tidak disebut tetap memakai nilai lama."].join("\n");
+  } else if (toolName === "add_client") {
+    description = [
+      "Tambah klien baru:",
+      `- Nama: ${args.name}`,
+      `- Industri: ${args.industry}`,
+      `- PIC: ${args.picName}`,
+      `- Status: ${str(args.status) ?? "Prospek"}`,
+    ].join("\n");
+  } else if (toolName === "update_client") {
+    const clientId = str(args.clientId);
+    const { data: client } = clientId
+      ? await supabase.from("magnative_clients").select("name").eq("id", clientId).maybeSingle<{ name: string }>()
+      : { data: null };
+    if (!client) return { success: false, error: "Klien tidak ditemukan. Cari dulu ID klien yang benar." };
+    description = [`Ubah data klien "${client.name}":`, "- Field yang tidak disebut tetap memakai nilai lama."].join("\n");
+  } else if (toolName === "add_material") {
+    description = [
+      "Tambah material baru:",
+      `- Nama: ${args.name}`,
+      `- Kategori: ${args.category}`,
+      `- Stok awal: ${args.stock} ${args.unit}`,
+      `- Harga/satuan: ${rupiah(args.pricePerUnit)}`,
+    ].join("\n");
+  } else if (toolName === "update_material") {
+    const materialId = str(args.materialId);
+    const { data: material } = materialId
+      ? await supabase.from("production_materials").select("name").eq("id", materialId).maybeSingle<{ name: string }>()
+      : { data: null };
+    if (!material) return { success: false, error: "Material tidak ditemukan. Cari dulu ID material yang benar." };
+    description = [`Ubah data material "${material.name}":`, "- Field yang tidak disebut tetap memakai nilai lama."].join("\n");
+  } else if (toolName === "add_purchase_order") {
+    description = [
+      "Buat purchase order:",
+      `- Supplier: ${args.supplierName}`,
+      `- Qty: ${args.qty}`,
+      `- Harga/satuan: ${rupiah(args.unitPrice)}`,
+      `- Tanggal pesan: ${isoDate(args.orderDate) ?? `${todayJakarta()} (hari ini)`}`,
+      `- Perkiraan datang: ${str(args.expectedDate) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "mark_invoice_status") {
+    const invoiceId = str(args.invoiceId);
+    const { data: invoice } = invoiceId
+      ? await supabase
+          .from("invoices")
+          .select("invoice_number, client_name, status")
+          .eq("id", invoiceId)
+          .maybeSingle<{ invoice_number: string; client_name: string; status: string }>()
+      : { data: null };
+    if (!invoice) return { success: false, error: "Invoice tidak ditemukan. Cari dulu ID invoice yang benar." };
+    description = [
+      "Ubah status invoice:",
+      `- Invoice: ${invoice.invoice_number} (${invoice.client_name})`,
+      `- Status: ${invoice.status} → ${args.status}`,
     ].join("\n");
   } else {
     description = `Jalankan ${toolName}`;
