@@ -16,7 +16,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ToolResult, UserContext } from "./types";
 import { isActionTool } from "./tools";
-import { addBooking, updateBookingStatus, addInventoryItem, updateInventoryItem } from "@/lib/magnarent/actions";
+import { addBooking, updateBooking, updateBookingStatus, addInventoryItem, updateInventoryItem } from "@/lib/magnarent/actions";
 import { getAvailableUnitsInRange } from "@/lib/magnarent/availability";
 import { rowToBooking, rowToInventory, type BookingRow, type InventoryRow } from "@/lib/magnarent/mappers";
 import type { BookingStatus, PaymentStatus, InventoryItem, InventoryUnitStatus } from "@/lib/magnarent/types";
@@ -80,6 +80,8 @@ import {
   addAssetComment,
   setAssetCommentResolved,
   getAssetComments,
+  getCheckinStats,
+  updatePortfolioFolder,
 } from "@/lib/magnative/actions";
 import type {
   ProjectTaskStatus,
@@ -147,14 +149,33 @@ import {
   addMaterial,
   updateMaterial,
   addPurchaseOrder,
+  addProject as addProductionProject,
+  updateProject as updateProductionProject,
 } from "@/lib/production/actions";
-import type { BoothStatus, MaterialItem, MaterialCategory, MaterialUnit } from "@/lib/production/types";
+import type {
+  BoothStatus,
+  MaterialItem,
+  MaterialCategory,
+  MaterialUnit,
+  PaymentStatus as ProductionPaymentStatus,
+} from "@/lib/production/types";
+import { rowToBoothProject, type BoothProjectRow } from "@/lib/production/mappers";
 import { getChartOfAccounts, getManualJournalEntries } from "@/lib/accounting/data";
 import { createManualJournalEntry, createAccount, setAccountActive } from "@/lib/accounting/actions";
 import type { AccountType, NormalBalance, ManualJournalDivision } from "@/lib/accounting/types";
-import { createPortalLink, revokePortalLink, listPortalLinks } from "@/lib/portal/actions";
+import { createPortalLink, revokePortalLink, listPortalLinks, listSignatures } from "@/lib/portal/actions";
 import type { PortalModule } from "@/lib/portal/types";
-import { listMyNotifications, markNotificationRead } from "@/lib/notifications/actions";
+import {
+  listMyNotifications,
+  markNotificationRead,
+  listUnreadImportantNotifications,
+  markAllNotificationsRead,
+} from "@/lib/notifications/actions";
+import { sendChatMessage, getChatMessages } from "@/lib/chat/actions";
+import { isRoomAllowed, type ChatRoom } from "@/lib/chat/rooms";
+import { broadcastNotification } from "@/lib/push/actions";
+import { updateNickname } from "@/lib/settings/actions";
+import type { Division } from "@/lib/supabase/types";
 import { addCapitalRequest, decideCapitalRequest } from "@/lib/capital-requests/actions";
 import type { CapitalRequestStatus } from "@/lib/capital-requests/types";
 import {
@@ -466,6 +487,30 @@ export async function executeToolCall(
         return await handleRevokePortalLink(ctx, args);
       case "mark_notification_read":
         return await handleMarkNotificationRead(args);
+      case "get_checkin_stats":
+        return await handleGetCheckinStats(supabase, ctx, args);
+      case "get_portal_signatures":
+        return await handleGetPortalSignatures(ctx, args);
+      case "get_chat_messages":
+        return await handleGetChatMessages(ctx, args);
+      case "get_unread_important_notifications":
+        return await handleGetUnreadImportantNotifications();
+      case "update_booking":
+        return await handleUpdateBooking(supabase, ctx, args);
+      case "add_production_project":
+        return await handleAddProductionProject(ctx, args);
+      case "update_production_project":
+        return await handleUpdateProductionProject(supabase, ctx, args);
+      case "update_portfolio_folder":
+        return await handleUpdatePortfolioFolder(supabase, ctx, args);
+      case "send_chat_message":
+        return await handleSendChatMessage(ctx, args);
+      case "mark_all_notifications_read":
+        return await handleMarkAllNotificationsRead();
+      case "broadcast_notification":
+        return await handleBroadcastNotification(ctx, args);
+      case "update_my_nickname":
+        return await handleUpdateMyNickname(args);
 
       default:
         return { success: false, error: `Tool tidak dikenal: ${toolName}` };
@@ -3395,6 +3440,247 @@ async function handleMarkNotificationRead(args: Args): Promise<ToolResult> {
 }
 
 // ============================================================================
+// WAVE 7 -- Edit booking lengkap, Proyek booth Production, Folder portofolio,
+// Chat tim, Statistik check-in, Tanda tangan portal, Notifikasi lanjutan
+// ============================================================================
+
+const PRODUCTION_PAYMENT_STATUSES: ProductionPaymentStatus[] = ["Belum Bayar", "DP", "Lunas"];
+const BROADCASTABLE_DIVISIONS: Division[] = ["magnarent", "magnative", "production"];
+
+async function handleGetCheckinStats(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+  const resolved = await resolveMagnativeProjectId(supabase, args);
+  if ("error" in resolved) return { success: false, error: resolved.error };
+  if ("candidates" in resolved) {
+    return {
+      success: true,
+      data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates },
+    };
+  }
+  const stats = await getCheckinStats(resolved.projectId);
+  return { success: true, data: stats };
+}
+
+async function handleGetPortalSignatures(ctx: UserContext, args: Args): Promise<ToolResult> {
+  const portalModule = str(args.module) as PortalModule | undefined;
+  const entityId = str(args.entityId);
+  if (!portalModule || !entityId) return { success: false, error: "Modul dan ID entitas harus diisi." };
+  const moduleAccess: Record<PortalModule, boolean> = {
+    magnarent: ctx.canAccessMagnarent,
+    magnative: ctx.canAccessMagnative,
+    production: ctx.canAccessProduction,
+  };
+  if (!moduleAccess[portalModule]) return denied(portalModule);
+  const signatures = await listSignatures(portalModule, entityId);
+  return { success: true, data: { signatures, count: signatures.length } };
+}
+
+async function handleGetChatMessages(ctx: UserContext, args: Args): Promise<ToolResult> {
+  const room = str(args.room) as ChatRoom | undefined;
+  if (!room || !isRoomAllowed(room, ctx.division as Division)) {
+    return { success: false, error: "Ruang chat tidak valid atau tidak bisa diakses." };
+  }
+  const { messages } = await getChatMessages(room);
+  return { success: true, data: { messages, count: messages.length } };
+}
+
+async function handleGetUnreadImportantNotifications(): Promise<ToolResult> {
+  const notifications = await listUnreadImportantNotifications();
+  return { success: true, data: { notifications, count: notifications.length } };
+}
+
+async function handleUpdateBooking(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+  const bookingId = str(args.bookingId);
+  if (!bookingId) return { success: false, error: "ID booking harus diisi." };
+  const { data: row } = await supabase.from("magnarent_bookings").select("*").eq("id", bookingId).maybeSingle<BookingRow>();
+  if (!row) return { success: false, error: "Booking tidak ditemukan." };
+  const current = rowToBooking(row);
+
+  const statusPembayaran =
+    args.statusPembayaran !== undefined && PAYMENT_STATUSES.includes(args.statusPembayaran as PaymentStatus)
+      ? (args.statusPembayaran as PaymentStatus)
+      : current.statusPembayaran;
+
+  const merged = {
+    itemId: str(args.itemId) ?? current.itemId,
+    clientId: current.clientId,
+    namaKlien: str(args.namaKlien) ?? current.namaKlien,
+    teleponKlien: str(args.teleponKlien) ?? current.teleponKlien,
+    tanggalMulai: isoDate(args.tanggalMulai) ?? current.tanggalMulai,
+    tanggalSelesai: isoDate(args.tanggalSelesai) ?? current.tanggalSelesai,
+    jumlahUnit: num(args.jumlahUnit) ?? current.jumlahUnit,
+    statusPembayaran,
+    dpAmount: statusPembayaran === "DP" ? num(args.jumlahDp) ?? current.dpAmount : 0,
+    catatan: str(args.catatan) ?? current.catatan,
+  };
+
+  const result = await updateBooking(bookingId, merged);
+  if (!result.ok) {
+    if ("conflict" in result) {
+      return {
+        success: false,
+        error: `Jadwal bentrok: hanya ${Math.max(0, result.conflict.available)} unit tersedia, diminta ${result.conflict.requested}.`,
+      };
+    }
+    return { success: false, error: result.error };
+  }
+  return { success: true, data: { message: `Booking "${merged.namaKlien}" berhasil diperbarui.` } };
+}
+
+async function handleAddProductionProject(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+  const name = str(args.name);
+  const namaKlien = str(args.namaKlien);
+  const lokasiAcara = str(args.lokasiAcara);
+  const tanggalMulai = isoDate(args.tanggalMulai);
+  const tanggalInstalasi = isoDate(args.tanggalInstalasi);
+  const budget = num(args.budget);
+  if (!name || !namaKlien || !lokasiAcara || !tanggalMulai || !tanggalInstalasi || budget === undefined) {
+    return { success: false, error: "Nama proyek, klien, lokasi, tanggal, dan budget harus diisi." };
+  }
+  const status = BOOTH_STATUSES.includes(args.status as BoothStatus) ? (args.status as BoothStatus) : "Desain";
+  const statusPembayaran = PRODUCTION_PAYMENT_STATUSES.includes(args.statusPembayaran as ProductionPaymentStatus)
+    ? (args.statusPembayaran as ProductionPaymentStatus)
+    : "Belum Bayar";
+  const materials = Array.isArray(args.materials)
+    ? (args.materials as Args[]).map((m) => ({ materialId: str(m.materialId) ?? "", qty: num(m.qty) ?? 0 }))
+    : [];
+
+  const result = await addProductionProject({
+    name,
+    namaKlien,
+    lokasiAcara,
+    status,
+    tanggalMulai,
+    tanggalInstalasi,
+    tanggalBongkarEstimasi: isoDate(args.tanggalBongkarEstimasi),
+    budget,
+    statusPembayaran,
+    dpAmount: statusPembayaran === "DP" ? num(args.jumlahDp) : undefined,
+    materials,
+    catatan: str(args.catatan),
+  });
+
+  if (!result.ok) {
+    if ("conflicts" in result) {
+      const list = result.conflicts.map((c) => `${c.materialName}: diminta ${c.requested}, tersedia ${c.available}`).join("; ");
+      return { success: false, error: `Stok material tidak cukup — ${list}.` };
+    }
+    return { success: false, error: result.error };
+  }
+  return { success: true, data: { message: `Proyek booth "${name}" berhasil dibuat.` } };
+}
+
+async function handleUpdateProductionProject(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+  const projectId = str(args.projectId);
+  if (!projectId) return { success: false, error: "ID proyek harus diisi." };
+  const { data: row } = await supabase
+    .from("production_booth_projects")
+    .select("*")
+    .eq("id", projectId)
+    .maybeSingle<BoothProjectRow>();
+  if (!row) return { success: false, error: "Proyek tidak ditemukan." };
+  const current = rowToBoothProject(row);
+
+  const statusPembayaran =
+    args.statusPembayaran !== undefined && PRODUCTION_PAYMENT_STATUSES.includes(args.statusPembayaran as ProductionPaymentStatus)
+      ? (args.statusPembayaran as ProductionPaymentStatus)
+      : current.statusPembayaran;
+  const status =
+    args.status !== undefined && BOOTH_STATUSES.includes(args.status as BoothStatus) ? (args.status as BoothStatus) : current.status;
+  const materialsArg = Array.isArray(args.materials)
+    ? (args.materials as Args[]).map((m) => ({ materialId: str(m.materialId) ?? "", qty: num(m.qty) ?? 0 }))
+    : undefined;
+
+  const merged = {
+    name: str(args.name) ?? current.name,
+    clientId: current.clientId,
+    namaKlien: str(args.namaKlien) ?? current.namaKlien,
+    lokasiAcara: str(args.lokasiAcara) ?? current.lokasiAcara,
+    status,
+    tanggalMulai: isoDate(args.tanggalMulai) ?? current.tanggalMulai,
+    tanggalInstalasi: isoDate(args.tanggalInstalasi) ?? current.tanggalInstalasi,
+    tanggalBongkarEstimasi: isoDate(args.tanggalBongkarEstimasi) ?? current.tanggalBongkarEstimasi,
+    budget: num(args.budget) ?? current.budget,
+    statusPembayaran,
+    dpAmount: statusPembayaran === "DP" ? num(args.jumlahDp) ?? current.dpAmount : 0,
+    materials: materialsArg && materialsArg.length > 0 ? materialsArg : current.materials,
+    catatan: str(args.catatan) ?? current.catatan,
+  };
+
+  const result = await updateProductionProject(projectId, merged);
+  if (!result.ok) {
+    if ("conflicts" in result) {
+      const list = result.conflicts.map((c) => `${c.materialName}: diminta ${c.requested}, tersedia ${c.available}`).join("; ");
+      return { success: false, error: `Stok material tidak cukup — ${list}.` };
+    }
+    return { success: false, error: result.error };
+  }
+  return { success: true, data: { message: `Proyek booth "${merged.name}" berhasil diperbarui.` } };
+}
+
+async function handleUpdatePortfolioFolder(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+  const folderId = str(args.folderId);
+  if (!folderId) return { success: false, error: "ID folder harus diisi." };
+  const { data: current } = await supabase
+    .from("magnative_portfolio_folders")
+    .select("title, caption")
+    .eq("id", folderId)
+    .maybeSingle<{ title: string; caption: string | null }>();
+  if (!current) return { success: false, error: "Folder portofolio tidak ditemukan." };
+  const merged = { title: str(args.title) ?? current.title, caption: str(args.caption) ?? current.caption ?? undefined };
+  const result = await updatePortfolioFolder(folderId, merged);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Folder portofolio "${merged.title}" berhasil diperbarui.` } };
+}
+
+async function handleSendChatMessage(ctx: UserContext, args: Args): Promise<ToolResult> {
+  const room = str(args.room) as ChatRoom | undefined;
+  const message = str(args.message);
+  if (!room || !isRoomAllowed(room, ctx.division as Division) || !message) {
+    return { success: false, error: "Ruang chat dan isi pesan harus diisi dengan benar." };
+  }
+  const result = await sendChatMessage(room, message);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: "Pesan berhasil dikirim ke chat." } };
+}
+
+async function handleMarkAllNotificationsRead(): Promise<ToolResult> {
+  const { items } = await listMyNotifications();
+  const unreadIds = items.filter((n) => !n.isRead).map((n) => n.id);
+  if (unreadIds.length === 0) return { success: true, data: { message: "Tidak ada notifikasi yang belum dibaca." } };
+  const result = await markAllNotificationsRead(unreadIds);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `${unreadIds.length} notifikasi ditandai sudah dibaca.` } };
+}
+
+async function handleBroadcastNotification(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessAdmin) return denied("Admin");
+  const divisions = Array.isArray(args.divisions)
+    ? (args.divisions as unknown[]).filter((d): d is Division => typeof d === "string" && BROADCASTABLE_DIVISIONS.includes(d as Division))
+    : [];
+  const title = str(args.title);
+  const body = str(args.body);
+  if (divisions.length === 0 || !title || !body) {
+    return { success: false, error: "Divisi tujuan, judul, dan isi notifikasi harus diisi." };
+  }
+  const result = await broadcastNotification(divisions, { title, body, url: str(args.url) });
+  if (!result.ok) return { success: false, error: result.message };
+  return { success: true, data: { message: result.message ?? "Notifikasi sedang dikirim." } };
+}
+
+async function handleUpdateMyNickname(args: Args): Promise<ToolResult> {
+  const nickname = str(args.nickname);
+  if (!nickname) return { success: false, error: "Nama panggilan baru harus diisi." };
+  const result = await updateNickname(nickname);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Nama panggilan berhasil diubah jadi "@${result.nickname}".` } };
+}
+
+// ============================================================================
 // KONFIRMASI
 // ============================================================================
 
@@ -4175,6 +4461,80 @@ async function buildConfirmationResponse(
     description = [`Cabut link portal:`, `- ID link: ${str(args.linkId) ?? "-"}`, `- Modul: ${str(args.module) ?? "-"}`].join("\n");
   } else if (toolName === "mark_notification_read") {
     description = `Tandai notifikasi sudah dibaca (ID: ${str(args.notificationId) ?? "-"}).`;
+  } else if (toolName === "update_booking") {
+    const updBookingId = str(args.bookingId);
+    const { data: updBooking } = updBookingId
+      ? await supabase.from("magnarent_bookings").select("nama_klien").eq("id", updBookingId).maybeSingle<{ nama_klien: string }>()
+      : { data: null };
+    if (!updBooking) return { success: false, error: "Booking tidak ditemukan. Cari dulu ID yang benar." };
+    description = [
+      `Ubah booking "${updBooking.nama_klien}":`,
+      str(args.namaKlien) !== undefined ? `- Klien baru: ${str(args.namaKlien)}` : null,
+      str(args.tanggalMulai) !== undefined || str(args.tanggalSelesai) !== undefined
+        ? `- Tanggal baru: ${str(args.tanggalMulai) ?? "-"} s/d ${str(args.tanggalSelesai) ?? "-"}`
+        : null,
+      args.jumlahUnit !== undefined ? `- Jumlah unit baru: ${num(args.jumlahUnit)}` : null,
+      str(args.statusPembayaran) !== undefined ? `- Status pembayaran baru: ${str(args.statusPembayaran)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "add_production_project") {
+    const projMaterials = Array.isArray(args.materials) ? (args.materials as Args[]) : [];
+    description = [
+      "Buat proyek booth baru:",
+      `- Nama: ${str(args.name) ?? "-"}`,
+      `- Klien: ${str(args.namaKlien) ?? "-"}`,
+      `- Lokasi: ${str(args.lokasiAcara) ?? "-"}`,
+      `- Budget: ${rupiah(args.budget)}`,
+      `- Jumlah alokasi material: ${projMaterials.length}`,
+    ].join("\n");
+  } else if (toolName === "update_production_project") {
+    const updProjId = str(args.projectId);
+    const { data: updProj } = updProjId
+      ? await supabase.from("production_booth_projects").select("name").eq("id", updProjId).maybeSingle<{ name: string }>()
+      : { data: null };
+    if (!updProj) return { success: false, error: "Proyek booth tidak ditemukan. Cari dulu ID yang benar." };
+    const updProjMaterials = Array.isArray(args.materials) ? (args.materials as Args[]) : undefined;
+    description = [
+      `Ubah proyek booth "${updProj.name}":`,
+      str(args.name) !== undefined ? `- Nama baru: ${str(args.name)}` : null,
+      str(args.status) !== undefined ? `- Tahapan baru: ${str(args.status)}` : null,
+      args.budget !== undefined ? `- Budget baru: ${rupiah(args.budget)}` : null,
+      updProjMaterials ? `- Jumlah alokasi material baru: ${updProjMaterials.length}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "update_portfolio_folder") {
+    const folderId = str(args.folderId);
+    const { data: folder } = folderId
+      ? await supabase.from("magnative_portfolio_folders").select("title").eq("id", folderId).maybeSingle<{ title: string }>()
+      : { data: null };
+    if (!folder) return { success: false, error: "Folder portofolio tidak ditemukan. Cari dulu ID yang benar." };
+    description = [
+      `Ubah folder portofolio "${folder.title}":`,
+      str(args.title) !== undefined ? `- Judul baru: ${str(args.title)}` : null,
+      str(args.caption) !== undefined ? `- Caption baru: ${str(args.caption)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "send_chat_message") {
+    const chatMsg = str(args.message) ?? "";
+    description = [
+      `Kirim pesan ke ruang chat "${str(args.room) ?? "-"}":`,
+      `"${chatMsg.length > 200 ? `${chatMsg.slice(0, 197)}...` : chatMsg}"`,
+    ].join("\n");
+  } else if (toolName === "mark_all_notifications_read") {
+    description = "Tandai semua notifikasi yang belum dibaca sebagai sudah dibaca.";
+  } else if (toolName === "broadcast_notification") {
+    const broadcastDivisions = Array.isArray(args.divisions) ? (args.divisions as unknown[]) : [];
+    description = [
+      "Kirim notifikasi broadcast:",
+      `- Tujuan: ${broadcastDivisions.join(", ") || "-"}`,
+      `- Judul: ${str(args.title) ?? "-"}`,
+      `- Isi: ${str(args.body) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "update_my_nickname") {
+    description = `Ganti nama panggilan jadi "@${str(args.nickname) ?? "-"}".`;
   } else {
     description = `Jalankan ${toolName}`;
   }

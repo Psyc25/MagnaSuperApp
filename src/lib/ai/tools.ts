@@ -764,6 +764,62 @@ export const QUERY_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_checkin_stats",
+      description: "Ambil statistik check-in tamu untuk satu proyek Magnativ (dari link check-in QR).",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek Magnativ" },
+          projectName: { type: "string", description: "Nama proyek (alternatif kalau ID tidak diketahui)" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_portal_signatures",
+      description: "Ambil daftar tanda tangan digital klien pada dokumen portal (kontrak/invoice) untuk satu booking/proyek.",
+      parameters: {
+        type: "object",
+        properties: {
+          module: { type: "string", enum: ["magnarent", "magnative", "production"], description: "Modul entitas" },
+          entityId: { type: "string", description: "ID booking/proyek" },
+        },
+        required: ["module", "entityId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_chat_messages",
+      description: "Ambil pesan-pesan terbaru di satu ruang chat tim (bersama/magnarent/magnative/production).",
+      parameters: {
+        type: "object",
+        properties: {
+          room: { type: "string", enum: ["bersama", "magnarent", "magnative", "production"], description: "Ruang chat" },
+        },
+        required: ["room"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_unread_important_notifications",
+      description: "Ambil notifikasi PENTING yang belum dibaca oleh user yang sedang chat.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
 ];
 
 /**
@@ -2350,6 +2406,186 @@ export const ACTION_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "update_booking",
+      description: "Ubah detail booking Magnarent (bukan cuma status) — alat, klien, tanggal, jumlah unit, pembayaran. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "ID booking yang akan diubah (dari get_bookings)" },
+          itemId: { type: "string", description: "ID alat baru (kalau diganti)" },
+          namaKlien: { type: "string", description: "Nama klien baru" },
+          teleponKlien: { type: "string", description: "Nomor telepon klien baru" },
+          tanggalMulai: { type: "string", description: "Tanggal mulai sewa baru (YYYY-MM-DD)" },
+          tanggalSelesai: { type: "string", description: "Tanggal selesai sewa baru (YYYY-MM-DD)" },
+          jumlahUnit: { type: "number", description: "Jumlah unit baru" },
+          statusPembayaran: { type: "string", enum: ["Belum Bayar", "DP", "Lunas"], description: "Status pembayaran baru" },
+          jumlahDp: { type: "number", description: "Jumlah DP baru (jika status DP)" },
+          catatan: { type: "string", description: "Catatan baru" },
+        },
+        required: ["bookingId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_production_project",
+      description: "Buat proyek booth baru di Production, termasuk alokasi material. HARUS konfirmasi dengan user sebelum membuat.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nama proyek booth" },
+          namaKlien: { type: "string", description: "Nama klien" },
+          lokasiAcara: { type: "string", description: "Lokasi acara" },
+          status: {
+            type: "string",
+            enum: ["Desain", "Produksi", "Finishing", "Instalasi", "Selesai", "Dibatalkan"],
+            description: "Tahapan produksi (default Desain)",
+          },
+          tanggalMulai: { type: "string", description: "Tanggal mulai pengerjaan (YYYY-MM-DD)" },
+          tanggalInstalasi: { type: "string", description: "Deadline instalasi di lokasi (YYYY-MM-DD)" },
+          tanggalBongkarEstimasi: { type: "string", description: "Estimasi tanggal bongkar (YYYY-MM-DD, opsional)" },
+          budget: { type: "number", description: "Budget proyek" },
+          statusPembayaran: { type: "string", enum: ["Belum Bayar", "DP", "Lunas"], description: "Status pembayaran klien (default Belum Bayar)" },
+          jumlahDp: { type: "number", description: "Jumlah DP (jika status DP)" },
+          materials: {
+            type: "array",
+            description: "Alokasi material (pakai materialId dari get_materials)",
+            items: {
+              type: "object",
+              properties: {
+                materialId: { type: "string", description: "ID material" },
+                qty: { type: "number", description: "Jumlah alokasi" },
+              },
+            },
+          },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["name", "namaKlien", "lokasiAcara", "tanggalMulai", "tanggalInstalasi", "budget"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_production_project",
+      description: "Ubah detail proyek booth Production yang sudah ada. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek booth yang akan diubah (dari get_projects)" },
+          name: { type: "string", description: "Nama proyek baru" },
+          namaKlien: { type: "string", description: "Nama klien baru" },
+          lokasiAcara: { type: "string", description: "Lokasi acara baru" },
+          status: {
+            type: "string",
+            enum: ["Desain", "Produksi", "Finishing", "Instalasi", "Selesai", "Dibatalkan"],
+            description: "Tahapan produksi baru",
+          },
+          tanggalMulai: { type: "string", description: "Tanggal mulai baru (YYYY-MM-DD)" },
+          tanggalInstalasi: { type: "string", description: "Deadline instalasi baru (YYYY-MM-DD)" },
+          tanggalBongkarEstimasi: { type: "string", description: "Estimasi tanggal bongkar baru (YYYY-MM-DD)" },
+          budget: { type: "number", description: "Budget baru" },
+          statusPembayaran: { type: "string", enum: ["Belum Bayar", "DP", "Lunas"], description: "Status pembayaran baru" },
+          jumlahDp: { type: "number", description: "Jumlah DP baru" },
+          materials: {
+            type: "array",
+            description: "Alokasi material baru (menggantikan seluruh alokasi lama kalau diisi)",
+            items: {
+              type: "object",
+              properties: {
+                materialId: { type: "string", description: "ID material" },
+                qty: { type: "number", description: "Jumlah alokasi" },
+              },
+            },
+          },
+          catatan: { type: "string", description: "Catatan baru" },
+        },
+        required: ["projectId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_portfolio_folder",
+      description: "Ubah judul/caption folder portofolio Magnativ yang sudah ada (bukan untuk menambah/mengubah foto). HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          folderId: { type: "string", description: "ID folder portofolio (dari get_portfolio_folders)" },
+          title: { type: "string", description: "Judul baru" },
+          caption: { type: "string", description: "Caption baru" },
+        },
+        required: ["folderId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_chat_message",
+      description: "Kirim pesan ke ruang chat tim (bersama/divisi). HARUS konfirmasi dengan user sebelum mengirim.",
+      parameters: {
+        type: "object",
+        properties: {
+          room: { type: "string", enum: ["bersama", "magnarent", "magnative", "production"], description: "Ruang chat tujuan" },
+          message: { type: "string", description: "Isi pesan" },
+        },
+        required: ["room", "message"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mark_all_notifications_read",
+      description: "Tandai SEMUA notifikasi in-app milik user yang sedang chat sebagai sudah dibaca sekaligus. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "broadcast_notification",
+      description: "Kirim notifikasi push manual ke staf satu/lebih divisi operasional (bukan investor). HARUS konfirmasi dengan user sebelum mengirim.",
+      parameters: {
+        type: "object",
+        properties: {
+          divisions: {
+            type: "array",
+            description: "Divisi tujuan",
+            items: { type: "string", enum: ["magnarent", "magnative", "production"] },
+          },
+          title: { type: "string", description: "Judul notifikasi" },
+          body: { type: "string", description: "Isi notifikasi" },
+          url: { type: "string", description: "URL tujuan saat notifikasi diklik (opsional)" },
+        },
+        required: ["divisions", "title", "body"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_my_nickname",
+      description: "Ganti nama panggilan (@username) akun user yang sedang chat, dipakai untuk tag di fitur Chat. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          nickname: { type: "string", description: "Nama panggilan baru (huruf kecil, angka, titik, garis bawah, atau strip)" },
+        },
+        required: ["nickname"],
+      },
+    },
+  },
 ];
 
 /**
@@ -2487,6 +2723,18 @@ export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
     get_portal_links: ctx.canAccessMagnarent || ctx.canAccessMagnative || ctx.canAccessProduction,
     create_portal_link: ctx.canAccessMagnarent || ctx.canAccessMagnative || ctx.canAccessProduction,
     revoke_portal_link: ctx.canAccessMagnarent || ctx.canAccessMagnative || ctx.canAccessProduction,
+    get_checkin_stats: ctx.canAccessMagnative,
+    get_portal_signatures: ctx.canAccessMagnarent || ctx.canAccessMagnative || ctx.canAccessProduction,
+    get_chat_messages: ctx.division !== "investor",
+    get_unread_important_notifications: ctx.division !== "investor",
+    update_booking: ctx.canAccessMagnarent,
+    add_production_project: ctx.canAccessProduction,
+    update_production_project: ctx.canAccessProduction,
+    update_portfolio_folder: ctx.canAccessMagnative,
+    send_chat_message: ctx.division !== "investor",
+    mark_all_notifications_read: true,
+    broadcast_notification: ctx.canAccessAdmin,
+    update_my_nickname: true,
   };
   return AI_TOOLS.filter((t) => allowed[t.function.name]);
 }
@@ -2512,6 +2760,11 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_products",
     "get_my_notifications",
     "mark_notification_read",
+    "get_chat_messages",
+    "send_chat_message",
+    "get_unread_important_notifications",
+    "mark_all_notifications_read",
+    "update_my_nickname",
   ];
   const MAGNARENT_TOOLS = [
     ...COMMON_TOOLS,
@@ -2520,6 +2773,7 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "check_availability",
     "create_booking",
     "update_booking_status",
+    "update_booking",
     "get_maintenance_logs",
     "get_deliveries",
     "add_maintenance_log",
@@ -2547,6 +2801,7 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_portal_links",
     "create_portal_link",
     "revoke_portal_link",
+    "get_portal_signatures",
   ];
   const MAGNATIVE_TOOLS = [
     ...COMMON_TOOLS,
@@ -2584,6 +2839,9 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_portal_links",
     "create_portal_link",
     "revoke_portal_link",
+    "get_portal_signatures",
+    "get_checkin_stats",
+    "update_portfolio_folder",
   ];
   const PRODUCTION_TOOLS = [
     ...COMMON_TOOLS,
@@ -2598,6 +2856,8 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "add_material",
     "update_material",
     "add_purchase_order",
+    "add_production_project",
+    "update_production_project",
     "get_production_vendors",
     "add_production_vendor",
     "update_production_vendor",
@@ -2608,6 +2868,7 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_portal_links",
     "create_portal_link",
     "revoke_portal_link",
+    "get_portal_signatures",
     "get_nc_reports",
     "add_nc_report",
     "update_nc_report_progress",
