@@ -683,6 +683,87 @@ export const QUERY_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_products",
+      description: "Ambil daftar produk katalog (Magnarent/Magnativ/Production/Umum) — nama, kategori, harga, stok, SKU.",
+      parameters: {
+        type: "object",
+        properties: {
+          division: { type: "string", enum: ["magnarent", "magnativ", "production", "umum"], description: "Filter divisi produk (opsional)" },
+          search: { type: "string", description: "Cari berdasarkan nama/kategori/SKU (opsional)" },
+          limit: { type: "number", description: "Maksimal hasil (default 20)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_my_notifications",
+      description: "Ambil notifikasi in-app milik user yang sedang chat, termasuk jumlah yang belum dibaca.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_crew_conflicts",
+      description: "Cek bentrok jadwal satu nama kru Magnarent terhadap booking lain yang tanggalnya tumpang tindih dengan booking ini.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "ID booking yang ingin dicek (dari get_bookings)" },
+          crewName: { type: "string", description: "Nama kru yang ingin dicek" },
+        },
+        required: ["bookingId", "crewName"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_material_transfers",
+      description: "Ambil riwayat transfer stok material Production antar lokasi/gudang.",
+      parameters: {
+        type: "object",
+        properties: {
+          materialId: { type: "string", description: "ID material (dari get_materials)" },
+          materialName: { type: "string", description: "Nama material, dipakai kalau materialId belum diketahui" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_project_documents",
+      description: "Ambil daftar gambar kerja/desain (dokumen) yang terlampir di satu proyek booth Production.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek booth (dari get_projects)" },
+          projectName: { type: "string", description: "Nama proyek, dipakai kalau projectId belum diketahui" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_portal_links",
+      description: "Ambil daftar link portal klien yang pernah dibuat untuk satu proyek/booking (Magnarent/Magnativ/Production).",
+      parameters: {
+        type: "object",
+        properties: {
+          module: { type: "string", enum: ["magnarent", "magnative", "production"], description: "Modul entitas" },
+          entityId: { type: "string", description: "ID booking/proyek" },
+        },
+        required: ["module", "entityId"],
+      },
+    },
+  },
 ];
 
 /**
@@ -1907,6 +1988,368 @@ export const ACTION_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "add_invoice",
+      description: "Buat invoice/faktur baru untuk Magnarent/Magnativ/Production. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          division: { type: "string", enum: ["magnarent", "magnative", "production"], description: "Divisi invoice" },
+          clientName: { type: "string", description: "Nama klien" },
+          clientPhone: { type: "string", description: "Nomor WhatsApp klien (opsional, dipakai kalau mau kirim invoice)" },
+          eventName: { type: "string", description: "Nama acara/proyek (opsional)" },
+          items: {
+            type: "array",
+            description: "Baris item invoice",
+            items: {
+              type: "object",
+              properties: {
+                description: { type: "string", description: "Deskripsi item" },
+                qty: { type: "number", description: "Jumlah/qty" },
+                unitPrice: { type: "number", description: "Harga satuan (Rupiah)" },
+              },
+              required: ["description", "qty", "unitPrice"],
+            },
+          },
+          shippingCost: { type: "number", description: "Ongkos kirim (opsional, Rupiah)" },
+          depositAmount: { type: "number", description: "Jaminan/deposit yang dapat dikembalikan (opsional, Rupiah)" },
+          dueDate: { type: "string", description: "Tanggal jatuh tempo (YYYY-MM-DD, opsional)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["division", "clientName", "items"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_invoice",
+      description:
+        "Ubah data invoice yang sudah ada (klien, item, ongkos kirim, dst). Field yang tidak diisi TETAP memakai nilai lama — kecuali 'items', yang kalau diisi MENGGANTI seluruh baris item lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          invoiceId: { type: "string", description: "ID invoice (dari get_invoices)" },
+          clientName: { type: "string", description: "Nama klien baru" },
+          clientPhone: { type: "string", description: "Nomor WhatsApp klien baru" },
+          eventName: { type: "string", description: "Nama acara/proyek baru" },
+          items: {
+            type: "array",
+            description: "Baris item invoice baru (kalau diisi, MENGGANTI seluruh item lama)",
+            items: {
+              type: "object",
+              properties: {
+                description: { type: "string" },
+                qty: { type: "number" },
+                unitPrice: { type: "number" },
+              },
+              required: ["description", "qty", "unitPrice"],
+            },
+          },
+          shippingCost: { type: "number", description: "Ongkos kirim baru (Rupiah)" },
+          depositAmount: { type: "number", description: "Jaminan/deposit baru (Rupiah)" },
+          dueDate: { type: "string", description: "Tanggal jatuh tempo baru (YYYY-MM-DD)" },
+          catatan: { type: "string", description: "Catatan baru" },
+        },
+        required: ["invoiceId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_invoice_whatsapp",
+      description: "Generate PDF invoice dan kirim ke nomor WhatsApp klien lewat bot. HARUS konfirmasi dengan user sebelum mengirim.",
+      parameters: {
+        type: "object",
+        properties: {
+          invoiceId: { type: "string", description: "ID invoice (dari get_invoices)" },
+        },
+        required: ["invoiceId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_product",
+      description: "Tambah produk baru ke katalog (tanpa foto -- foto dikelola manual lewat halaman Produk). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nama produk" },
+          divisions: {
+            type: "array",
+            items: { type: "string", enum: ["magnarent", "magnativ", "production", "umum"] },
+            description: "Divisi produk (boleh lebih dari satu, default: umum)",
+          },
+          category: { type: "string", description: "Kategori produk" },
+          sku: { type: "string", description: "SKU (opsional, dibuatkan otomatis kalau kosong)" },
+          price: { type: "number", description: "Harga" },
+          unit: { type: "string", description: "Satuan (default: unit)" },
+          stock: { type: "number", description: "Stok" },
+          supplier: { type: "string", description: "Supplier (opsional)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_product",
+      description:
+        "Ubah data teks produk katalog (nama, kategori, harga, stok, dst -- foto dikelola manual lewat halaman Produk). Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          productId: { type: "string", description: "ID produk (dari get_products)" },
+          name: { type: "string", description: "Nama baru" },
+          divisions: {
+            type: "array",
+            items: { type: "string", enum: ["magnarent", "magnativ", "production", "umum"] },
+            description: "Divisi baru",
+          },
+          category: { type: "string", description: "Kategori baru" },
+          sku: { type: "string", description: "SKU baru" },
+          price: { type: "number", description: "Harga baru" },
+          unit: { type: "string", description: "Satuan baru" },
+          stock: { type: "number", description: "Stok baru" },
+          supplier: { type: "string", description: "Supplier baru" },
+          catatan: { type: "string", description: "Catatan baru" },
+        },
+        required: ["productId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_warehouse",
+      description: "Tambah gudang fisik baru untuk Magnarent (lokasi penempatan unit alat). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          nama: { type: "string", description: "Nama gudang" },
+          alamat: { type: "string", description: "Alamat (opsional)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["nama"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_warehouse",
+      description: "Ubah data gudang Magnarent. Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          warehouseId: { type: "string", description: "ID gudang (dari get_warehouses)" },
+          nama: { type: "string", description: "Nama baru" },
+          alamat: { type: "string", description: "Alamat baru" },
+          catatan: { type: "string", description: "Catatan baru" },
+        },
+        required: ["warehouseId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_subrent_status",
+      description: "Ubah status catatan subrent (sewa alat dari vendor luar) Magnarent. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          subrentId: { type: "string", description: "ID catatan subrent (dari get_subrent_records)" },
+          status: { type: "string", enum: ["Dipesan", "Diterima", "Dikembalikan", "Dibatalkan"], description: "Status baru" },
+        },
+        required: ["subrentId", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "bulk_scan_update_unit_status",
+      description:
+        "Update status banyak unit alat Magnarent sekaligus berdasarkan kode unit/RFID tag (hasil scan QR). Kode yang tidak ketemu atau cocok ke lebih dari satu unit akan dilaporkan, bukan diubah. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          codes: { type: "array", items: { type: "string" }, description: "Daftar kode unit atau RFID tag" },
+          status: { type: "string", enum: ["Tersedia", "Dipinjam", "Maintenance", "Hilang"], description: "Status baru" },
+        },
+        required: ["codes", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_bom_template",
+      description:
+        "Ubah template BOM (Bill of Materials) Production -- nama, deskripsi, daftar item material. Field yang tidak diisi TETAP memakai nilai lama -- kecuali 'items', yang kalau diisi MENGGANTI seluruh item lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          templateId: { type: "string", description: "ID template BOM (dari get_bom_templates)" },
+          name: { type: "string", description: "Nama baru" },
+          description: { type: "string", description: "Deskripsi baru" },
+          items: {
+            type: "array",
+            description: "Daftar item material baru (kalau diisi, MENGGANTI seluruh item lama)",
+            items: {
+              type: "object",
+              properties: {
+                materialId: { type: "string", description: "ID material (dari get_materials)" },
+                qty: { type: "number", description: "Jumlah kebutuhan" },
+              },
+              required: ["materialId", "qty"],
+            },
+          },
+        },
+        required: ["templateId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "transfer_material_stock",
+      description:
+        "Transfer stok material Production ke lokasi/gudang lain -- mengurangi stok lokasi asal & menambah di lokasi tujuan, serta mencatat riwayatnya. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          materialId: { type: "string", description: "ID material (dari get_materials)" },
+          materialName: { type: "string", description: "Nama material, dipakai kalau materialId belum diketahui" },
+          qty: { type: "number", description: "Jumlah yang ditransfer" },
+          toLocation: { type: "string", description: "Lokasi/gudang tujuan" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["qty", "toLocation"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_journal_entry",
+      description:
+        "Input jurnal akuntansi MANUAL (bukan dari invoice/realisasi event otomatis) -- mis. setoran modal awal, koreksi saldo, penyusutan aset. Total debit harus sama dengan total kredit. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          entryDate: { type: "string", description: "Tanggal jurnal (YYYY-MM-DD)" },
+          description: { type: "string", description: "Keterangan jurnal" },
+          division: { type: "string", enum: ["magnarent", "magnative", "production"], description: "Divisi terkait (opsional)" },
+          lines: {
+            type: "array",
+            description: "Baris jurnal, minimal 2 (debit & kredit) -- total debit harus sama dengan total kredit",
+            items: {
+              type: "object",
+              properties: {
+                accountCode: { type: "string", description: "Kode akun (dari get_chart_of_accounts)" },
+                debit: { type: "number", description: "Nominal debit (isi 0 kalau baris ini kredit)" },
+                credit: { type: "number", description: "Nominal kredit (isi 0 kalau baris ini debit)" },
+                notes: { type: "string", description: "Catatan baris (opsional)" },
+              },
+              required: ["accountCode"],
+            },
+          },
+        },
+        required: ["entryDate", "description", "lines"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_account",
+      description: "Tambah akun baru ke Daftar Akun (Chart of Accounts). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          code: { type: "string", description: "Kode akun" },
+          name: { type: "string", description: "Nama akun" },
+          type: { type: "string", enum: ["Aset", "Kewajiban", "Modal", "Pendapatan", "Beban"], description: "Tipe akun" },
+          subtype: { type: "string", description: "Subtipe akun (opsional)" },
+          normalBalance: { type: "string", enum: ["Debit", "Kredit"], description: "Saldo normal" },
+          description: { type: "string", description: "Deskripsi akun (opsional)" },
+        },
+        required: ["code", "name", "type", "normalBalance"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_account_active",
+      description:
+        "Aktifkan/nonaktifkan akun di Daftar Akun -- akun yang sudah pernah dipakai di jurnal tidak bisa dihapus, cukup dinonaktifkan supaya tidak muncul lagi di pilihan akun baru. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          accountId: { type: "string", description: "ID akun (dari get_chart_of_accounts)" },
+          isActive: { type: "boolean", description: "true = aktifkan, false = nonaktifkan" },
+        },
+        required: ["accountId", "isActive"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_portal_link",
+      description:
+        "Buat link portal klien (akses tanpa login) untuk satu booking/proyek Magnarent/Magnativ/Production -- dipakai tombol 'Bagikan ke Klien'. HARUS konfirmasi dengan user sebelum membuat.",
+      parameters: {
+        type: "object",
+        properties: {
+          module: { type: "string", enum: ["magnarent", "magnative", "production"], description: "Modul entitas" },
+          entityId: { type: "string", description: "ID booking/proyek" },
+          clientName: { type: "string", description: "Nama klien (opsional, buat tampil di panel)" },
+          expiresInDays: { type: "number", description: "Link berlaku berapa hari (opsional, kosong = tidak kedaluwarsa)" },
+        },
+        required: ["module", "entityId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "revoke_portal_link",
+      description: "Cabut/nonaktifkan satu link portal klien yang sudah dibuat (mis. salah kirim atau proyek batal). HARUS konfirmasi dengan user sebelum mencabut.",
+      parameters: {
+        type: "object",
+        properties: {
+          linkId: { type: "string", description: "ID link portal (dari get_portal_links)" },
+          module: { type: "string", enum: ["magnarent", "magnative", "production"], description: "Modul entitas" },
+        },
+        required: ["linkId", "module"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mark_notification_read",
+      description: "Tandai satu notifikasi in-app milik user yang sedang chat sebagai sudah dibaca. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          notificationId: { type: "string", description: "ID notifikasi (dari get_my_notifications)" },
+        },
+        required: ["notificationId"],
+      },
+    },
+  },
 ];
 
 /**
@@ -2021,6 +2464,29 @@ export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
     cancel_purchase_order: ctx.canAccessPurchaseOrders,
     decide_capital_request: ctx.canAccessCapital,
     update_event_expense: ctx.canAccessExpenses,
+    get_products: true,
+    add_product: ctx.canAccessAdmin,
+    update_product: ctx.canAccessAdmin,
+    get_my_notifications: true,
+    mark_notification_read: true,
+    check_crew_conflicts: ctx.canAccessMagnarent,
+    add_warehouse: ctx.canAccessMagnarent,
+    update_warehouse: ctx.canAccessMagnarent,
+    update_subrent_status: ctx.canAccessMagnarent,
+    bulk_scan_update_unit_status: ctx.canAccessMagnarent,
+    get_material_transfers: ctx.canAccessProduction,
+    get_project_documents: ctx.canAccessProduction,
+    update_bom_template: ctx.canAccessProduction,
+    transfer_material_stock: ctx.canAccessProduction,
+    add_invoice: ctx.canAccessInvoices,
+    update_invoice: ctx.canAccessInvoices,
+    send_invoice_whatsapp: ctx.canAccessInvoices,
+    add_journal_entry: ctx.canAccessAccounting,
+    add_account: ctx.canAccessAccounting,
+    set_account_active: ctx.canAccessAccounting,
+    get_portal_links: ctx.canAccessMagnarent || ctx.canAccessMagnative || ctx.canAccessProduction,
+    create_portal_link: ctx.canAccessMagnarent || ctx.canAccessMagnative || ctx.canAccessProduction,
+    revoke_portal_link: ctx.canAccessMagnarent || ctx.canAccessMagnative || ctx.canAccessProduction,
   };
   return AI_TOOLS.filter((t) => allowed[t.function.name]);
 }
@@ -2038,7 +2504,15 @@ export function isActionTool(toolName: string): boolean {
  */
 export function getToolsForAgent(agentId: string): ToolDefinition[] {
   // Tool mappings per specialty
-  const COMMON_TOOLS = ["search_global", "get_daily_summary", "get_events", "get_event_detail"];
+  const COMMON_TOOLS = [
+    "search_global",
+    "get_daily_summary",
+    "get_events",
+    "get_event_detail",
+    "get_products",
+    "get_my_notifications",
+    "mark_notification_read",
+  ];
   const MAGNARENT_TOOLS = [
     ...COMMON_TOOLS,
     "get_bookings",
@@ -2053,9 +2527,13 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "add_inventory_item",
     "update_inventory_item",
     "get_warehouses",
+    "add_warehouse",
+    "update_warehouse",
     "get_subrent_records",
     "add_subrent_record",
+    "update_subrent_status",
     "get_inventory_units",
+    "bulk_scan_update_unit_status",
     "get_warehouse_transfers",
     "transfer_unit_to_warehouse",
     "get_booking_deposit",
@@ -2065,6 +2543,10 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "add_seasonal_pricing_rule",
     "get_crew_assignments",
     "add_crew_assignment",
+    "check_crew_conflicts",
+    "get_portal_links",
+    "create_portal_link",
+    "revoke_portal_link",
   ];
   const MAGNATIVE_TOOLS = [
     ...COMMON_TOOLS,
@@ -2099,6 +2581,9 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "update_project_pipeline_stage",
     "add_asset_comment",
     "set_asset_comment_resolved",
+    "get_portal_links",
+    "create_portal_link",
+    "revoke_portal_link",
   ];
   const PRODUCTION_TOOLS = [
     ...COMMON_TOOLS,
@@ -2116,6 +2601,13 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_production_vendors",
     "add_production_vendor",
     "update_production_vendor",
+    "get_material_transfers",
+    "transfer_material_stock",
+    "get_project_documents",
+    "update_bom_template",
+    "get_portal_links",
+    "create_portal_link",
+    "revoke_portal_link",
     "get_nc_reports",
     "add_nc_report",
     "update_nc_report_progress",
@@ -2148,6 +2640,12 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "mark_invoice_status",
     "decide_capital_request",
     "update_event_expense",
+    "add_invoice",
+    "update_invoice",
+    "send_invoice_whatsapp",
+    "add_journal_entry",
+    "add_account",
+    "set_account_active",
   ];
   const EVENT_TOOLS = [...COMMON_TOOLS, "create_event_expense"];
 

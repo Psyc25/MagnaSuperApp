@@ -19,7 +19,7 @@ import { isActionTool } from "./tools";
 import { addBooking, updateBookingStatus, addInventoryItem, updateInventoryItem } from "@/lib/magnarent/actions";
 import { getAvailableUnitsInRange } from "@/lib/magnarent/availability";
 import { rowToBooking, rowToInventory, type BookingRow, type InventoryRow } from "@/lib/magnarent/mappers";
-import type { BookingStatus, PaymentStatus, InventoryItem } from "@/lib/magnarent/types";
+import type { BookingStatus, PaymentStatus, InventoryItem, InventoryUnitStatus } from "@/lib/magnarent/types";
 import { BOOKING_TRANSITIONS } from "@/lib/magnarent/booking-status";
 import {
   addMaintenanceLog,
@@ -39,15 +39,21 @@ import {
   getCrewAssignments,
   addCrewAssignment,
   findCrewConflicts,
+  addWarehouse,
+  updateWarehouse,
+  updateSubrentStatus,
+  bulkScanUpdateStatus,
 } from "@/lib/magnarent/extras-actions";
 import {
   MAINTENANCE_JENIS,
   DELIVERY_STATUS,
+  SUBRENT_STATUS,
   type MaintenanceJenis,
   type DeliveryStage,
   type DeliveryStatus,
   type DepositJenis,
   type CrewRole as MagnarentCrewRole,
+  type SubrentStatus,
 } from "@/lib/magnarent/extras-types";
 import {
   addProjectTask,
@@ -116,6 +122,10 @@ import {
   addCrewPiecePayment,
   updateCrewPiecePaymentStatus,
   addProjectCrew,
+  updateBomTemplate,
+  transferMaterialStock,
+  getMaterialTransfers,
+  getProjectDocuments,
 } from "@/lib/production/extras-actions";
 import type {
   VendorCategory as ProductionVendorCategory,
@@ -140,10 +150,24 @@ import {
 } from "@/lib/production/actions";
 import type { BoothStatus, MaterialItem, MaterialCategory, MaterialUnit } from "@/lib/production/types";
 import { getChartOfAccounts, getManualJournalEntries } from "@/lib/accounting/data";
+import { createManualJournalEntry, createAccount, setAccountActive } from "@/lib/accounting/actions";
+import type { AccountType, NormalBalance, ManualJournalDivision } from "@/lib/accounting/types";
+import { createPortalLink, revokePortalLink, listPortalLinks } from "@/lib/portal/actions";
+import type { PortalModule } from "@/lib/portal/types";
+import { listMyNotifications, markNotificationRead } from "@/lib/notifications/actions";
 import { addCapitalRequest, decideCapitalRequest } from "@/lib/capital-requests/actions";
 import type { CapitalRequestStatus } from "@/lib/capital-requests/types";
-import { markInvoiceStatus } from "@/lib/invoices/actions";
-import type { InvoiceStatus } from "@/lib/invoices/types";
+import {
+  markInvoiceStatus,
+  createInvoice,
+  updateInvoice,
+  sendInvoiceWhatsApp,
+  type InvoiceItemInput,
+} from "@/lib/invoices/actions";
+import type { Invoice, InvoiceDivision, InvoiceStatus } from "@/lib/invoices/types";
+import { rowToInvoice, type InvoiceRow } from "@/lib/invoices/mappers";
+import { addProduct, updateProduct } from "@/lib/products/actions";
+import type { ProductDivision } from "@/lib/products/types";
 import { addEventExpense, updateEventExpense } from "@/lib/event-expenses/actions";
 import {
   EXPENSE_CATEGORIES,
@@ -396,6 +420,52 @@ export async function executeToolCall(
         return await handleDecideCapitalRequest(supabase, ctx, args);
       case "update_event_expense":
         return await handleUpdateEventExpense(supabase, ctx, args);
+      case "get_products":
+        return await handleGetProducts(supabase, args);
+      case "get_my_notifications":
+        return await handleGetMyNotifications();
+      case "check_crew_conflicts":
+        return await handleCheckCrewConflicts(ctx, args);
+      case "get_material_transfers":
+        return await handleGetMaterialTransfers(supabase, ctx, args);
+      case "get_project_documents":
+        return await handleGetProjectDocuments(supabase, ctx, args);
+      case "get_portal_links":
+        return await handleGetPortalLinks(ctx, args);
+      case "add_invoice":
+        return await handleAddInvoice(ctx, args);
+      case "update_invoice":
+        return await handleUpdateInvoice(supabase, ctx, args);
+      case "send_invoice_whatsapp":
+        return await handleSendInvoiceWhatsapp(ctx, args);
+      case "add_product":
+        return await handleAddProduct(ctx, args);
+      case "update_product":
+        return await handleUpdateProduct(supabase, ctx, args);
+      case "add_warehouse":
+        return await handleAddWarehouse(ctx, args);
+      case "update_warehouse":
+        return await handleUpdateWarehouse(supabase, ctx, args);
+      case "update_subrent_status":
+        return await handleUpdateSubrentStatus(supabase, ctx, args);
+      case "bulk_scan_update_unit_status":
+        return await handleBulkScanUpdateUnitStatus(ctx, args);
+      case "update_bom_template":
+        return await handleUpdateBomTemplate(supabase, ctx, args);
+      case "transfer_material_stock":
+        return await handleTransferMaterialStock(supabase, ctx, args);
+      case "add_journal_entry":
+        return await handleAddJournalEntry(ctx, args);
+      case "add_account":
+        return await handleAddAccount(ctx, args);
+      case "set_account_active":
+        return await handleSetAccountActive(ctx, args);
+      case "create_portal_link":
+        return await handleCreatePortalLink(ctx, args);
+      case "revoke_portal_link":
+        return await handleRevokePortalLink(ctx, args);
+      case "mark_notification_read":
+        return await handleMarkNotificationRead(args);
 
       default:
         return { success: false, error: `Tool tidak dikenal: ${toolName}` };
@@ -2804,6 +2874,527 @@ async function handleUpdateEventExpense(supabase: SupabaseClient, ctx: UserConte
 }
 
 // ============================================================================
+// WAVE 6 -- Invoice, Produk, Gudang/Subrent/Bulk-scan, BOM/Transfer Material,
+// Jurnal/Daftar Akun, Link Portal, Notifikasi
+// ============================================================================
+
+const INVOICE_DIVISIONS: InvoiceDivision[] = ["magnarent", "magnative", "production"];
+const PRODUCT_DIVISIONS: ProductDivision[] = ["magnarent", "magnativ", "production", "umum"];
+const INVENTORY_UNIT_STATUSES: InventoryUnitStatus[] = ["Tersedia", "Dipinjam", "Maintenance", "Hilang"];
+const MANUAL_JOURNAL_DIVISIONS: ManualJournalDivision[] = ["magnarent", "magnative", "production", "finance"];
+const ACCOUNT_TYPES: AccountType[] = ["Aset", "Kewajiban", "Modal", "Pendapatan", "Beban"];
+const NORMAL_BALANCES: NormalBalance[] = ["Debit", "Kredit"];
+
+/** Resolve materialId Production langsung atau lewat nama (mirip resolveProductionEquipmentId). */
+async function resolveProductionMaterialId(
+  supabase: SupabaseClient,
+  args: Args
+): Promise<{ materialId: string } | { error: string } | { candidates: unknown[] }> {
+  let materialId = str(args.materialId);
+  const materialName = str(args.materialName);
+  if (!materialId && materialName) {
+    const { data } = await supabase
+      .from("production_materials")
+      .select("id, name, category")
+      .ilike("name", likePattern(materialName))
+      .limit(5);
+    if (!data || data.length === 0) return { error: "Material tidak ditemukan." };
+    if (data.length > 1) return { candidates: data };
+    materialId = data[0].id;
+  }
+  if (!materialId) return { error: "ID atau nama material harus diisi." };
+  return { materialId };
+}
+
+async function handleGetProducts(supabase: SupabaseClient, args: Args): Promise<ToolResult> {
+  let query = supabase
+    .from("products")
+    .select("id, name, division, divisions, category, sku, price, unit, stock, supplier, catatan");
+
+  const division = str(args.division);
+  if (division) query = query.contains("divisions", [division]);
+  const search = str(args.search);
+  if (search) {
+    const pattern = likePattern(search);
+    query = query.or(`name.ilike.${pattern},category.ilike.${pattern},sku.ilike.${pattern}`);
+  }
+
+  const { data, error } = await query.limit(limitOf(args));
+  if (error) return dbError("get_products", error.message);
+  return { success: true, data: { products: data ?? [], count: (data ?? []).length } };
+}
+
+async function handleGetMyNotifications(): Promise<ToolResult> {
+  const { items, unreadCount } = await listMyNotifications();
+  return { success: true, data: { notifications: items, unreadCount } };
+}
+
+async function handleCheckCrewConflicts(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const bookingId = str(args.bookingId);
+  const crewName = str(args.crewName);
+  if (!bookingId || !crewName) return { success: false, error: "ID booking dan nama kru harus diisi." };
+
+  const conflicts = await findCrewConflicts(bookingId, crewName);
+  return { success: true, data: { conflicts, count: conflicts.length } };
+}
+
+async function handleGetMaterialTransfers(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const resolved = await resolveProductionMaterialId(supabase, args);
+  if ("error" in resolved) return { success: false, error: resolved.error };
+  if ("candidates" in resolved) {
+    return {
+      success: true,
+      data: { message: "Ada beberapa material yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates },
+    };
+  }
+
+  const transfers = await getMaterialTransfers(resolved.materialId);
+  return { success: true, data: { transfers, count: transfers.length } };
+}
+
+async function handleGetProjectDocuments(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const resolved = await resolveProductionProjectId(supabase, args);
+  if ("error" in resolved) return { success: false, error: resolved.error };
+  if ("candidates" in resolved) {
+    return {
+      success: true,
+      data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates },
+    };
+  }
+
+  const documents = await getProjectDocuments(resolved.projectId);
+  return { success: true, data: { documents, count: documents.length } };
+}
+
+async function handleGetPortalLinks(ctx: UserContext, args: Args): Promise<ToolResult> {
+  const portalModule = str(args.module) as PortalModule | undefined;
+  const entityId = str(args.entityId);
+  if (!portalModule || !entityId) return { success: false, error: "Modul dan ID entitas harus diisi." };
+
+  const moduleAccess: Record<PortalModule, boolean> = {
+    magnarent: ctx.canAccessMagnarent,
+    magnative: ctx.canAccessMagnative,
+    production: ctx.canAccessProduction,
+  };
+  if (!moduleAccess[portalModule]) return denied(portalModule);
+
+  const links = await listPortalLinks(portalModule, entityId);
+  return { success: true, data: { links, count: links.length } };
+}
+
+async function handleAddInvoice(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessInvoices) return denied("Invoice");
+
+  const division = str(args.division) as InvoiceDivision | undefined;
+  const clientName = str(args.clientName);
+  const itemsArg = Array.isArray(args.items) ? (args.items as Args[]) : [];
+  if (!division || !INVOICE_DIVISIONS.includes(division) || !clientName || itemsArg.length === 0) {
+    return { success: false, error: "Divisi, nama klien, dan minimal satu item harus diisi." };
+  }
+
+  const items: InvoiceItemInput[] = itemsArg.map((it) => ({
+    description: str(it.description) ?? "",
+    qty: num(it.qty) ?? 0,
+    unitPrice: num(it.unitPrice) ?? 0,
+  }));
+
+  const result = await createInvoice({
+    division,
+    clientName,
+    clientPhone: str(args.clientPhone),
+    eventName: str(args.eventName),
+    items,
+    shippingCost: num(args.shippingCost),
+    depositAmount: num(args.depositAmount),
+    dueDate: isoDate(args.dueDate),
+    catatan: str(args.catatan),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Invoice untuk "${clientName}" berhasil dibuat.`, id: result.id } };
+}
+
+async function handleUpdateInvoice(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessInvoices) return denied("Invoice");
+
+  const invoiceId = str(args.invoiceId);
+  if (!invoiceId) return { success: false, error: "ID invoice harus diisi." };
+
+  const { data: row } = await supabase.from("invoices").select("*").eq("id", invoiceId).maybeSingle<InvoiceRow>();
+  if (!row) return { success: false, error: "Invoice tidak ditemukan." };
+  const current: Invoice = rowToInvoice(row);
+
+  const itemsArg = Array.isArray(args.items) ? (args.items as Args[]) : undefined;
+  const items: InvoiceItemInput[] = itemsArg
+    ? itemsArg.map((it) => ({ description: str(it.description) ?? "", qty: num(it.qty) ?? 0, unitPrice: num(it.unitPrice) ?? 0 }))
+    : current.items.map((it) => ({
+        description: it.description,
+        qty: it.qty,
+        unitPrice: it.unitPrice,
+        qtyLabel: it.qtyLabel,
+        unitLabel: it.unitLabel,
+        note: it.note,
+      }));
+
+  const result = await updateInvoice(invoiceId, {
+    division: current.division,
+    sourceType: current.sourceType,
+    sourceId: current.sourceId,
+    documentLabel: current.documentLabel,
+    picName: current.picName,
+    picPhone: current.picPhone,
+    clientName: str(args.clientName) ?? current.clientName,
+    clientPhone: str(args.clientPhone) ?? current.clientPhone,
+    eventName: str(args.eventName) ?? current.eventName,
+    eventLocation: current.eventLocation,
+    eventDateLabel: current.eventDateLabel,
+    loadingInfo: current.loadingInfo,
+    durationLabel: current.durationLabel,
+    deliveryMethod: current.deliveryMethod,
+    items,
+    shippingCost: num(args.shippingCost) ?? current.shippingCost,
+    depositAmount: num(args.depositAmount) ?? current.depositAmount,
+    depositLabel: current.depositLabel,
+    bankName: current.bankName,
+    bankAccountHolder: current.bankAccountHolder,
+    bankAccountNumber: current.bankAccountNumber,
+    paymentNote: current.paymentNote,
+    termsConditions: current.termsConditions,
+    issuedDate: current.issuedDate,
+    dueDate: isoDate(args.dueDate) ?? current.dueDate,
+    catatan: str(args.catatan) ?? current.catatan,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Invoice "${current.invoiceNumber}" berhasil diperbarui.` } };
+}
+
+async function handleSendInvoiceWhatsapp(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessInvoices) return denied("Invoice");
+
+  const invoiceId = str(args.invoiceId);
+  if (!invoiceId) return { success: false, error: "ID invoice harus diisi." };
+
+  const result = await sendInvoiceWhatsApp(invoiceId);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: "Invoice berhasil dikirim ke WhatsApp klien." } };
+}
+
+async function handleAddProduct(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessAdmin) return denied("Produk");
+
+  const name = str(args.name);
+  if (!name) return { success: false, error: "Nama produk harus diisi." };
+
+  const divisions = Array.isArray(args.divisions)
+    ? (args.divisions as unknown[]).filter((d): d is ProductDivision => typeof d === "string" && PRODUCT_DIVISIONS.includes(d as ProductDivision))
+    : [];
+
+  const fd = new FormData();
+  fd.set("name", name);
+  fd.set("divisions", JSON.stringify(divisions.length > 0 ? divisions : ["umum"]));
+  fd.set("category", str(args.category) ?? "");
+  fd.set("sku", str(args.sku) ?? "");
+  fd.set("price", String(num(args.price) ?? 0));
+  fd.set("unit", str(args.unit) ?? "unit");
+  fd.set("stock", String(num(args.stock) ?? 0));
+  fd.set("supplier", str(args.supplier) ?? "");
+  fd.set("catatan", str(args.catatan) ?? "");
+
+  const result = await addProduct(fd);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Produk "${name}" berhasil ditambahkan.` } };
+}
+
+async function handleUpdateProduct(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessAdmin) return denied("Produk");
+
+  const productId = str(args.productId);
+  if (!productId) return { success: false, error: "ID produk harus diisi." };
+
+  const { data: current } = await supabase
+    .from("products")
+    .select("name, divisions, category, sku, price, unit, stock, supplier, catatan")
+    .eq("id", productId)
+    .maybeSingle<{
+      name: string;
+      divisions: ProductDivision[] | null;
+      category: string;
+      sku: string | null;
+      price: number;
+      unit: string;
+      stock: number;
+      supplier: string | null;
+      catatan: string | null;
+    }>();
+  if (!current) return { success: false, error: "Produk tidak ditemukan." };
+
+  const divisionsArg = Array.isArray(args.divisions)
+    ? (args.divisions as unknown[]).filter((d): d is ProductDivision => typeof d === "string" && PRODUCT_DIVISIONS.includes(d as ProductDivision))
+    : undefined;
+  const divisions = divisionsArg && divisionsArg.length > 0 ? divisionsArg : current.divisions ?? ["umum"];
+
+  const merged = {
+    name: str(args.name) ?? current.name,
+    category: str(args.category) ?? current.category,
+    sku: str(args.sku) ?? current.sku ?? "",
+    price: num(args.price) ?? current.price,
+    unit: str(args.unit) ?? current.unit,
+    stock: num(args.stock) ?? current.stock,
+    supplier: str(args.supplier) ?? current.supplier ?? "",
+    catatan: str(args.catatan) ?? current.catatan ?? "",
+  };
+
+  const fd = new FormData();
+  fd.set("name", merged.name);
+  fd.set("divisions", JSON.stringify(divisions));
+  fd.set("category", merged.category);
+  fd.set("sku", merged.sku);
+  fd.set("price", String(merged.price));
+  fd.set("unit", merged.unit);
+  fd.set("stock", String(merged.stock));
+  fd.set("supplier", merged.supplier);
+  fd.set("catatan", merged.catatan);
+
+  const result = await updateProduct(productId, fd);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Produk "${merged.name}" berhasil diperbarui.` } };
+}
+
+async function handleAddWarehouse(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const nama = str(args.nama);
+  if (!nama) return { success: false, error: "Nama gudang harus diisi." };
+
+  const result = await addWarehouse({ nama, alamat: str(args.alamat), catatan: str(args.catatan) });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Gudang "${nama}" berhasil ditambahkan.` } };
+}
+
+async function handleUpdateWarehouse(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const warehouseId = str(args.warehouseId);
+  if (!warehouseId) return { success: false, error: "ID gudang harus diisi." };
+
+  const { data: current } = await supabase
+    .from("magnarent_warehouses")
+    .select("nama, alamat, catatan")
+    .eq("id", warehouseId)
+    .maybeSingle<{ nama: string; alamat: string | null; catatan: string | null }>();
+  if (!current) return { success: false, error: "Gudang tidak ditemukan." };
+
+  const merged = {
+    nama: str(args.nama) ?? current.nama,
+    alamat: str(args.alamat) ?? current.alamat ?? undefined,
+    catatan: str(args.catatan) ?? current.catatan ?? undefined,
+  };
+
+  const result = await updateWarehouse(warehouseId, merged);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Gudang "${merged.nama}" berhasil diperbarui.` } };
+}
+
+async function handleUpdateSubrentStatus(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const subrentId = str(args.subrentId);
+  const status = str(args.status) as SubrentStatus | undefined;
+  if (!subrentId || !status || !SUBRENT_STATUS.includes(status)) {
+    return { success: false, error: "ID subrent dan status (dari daftar yang valid) harus diisi." };
+  }
+
+  const result = await updateSubrentStatus(subrentId, status);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Status subrent berhasil diubah ke "${status}".` } };
+}
+
+async function handleBulkScanUpdateUnitStatus(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const codes = Array.isArray(args.codes)
+    ? (args.codes as unknown[]).filter((c): c is string => typeof c === "string" && c.trim() !== "")
+    : [];
+  const status = str(args.status) as InventoryUnitStatus | undefined;
+  if (codes.length === 0 || !status || !INVENTORY_UNIT_STATUSES.includes(status)) {
+    return { success: false, error: "Daftar kode dan status (dari daftar yang valid) harus diisi." };
+  }
+
+  const result = await bulkScanUpdateStatus(codes, status);
+  if (!result.ok) return { success: false, error: result.error };
+  return {
+    success: true,
+    data: {
+      message: `${result.matchedCount} unit berhasil diubah ke status "${status}".${
+        result.notFound.length > 0 ? ` Tidak ketemu: ${result.notFound.join(", ")}.` : ""
+      }${result.ambiguous.length > 0 ? ` Ambigu (cocok lebih dari satu unit): ${result.ambiguous.join(", ")}.` : ""}`,
+      matchedCount: result.matchedCount,
+      notFound: result.notFound,
+      ambiguous: result.ambiguous,
+    },
+  };
+}
+
+async function handleUpdateBomTemplate(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const templateId = str(args.templateId);
+  if (!templateId) return { success: false, error: "ID template BOM harus diisi." };
+
+  const { data: current } = await supabase
+    .from("production_bom_templates")
+    .select("name, description, items")
+    .eq("id", templateId)
+    .maybeSingle<{ name: string; description: string | null; items: BomTemplateItem[] }>();
+  if (!current) return { success: false, error: "Template BOM tidak ditemukan." };
+
+  const itemsArg = Array.isArray(args.items)
+    ? (args.items as Args[]).map((it) => ({ materialId: str(it.materialId) ?? "", qty: num(it.qty) ?? 0 }))
+    : undefined;
+
+  const merged = {
+    name: str(args.name) ?? current.name,
+    description: str(args.description) ?? current.description ?? undefined,
+    items: itemsArg && itemsArg.length > 0 ? itemsArg : current.items,
+  };
+
+  const result = await updateBomTemplate(templateId, merged);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Template BOM "${merged.name}" berhasil diperbarui.` } };
+}
+
+async function handleTransferMaterialStock(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const resolved = await resolveProductionMaterialId(supabase, args);
+  if ("error" in resolved) return { success: false, error: resolved.error };
+  if ("candidates" in resolved) {
+    return {
+      success: true,
+      data: { message: "Ada beberapa material yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates },
+    };
+  }
+
+  const qty = num(args.qty);
+  const toLocation = str(args.toLocation);
+  if (!qty || qty <= 0 || !toLocation) return { success: false, error: "Jumlah transfer dan lokasi tujuan harus diisi." };
+
+  const result = await transferMaterialStock(resolved.materialId, { qty, toLocation, catatan: str(args.catatan) });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Transfer ${qty} unit ke "${toLocation}" berhasil dicatat.` } };
+}
+
+async function handleAddJournalEntry(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessAccounting) return denied("Akuntansi");
+
+  const entryDate = isoDate(args.entryDate);
+  const description = str(args.description);
+  const lines = Array.isArray(args.lines) ? (args.lines as Args[]) : [];
+  if (!entryDate || !description || lines.length < 2) {
+    return { success: false, error: "Tanggal, keterangan, dan minimal 2 baris jurnal harus diisi." };
+  }
+
+  const division = str(args.division) as ManualJournalDivision | undefined;
+  const journalLines = lines.map((l) => ({
+    accountCode: str(l.accountCode) ?? "",
+    debit: num(l.debit) ?? 0,
+    credit: num(l.credit) ?? 0,
+    notes: str(l.notes),
+  }));
+
+  const result = await createManualJournalEntry({
+    entryDate,
+    description,
+    division: division && MANUAL_JOURNAL_DIVISIONS.includes(division) ? division : null,
+    lines: journalLines,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Jurnal "${description}" berhasil disimpan.` } };
+}
+
+async function handleAddAccount(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessAccounting) return denied("Akuntansi");
+
+  const code = str(args.code);
+  const name = str(args.name);
+  const type = str(args.type) as AccountType | undefined;
+  const normalBalance = str(args.normalBalance) as NormalBalance | undefined;
+  if (!code || !name || !type || !ACCOUNT_TYPES.includes(type) || !normalBalance || !NORMAL_BALANCES.includes(normalBalance)) {
+    return { success: false, error: "Kode, nama, tipe, dan saldo normal akun harus diisi dengan benar." };
+  }
+
+  const result = await createAccount({ code, name, type, subtype: str(args.subtype), normalBalance, description: str(args.description) });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Akun "${code} — ${name}" berhasil ditambahkan.` } };
+}
+
+async function handleSetAccountActive(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessAccounting) return denied("Akuntansi");
+
+  const accountId = str(args.accountId);
+  if (!accountId || typeof args.isActive !== "boolean") {
+    return { success: false, error: "ID akun dan status aktif harus diisi." };
+  }
+
+  const result = await setAccountActive(accountId, args.isActive);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: args.isActive ? "Akun berhasil diaktifkan." : "Akun berhasil dinonaktifkan." } };
+}
+
+async function handleCreatePortalLink(ctx: UserContext, args: Args): Promise<ToolResult> {
+  const portalModule = str(args.module) as PortalModule | undefined;
+  const entityId = str(args.entityId);
+  if (!portalModule || !entityId) return { success: false, error: "Modul dan ID entitas harus diisi." };
+
+  const moduleAccess: Record<PortalModule, boolean> = {
+    magnarent: ctx.canAccessMagnarent,
+    magnative: ctx.canAccessMagnative,
+    production: ctx.canAccessProduction,
+  };
+  if (!moduleAccess[portalModule]) return denied(portalModule);
+
+  const result = await createPortalLink({
+    module: portalModule,
+    entityId,
+    clientName: str(args.clientName),
+    expiresInDays: num(args.expiresInDays),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: "Link portal berhasil dibuat.", token: result.token } };
+}
+
+async function handleRevokePortalLink(ctx: UserContext, args: Args): Promise<ToolResult> {
+  const portalModule = str(args.module) as PortalModule | undefined;
+  const linkId = str(args.linkId);
+  if (!portalModule || !linkId) return { success: false, error: "ID link dan modul harus diisi." };
+
+  const moduleAccess: Record<PortalModule, boolean> = {
+    magnarent: ctx.canAccessMagnarent,
+    magnative: ctx.canAccessMagnative,
+    production: ctx.canAccessProduction,
+  };
+  if (!moduleAccess[portalModule]) return denied(portalModule);
+
+  const result = await revokePortalLink(linkId, portalModule);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: "Link portal berhasil dicabut." } };
+}
+
+async function handleMarkNotificationRead(args: Args): Promise<ToolResult> {
+  const notificationId = str(args.notificationId);
+  if (!notificationId) return { success: false, error: "ID notifikasi harus diisi." };
+
+  const result = await markNotificationRead(notificationId);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: "Notifikasi ditandai sudah dibaca." } };
+}
+
+// ============================================================================
 // KONFIRMASI
 // ============================================================================
 
@@ -3411,6 +4002,179 @@ async function buildConfirmationResponse(
     ]
       .filter((l): l is string => l !== null)
       .join("\n");
+  } else if (toolName === "add_invoice") {
+    const items = Array.isArray(args.items) ? (args.items as Args[]) : [];
+    const itemsTotal = items.reduce((sum, it) => sum + (num(it.qty) ?? 0) * (num(it.unitPrice) ?? 0), 0);
+    description = [
+      "Buat invoice baru:",
+      `- Divisi: ${str(args.division) ?? "-"}`,
+      `- Klien: ${str(args.clientName) ?? "-"}`,
+      `- Jumlah item: ${items.length}`,
+      `- Estimasi subtotal: ${rupiah(itemsTotal)}`,
+      args.shippingCost !== undefined ? `- Ongkos kirim: ${rupiah(args.shippingCost)}` : null,
+      args.depositAmount !== undefined ? `- Deposit: ${rupiah(args.depositAmount)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "update_invoice") {
+    const updInvId = str(args.invoiceId);
+    const { data: updInv } = updInvId
+      ? await supabase
+          .from("invoices")
+          .select("invoice_number, client_name")
+          .eq("id", updInvId)
+          .maybeSingle<{ invoice_number: string; client_name: string }>()
+      : { data: null };
+    if (!updInv) return { success: false, error: "Invoice tidak ditemukan. Cari dulu ID yang benar." };
+    const updItems = Array.isArray(args.items) ? (args.items as Args[]) : undefined;
+    description = [
+      `Ubah invoice "${updInv.invoice_number}" (klien: ${updInv.client_name}):`,
+      str(args.clientName) !== undefined ? `- Klien baru: ${str(args.clientName)}` : null,
+      updItems ? `- Jumlah item baru: ${updItems.length}` : null,
+      args.shippingCost !== undefined ? `- Ongkos kirim baru: ${rupiah(args.shippingCost)}` : null,
+      args.depositAmount !== undefined ? `- Deposit baru: ${rupiah(args.depositAmount)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "send_invoice_whatsapp") {
+    const sendInvId = str(args.invoiceId);
+    const { data: sendInv } = sendInvId
+      ? await supabase
+          .from("invoices")
+          .select("invoice_number, client_name, client_phone")
+          .eq("id", sendInvId)
+          .maybeSingle<{ invoice_number: string; client_name: string; client_phone: string | null }>()
+      : { data: null };
+    if (!sendInv) return { success: false, error: "Invoice tidak ditemukan. Cari dulu ID yang benar." };
+    if (!sendInv.client_phone) return { success: false, error: "Klien ini belum punya nomor WhatsApp yang tercatat." };
+    description = [
+      `Kirim invoice "${sendInv.invoice_number}" ke WhatsApp:`,
+      `- Klien: ${sendInv.client_name}`,
+      `- Nomor WA: ${sendInv.client_phone}`,
+    ].join("\n");
+  } else if (toolName === "add_product") {
+    description = [
+      "Tambah produk baru:",
+      `- Nama: ${str(args.name) ?? "-"}`,
+      `- Divisi: ${Array.isArray(args.divisions) ? (args.divisions as unknown[]).join(", ") : "-"}`,
+      str(args.category) !== undefined ? `- Kategori: ${str(args.category)}` : null,
+      args.price !== undefined ? `- Harga: ${rupiah(args.price)}` : null,
+      args.stock !== undefined ? `- Stok: ${num(args.stock)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "update_product") {
+    const updProdId = str(args.productId);
+    const { data: updProd } = updProdId
+      ? await supabase.from("products").select("name").eq("id", updProdId).maybeSingle<{ name: string }>()
+      : { data: null };
+    if (!updProd) return { success: false, error: "Produk tidak ditemukan. Cari dulu ID yang benar." };
+    description = [
+      `Ubah produk "${updProd.name}":`,
+      str(args.name) !== undefined ? `- Nama baru: ${str(args.name)}` : null,
+      str(args.category) !== undefined ? `- Kategori baru: ${str(args.category)}` : null,
+      args.price !== undefined ? `- Harga baru: ${rupiah(args.price)}` : null,
+      args.stock !== undefined ? `- Stok baru: ${num(args.stock)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "add_warehouse") {
+    description = [`Tambah gudang baru:`, `- Nama: ${str(args.nama) ?? "-"}`, str(args.alamat) !== undefined ? `- Alamat: ${str(args.alamat)}` : null]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "update_warehouse") {
+    const updWhId = str(args.warehouseId);
+    const { data: updWh } = updWhId
+      ? await supabase.from("magnarent_warehouses").select("nama").eq("id", updWhId).maybeSingle<{ nama: string }>()
+      : { data: null };
+    if (!updWh) return { success: false, error: "Gudang tidak ditemukan. Cari dulu ID yang benar." };
+    description = [
+      `Ubah gudang "${updWh.nama}":`,
+      str(args.nama) !== undefined ? `- Nama baru: ${str(args.nama)}` : null,
+      str(args.alamat) !== undefined ? `- Alamat baru: ${str(args.alamat)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "update_subrent_status") {
+    const subrentId = str(args.subrentId);
+    const { data: subrent } = subrentId
+      ? await supabase
+          .from("magnarent_subrent_records")
+          .select("vendor_name, status")
+          .eq("id", subrentId)
+          .maybeSingle<{ vendor_name: string; status: string }>()
+      : { data: null };
+    if (!subrent) return { success: false, error: "Catatan subrent tidak ditemukan. Cari dulu ID yang benar." };
+    description = [`Ubah status subrent vendor "${subrent.vendor_name}":`, `- Status: ${subrent.status} → ${str(args.status)}`].join("\n");
+  } else if (toolName === "bulk_scan_update_unit_status") {
+    const codes = Array.isArray(args.codes) ? (args.codes as unknown[]) : [];
+    description = [`Ubah status massal via scan:`, `- Jumlah kode: ${codes.length}`, `- Status baru: ${str(args.status) ?? "-"}`].join("\n");
+  } else if (toolName === "update_bom_template") {
+    const bomId = str(args.templateId);
+    const { data: bom } = bomId
+      ? await supabase.from("production_bom_templates").select("name").eq("id", bomId).maybeSingle<{ name: string }>()
+      : { data: null };
+    if (!bom) return { success: false, error: "Template BOM tidak ditemukan. Cari dulu ID yang benar." };
+    const bomItems = Array.isArray(args.items) ? (args.items as Args[]) : undefined;
+    description = [
+      `Ubah template BOM "${bom.name}":`,
+      str(args.name) !== undefined ? `- Nama baru: ${str(args.name)}` : null,
+      bomItems ? `- Jumlah item baru: ${bomItems.length}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "transfer_material_stock") {
+    description = [
+      "Transfer stok material:",
+      `- Material: ${str(args.materialName) ?? str(args.materialId) ?? "-"}`,
+      `- Jumlah: ${num(args.qty) ?? "-"}`,
+      `- Tujuan: ${str(args.toLocation) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "add_journal_entry") {
+    const lines = Array.isArray(args.lines) ? (args.lines as Args[]) : [];
+    const totalDebit = lines.reduce((sum, l) => sum + (num(l.debit) ?? 0), 0);
+    description = [
+      "Simpan jurnal manual:",
+      `- Tanggal: ${str(args.entryDate) ?? "-"}`,
+      `- Keterangan: ${str(args.description) ?? "-"}`,
+      `- Jumlah baris: ${lines.length}`,
+      `- Total debit: ${rupiah(totalDebit)}`,
+    ].join("\n");
+  } else if (toolName === "add_account") {
+    description = [
+      "Tambah akun baru:",
+      `- Kode: ${str(args.code) ?? "-"}`,
+      `- Nama: ${str(args.name) ?? "-"}`,
+      `- Tipe: ${str(args.type) ?? "-"}`,
+      `- Saldo normal: ${str(args.normalBalance) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "set_account_active") {
+    const accId = str(args.accountId);
+    const { data: acc } = accId
+      ? await supabase
+          .from("chart_of_accounts")
+          .select("account_code, account_name, is_active")
+          .eq("id", accId)
+          .maybeSingle<{ account_code: string; account_name: string; is_active: boolean }>()
+      : { data: null };
+    if (!acc) return { success: false, error: "Akun tidak ditemukan. Cari dulu ID yang benar." };
+    description = [
+      `Ubah status akun "${acc.account_code} — ${acc.account_name}":`,
+      `- Status: ${acc.is_active ? "Aktif" : "Nonaktif"} → ${args.isActive ? "Aktif" : "Nonaktif"}`,
+    ].join("\n");
+  } else if (toolName === "create_portal_link") {
+    description = [
+      "Buat link portal baru:",
+      `- Modul: ${str(args.module) ?? "-"}`,
+      str(args.clientName) !== undefined ? `- Klien: ${str(args.clientName)}` : null,
+      args.expiresInDays !== undefined ? `- Masa berlaku: ${num(args.expiresInDays)} hari` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "revoke_portal_link") {
+    description = [`Cabut link portal:`, `- ID link: ${str(args.linkId) ?? "-"}`, `- Modul: ${str(args.module) ?? "-"}`].join("\n");
+  } else if (toolName === "mark_notification_read") {
+    description = `Tandai notifikasi sudah dibaca (ID: ${str(args.notificationId) ?? "-"}).`;
   } else {
     description = `Jalankan ${toolName}`;
   }
