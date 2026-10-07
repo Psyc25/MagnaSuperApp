@@ -535,6 +535,111 @@ export const QUERY_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_inventory_units",
+      description: "Ambil daftar unit fisik individual (dengan kode unit/QR) untuk satu alat Magnarent -- dipakai untuk pelacakan per-unit & transfer gudang, BUKAN untuk cek ketersediaan booking (pakai check_availability).",
+      parameters: {
+        type: "object",
+        properties: {
+          itemId: { type: "string", description: "ID alat (dari get_inventory/search_global)" },
+          itemName: { type: "string", description: "Nama alat, dipakai kalau itemId belum diketahui" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_warehouse_transfers",
+      description: "Ambil riwayat perpindahan satu unit fisik alat Magnarent antar gudang.",
+      parameters: {
+        type: "object",
+        properties: {
+          unitId: { type: "string", description: "ID unit fisik (dari get_inventory_units)" },
+        },
+        required: ["unitId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_booking_deposit",
+      description: "Ambil data deposit/jaminan (uang tunai, KTP, SIM, dsb) untuk satu booking Magnarent.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "ID booking (dari get_bookings/search_global)" },
+        },
+        required: ["bookingId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_seasonal_pricing_rules",
+      description: "Ambil daftar aturan SARAN penyesuaian harga musiman (persen naik/turun) Magnarent -- bukan nilai final invoice.",
+      parameters: {
+        type: "object",
+        properties: {
+          itemId: { type: "string", description: "Filter untuk satu alat spesifik (opsional)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_crew_assignments",
+      description: "Ambil daftar kru (sopir, rigger, teknisi, dsb) yang ditugaskan untuk satu booking Magnarent.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "ID booking (dari get_bookings/search_global)" },
+        },
+        required: ["bookingId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_equipment_usage",
+      description: "Ambil riwayat pemakaian satu alat berat/perkakas Production (siapa pakai, kapan pinjam/kembali).",
+      parameters: {
+        type: "object",
+        properties: {
+          equipmentId: { type: "string", description: "ID alat (dari get_equipment)" },
+          equipmentName: { type: "string", description: "Nama alat, dipakai kalau equipmentId belum diketahui" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_crew_piece_payments",
+      description: "Ambil riwayat upah borongan (piece-rate) satu kru proyek Production.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectCrewId: { type: "string", description: "ID penugasan kru (dari get_project_crew)" },
+        },
+        required: ["projectCrewId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_portfolio_folders",
+      description: "Ambil daftar folder/album portofolio foto Magnativ (ditampilkan lintas divisi di Hub & Ringkasan Magnativ).",
+      parameters: { type: "object", properties: {} },
+    },
+  },
 ];
 
 /**
@@ -1201,6 +1306,216 @@ export const ACTION_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "transfer_unit_to_warehouse",
+      description: "Pindahkan satu unit fisik alat Magnarent ke gudang lain (tercatat sebagai log histori). HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          unitId: { type: "string", description: "ID unit fisik (dari get_inventory_units)" },
+          toWarehouseId: { type: "string", description: "ID gudang tujuan (dari get_warehouses)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["unitId", "toWarehouseId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "save_booking_deposit",
+      description: "Simpan/perbarui deposit/jaminan booking Magnarent (uang tunai, KTP, SIM, dsb). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "ID booking (dari get_bookings/search_global)" },
+          jenis: { type: "string", enum: ["Uang Tunai", "KTP", "SIM", "Lainnya"], description: "Jenis jaminan" },
+          jumlah: { type: "number", description: "Jumlah/nilai jaminan (Rupiah untuk Uang Tunai, 0 untuk dokumen)" },
+          keterangan: { type: "string", description: "Keterangan tambahan" },
+        },
+        required: ["bookingId", "jenis", "jumlah"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_deposit_returned",
+      description: "Tandai deposit/jaminan booking Magnarent sudah dikembalikan ke klien (atau batalkan tanda itu). HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "ID booking (dari get_bookings/search_global)" },
+          returned: { type: "boolean", description: "true = sudah dikembalikan, false = batalkan status kembali" },
+        },
+        required: ["bookingId", "returned"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_seasonal_pricing_rule",
+      description: "Tambah aturan SARAN penyesuaian harga musiman Magnarent untuk rentang tanggal tertentu. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          label: { type: "string", description: "Label musim, mis. \"Libur Lebaran 2026\"" },
+          startDate: { type: "string", description: "Tanggal mulai (YYYY-MM-DD)" },
+          endDate: { type: "string", description: "Tanggal selesai (YYYY-MM-DD)" },
+          multiplierPct: { type: "number", description: "Persen penyesuaian, positif = naik, negatif = turun, mis. 20 atau -10" },
+          itemId: { type: "string", description: "ID alat spesifik (opsional, kosongkan agar berlaku untuk SEMUA alat)" },
+        },
+        required: ["label", "startDate", "endDate", "multiplierPct"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_crew_assignment",
+      description: "Tugaskan kru (sopir, rigger, teknisi, dsb) ke satu booking Magnarent. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "ID booking (dari get_bookings/search_global)" },
+          crewName: { type: "string", description: "Nama kru" },
+          role: { type: "string", enum: ["Sopir", "Rigger", "Teknisi", "Among Alat", "Lainnya"], description: "Peran kru" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["bookingId", "crewName", "role"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_equipment",
+      description: "Tambah alat berat/perkakas baru ke inventaris Production. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nama alat" },
+          kategori: { type: "string", enum: ["Alat Berat", "Perkakas Listrik", "Perkakas Manual", "Lainnya"], description: "Kategori alat" },
+          kondisi: { type: "string", enum: ["Baik", "Perlu Servis", "Rusak"], description: "Kondisi alat" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["name", "kategori", "kondisi"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_equipment",
+      description: "Ubah data alat berat/perkakas Production (field yang tidak disebut tetap memakai nilai lama). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          equipmentId: { type: "string", description: "ID alat (dari get_equipment)" },
+          name: { type: "string", description: "Nama alat" },
+          kategori: { type: "string", enum: ["Alat Berat", "Perkakas Listrik", "Perkakas Manual", "Lainnya"], description: "Kategori alat" },
+          kondisi: { type: "string", enum: ["Baik", "Perlu Servis", "Rusak"], description: "Kondisi alat" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["equipmentId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_equipment_usage",
+      description: "Catat pemakaian alat berat/perkakas Production (siapa pakai, tanggal pinjam). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          equipmentId: { type: "string", description: "ID alat (dari get_equipment)" },
+          equipmentName: { type: "string", description: "Nama alat, dipakai kalau equipmentId belum diketahui" },
+          projectId: { type: "string", description: "ID proyek booth terkait (opsional, dari get_projects)" },
+          digunakanOleh: { type: "string", description: "Nama pemakai" },
+          tanggalPinjam: { type: "string", description: "Tanggal pinjam (YYYY-MM-DD)" },
+          tanggalKembali: { type: "string", description: "Tanggal kembali (opsional, YYYY-MM-DD)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["digunakanOleh", "tanggalPinjam"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mark_equipment_usage_returned",
+      description: "Tandai satu catatan pemakaian alat Production sudah dikembalikan. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          usageId: { type: "string", description: "ID catatan pemakaian (dari get_equipment_usage)" },
+          tanggalKembali: { type: "string", description: "Tanggal kembali (default hari ini, YYYY-MM-DD)" },
+        },
+        required: ["usageId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_crew_piece_payment",
+      description: "Catat kesepakatan upah borongan (piece-rate) kru proyek Production. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectCrewId: { type: "string", description: "ID penugasan kru (dari get_project_crew)" },
+          deskripsiPekerjaan: { type: "string", description: "Deskripsi pekerjaan borongan" },
+          jumlahUnit: { type: "number", description: "Jumlah unit pekerjaan" },
+          ratePerUnit: { type: "number", description: "Rate upah per unit (Rupiah)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["projectCrewId", "deskripsiPekerjaan", "jumlahUnit", "ratePerUnit"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_crew_piece_payment_status",
+      description: "Ubah status pembayaran upah borongan kru Production. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          paymentId: { type: "string", description: "ID upah borongan (dari get_crew_piece_payments)" },
+          status: { type: "string", enum: ["Belum Dibayar", "Dibayar"], description: "Status pembayaran" },
+          tanggalBayar: { type: "string", description: "Tanggal bayar (default hari ini kalau status Dibayar, YYYY-MM-DD)" },
+        },
+        required: ["paymentId", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_project_crew",
+      description: "Tugaskan kru baru (koordinator, tukang, desainer, dsb) ke proyek booth Production. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek booth (dari get_projects/search_global)" },
+          projectName: { type: "string", description: "Nama proyek, dipakai kalau projectId belum diketahui" },
+          nama: { type: "string", description: "Nama kru" },
+          peran: {
+            type: "string",
+            enum: ["Koordinator Lapangan", "Tukang/Instalatur", "Desainer", "Sopir/Logistik", "Lainnya"],
+            description: "Peran kru",
+          },
+          kontak: { type: "string", description: "Kontak kru (opsional)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["nama", "peran"],
+      },
+    },
+  },
 ];
 
 /**
@@ -1274,6 +1589,26 @@ export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
     add_bom_template: ctx.canAccessProduction,
     get_crew_timelogs: ctx.canAccessProduction,
     add_crew_timelog: ctx.canAccessProduction,
+    get_inventory_units: ctx.canAccessMagnarent,
+    get_warehouse_transfers: ctx.canAccessMagnarent,
+    transfer_unit_to_warehouse: ctx.canAccessMagnarent,
+    get_booking_deposit: ctx.canAccessMagnarent,
+    save_booking_deposit: ctx.canAccessMagnarent,
+    set_deposit_returned: ctx.canAccessMagnarent,
+    get_seasonal_pricing_rules: ctx.canAccessMagnarent,
+    add_seasonal_pricing_rule: ctx.canAccessMagnarent,
+    get_crew_assignments: ctx.canAccessMagnarent,
+    add_crew_assignment: ctx.canAccessMagnarent,
+    get_equipment_usage: ctx.canAccessProduction,
+    add_equipment: ctx.canAccessProduction,
+    update_equipment: ctx.canAccessProduction,
+    add_equipment_usage: ctx.canAccessProduction,
+    mark_equipment_usage_returned: ctx.canAccessProduction,
+    get_crew_piece_payments: ctx.canAccessProduction,
+    add_crew_piece_payment: ctx.canAccessProduction,
+    update_crew_piece_payment_status: ctx.canAccessProduction,
+    add_project_crew: ctx.canAccessProduction,
+    get_portfolio_folders: ctx.canAccessMagnative,
   };
   return AI_TOOLS.filter((t) => allowed[t.function.name]);
 }
@@ -1308,6 +1643,16 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_warehouses",
     "get_subrent_records",
     "add_subrent_record",
+    "get_inventory_units",
+    "get_warehouse_transfers",
+    "transfer_unit_to_warehouse",
+    "get_booking_deposit",
+    "save_booking_deposit",
+    "set_deposit_returned",
+    "get_seasonal_pricing_rules",
+    "add_seasonal_pricing_rule",
+    "get_crew_assignments",
+    "add_crew_assignment",
   ];
   const MAGNATIVE_TOOLS = [
     ...COMMON_TOOLS,
@@ -1323,6 +1668,7 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "create_checkin_link",
     "add_magnative_vendor",
     "update_magnative_vendor",
+    "get_portfolio_folders",
   ];
   const PRODUCTION_TOOLS = [
     ...COMMON_TOOLS,
@@ -1349,6 +1695,15 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "add_bom_template",
     "get_crew_timelogs",
     "add_crew_timelog",
+    "get_equipment_usage",
+    "add_equipment",
+    "update_equipment",
+    "add_equipment_usage",
+    "mark_equipment_usage_returned",
+    "get_crew_piece_payments",
+    "add_crew_piece_payment",
+    "update_crew_piece_payment_status",
+    "add_project_crew",
   ];
   const FINANCE_TOOLS = [
     ...COMMON_TOOLS,
