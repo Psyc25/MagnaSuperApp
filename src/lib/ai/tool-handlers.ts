@@ -52,14 +52,44 @@ import {
 import {
   addProjectTask,
   updateProjectTaskStatus,
+  updateProjectTask,
   addClient,
   updateClient,
   addVendor as addMagnativeVendorAction,
   updateVendor as updateMagnativeVendorAction,
   createCheckinLink,
   listCheckinLinks,
+  addProject as addMagnativeProject,
+  updateProject as updateMagnativeProject,
+  addProjectCost,
+  updateProjectCost,
+  addContentPost,
+  updateContentPost,
+  updateContentStatus,
+  addContentRequest,
+  updateContentRequestStatus,
+  addProjectVendor,
+  updateProjectVendor,
+  updateProjectPipelineStage,
+  addAssetComment,
+  setAssetCommentResolved,
+  getAssetComments,
 } from "@/lib/magnative/actions";
-import type { ProjectTaskStatus, Client, ClientStatus, VendorCategory as MagnativeVendorCategory } from "@/lib/magnative/types";
+import type {
+  ProjectTaskStatus,
+  Client,
+  ClientStatus,
+  VendorCategory as MagnativeVendorCategory,
+  ProjectType,
+  ProjectStatus,
+  PaymentStatus as MagnativePaymentStatus,
+  Platform,
+  ContentStatus,
+  ContentRequestPriority,
+  ContentRequestStatus,
+  PipelineStage,
+} from "@/lib/magnative/types";
+import { PIPELINE_STAGES } from "@/lib/magnative/types";
 import { getPortfolioFolders } from "@/lib/magnative/portfolio-data";
 import {
   getEquipment,
@@ -100,13 +130,21 @@ import type {
   PiecePaymentStatus,
   CrewRole as ProductionCrewRole,
 } from "@/lib/production/extras-types";
-import { receivePurchaseOrder, updateProjectStatus, addMaterial, updateMaterial, addPurchaseOrder } from "@/lib/production/actions";
+import {
+  receivePurchaseOrder,
+  cancelPurchaseOrder,
+  updateProjectStatus,
+  addMaterial,
+  updateMaterial,
+  addPurchaseOrder,
+} from "@/lib/production/actions";
 import type { BoothStatus, MaterialItem, MaterialCategory, MaterialUnit } from "@/lib/production/types";
 import { getChartOfAccounts, getManualJournalEntries } from "@/lib/accounting/data";
-import { addCapitalRequest } from "@/lib/capital-requests/actions";
+import { addCapitalRequest, decideCapitalRequest } from "@/lib/capital-requests/actions";
+import type { CapitalRequestStatus } from "@/lib/capital-requests/types";
 import { markInvoiceStatus } from "@/lib/invoices/actions";
 import type { InvoiceStatus } from "@/lib/invoices/types";
-import { addEventExpense } from "@/lib/event-expenses/actions";
+import { addEventExpense, updateEventExpense } from "@/lib/event-expenses/actions";
 import {
   EXPENSE_CATEGORIES,
   REIMBURSEMENT_STATUSES,
@@ -230,6 +268,12 @@ export async function executeToolCall(
         return await handleGetCrewPiecePayments(ctx, args);
       case "get_portfolio_folders":
         return await handleGetPortfolioFolders(ctx);
+      case "get_asset_comments":
+        return await handleGetAssetComments(supabase, ctx, args);
+      case "get_content_requests":
+        return await handleGetContentRequests(supabase, ctx, args);
+      case "get_project_vendors":
+        return await handleGetProjectVendors(supabase, ctx, args);
 
       // Action tools (sudah dikonfirmasi)
       case "create_booking":
@@ -316,6 +360,42 @@ export async function executeToolCall(
         return await handleUpdateCrewPiecePaymentStatus(ctx, args);
       case "add_project_crew":
         return await handleAddProjectCrew(supabase, ctx, args);
+      case "add_magnative_project":
+        return await handleAddMagnativeProject(supabase, ctx, args);
+      case "update_magnative_project":
+        return await handleUpdateMagnativeProject(supabase, ctx, args);
+      case "add_project_cost":
+        return await handleAddProjectCost(supabase, ctx, args);
+      case "update_project_cost":
+        return await handleUpdateProjectCost(supabase, ctx, args);
+      case "add_content_post":
+        return await handleAddContentPost(supabase, ctx, args);
+      case "update_content_post":
+        return await handleUpdateContentPost(supabase, ctx, args);
+      case "update_content_status":
+        return await handleUpdateContentStatus(supabase, ctx, args);
+      case "add_content_request":
+        return await handleAddContentRequest(supabase, ctx, args);
+      case "update_content_request_status":
+        return await handleUpdateContentRequestStatus(supabase, ctx, args);
+      case "add_project_vendor":
+        return await handleAddProjectVendor(supabase, ctx, args);
+      case "update_project_vendor":
+        return await handleUpdateProjectVendor(supabase, ctx, args);
+      case "update_project_task":
+        return await handleUpdateProjectTask(supabase, ctx, args);
+      case "update_project_pipeline_stage":
+        return await handleUpdateProjectPipelineStage(supabase, ctx, args);
+      case "add_asset_comment":
+        return await handleAddAssetComment(supabase, ctx, args);
+      case "set_asset_comment_resolved":
+        return await handleSetAssetCommentResolved(ctx, args);
+      case "cancel_purchase_order":
+        return await handleCancelPurchaseOrder(supabase, ctx, args);
+      case "decide_capital_request":
+        return await handleDecideCapitalRequest(supabase, ctx, args);
+      case "update_event_expense":
+        return await handleUpdateEventExpense(supabase, ctx, args);
 
       default:
         return { success: false, error: `Tool tidak dikenal: ${toolName}` };
@@ -1027,6 +1107,61 @@ async function handleGetPortfolioFolders(ctx: UserContext): Promise<ToolResult> 
     createdAt: f.createdAt,
   }));
   return { success: true, data: { folders: summary, count: summary.length } };
+}
+
+async function handleGetAssetComments(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  let assetId = str(args.assetId);
+  const assetTitle = str(args.assetTitle);
+  if (!assetId && assetTitle) {
+    const { data } = await supabase.from("magnative_creative_assets").select("id, title").ilike("title", likePattern(assetTitle)).limit(5);
+    if (!data || data.length === 0) return { success: false, error: "Aset tidak ditemukan." };
+    if (data.length > 1) {
+      return { success: true, data: { message: "Ada beberapa aset yang cocok, tanyakan ke user mana yang dimaksud.", candidates: data } };
+    }
+    assetId = data[0].id;
+  }
+  if (!assetId) return { success: false, error: "ID atau judul aset harus diisi." };
+
+  const comments = await getAssetComments(assetId);
+  return { success: true, data: { comments, count: comments.length } };
+}
+
+async function handleGetContentRequests(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const clientName = str(args.clientName);
+  const clientEmbed = clientName ? "client:magnative_clients!inner(id, name)" : "client:magnative_clients(id, name)";
+  let query = supabase
+    .from("magnative_content_requests")
+    .select(`id, title, description, deadline, priority, status, catatan, ${clientEmbed}`)
+    .order("deadline", { ascending: true, nullsFirst: false });
+
+  const status = str(args.status);
+  if (status) query = query.eq("status", status);
+  if (clientName) query = query.ilike("client.name", likePattern(clientName));
+
+  const { data, error } = await query.limit(limitOf(args));
+  if (error) return dbError("get_content_requests", error.message);
+  return { success: true, data: { requests: data ?? [], count: (data ?? []).length } };
+}
+
+async function handleGetProjectVendors(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const resolved = await resolveMagnativeProjectId(supabase, args);
+  if ("error" in resolved) return { success: false, error: resolved.error };
+  if ("candidates" in resolved) {
+    return { success: true, data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates } };
+  }
+
+  const { data, error } = await supabase
+    .from("magnative_project_vendors")
+    .select("id, keterangan, biaya_estimasi, vendor:magnative_vendors(id, name, category, contact_name, contact_phone)")
+    .eq("project_id", resolved.projectId);
+  if (error) return dbError("get_project_vendors", error.message);
+  return { success: true, data: { vendors: data ?? [], count: (data ?? []).length } };
 }
 
 // ============================================================================
@@ -2057,6 +2192,617 @@ async function handleAddProjectCrew(supabase: SupabaseClient, ctx: UserContext, 
   return { success: true, data: { message: `Kru "${nama}" (${peran}) berhasil ditugaskan ke proyek.` } };
 }
 
+/** Resolve ID proyek Magnativ dari ID langsung atau nama -- dipakai di beberapa
+ * tool (update_magnative_project, add_project_cost, add_project_vendor,
+ * update_project_pipeline_stage, get_project_vendors). */
+async function resolveMagnativeProjectId(
+  supabase: SupabaseClient,
+  args: Args
+): Promise<{ projectId: string } | { error: string } | { candidates: unknown[] }> {
+  let projectId = str(args.projectId);
+  const projectName = str(args.projectName);
+  if (!projectId && projectName) {
+    const { data } = await supabase.from("magnative_projects").select("id, name").ilike("name", likePattern(projectName)).limit(5);
+    if (!data || data.length === 0) return { error: "Proyek tidak ditemukan." };
+    if (data.length > 1) return { candidates: data };
+    projectId = data[0].id;
+  }
+  if (!projectId) return { error: "ID atau nama proyek harus diisi." };
+  return { projectId };
+}
+
+const PROJECT_TYPES: ProjectType[] = ["Event Organizer", "Creative Agency", "Media Sosial", "Lainnya"];
+const PROJECT_STATUSES: ProjectStatus[] = ["Pitching", "Perencanaan", "Berjalan", "Selesai", "Dibatalkan"];
+const MAGNATIVE_PAYMENT_STATUSES: MagnativePaymentStatus[] = ["Belum Bayar", "DP", "Lunas"];
+const CONTENT_PLATFORMS: Platform[] = ["Instagram", "TikTok", "Facebook", "YouTube", "LinkedIn", "Lainnya"];
+const CONTENT_STATUSES: ContentStatus[] = ["Draft", "Revisi", "Disetujui", "Tayang"];
+const CONTENT_REQUEST_PRIORITIES: ContentRequestPriority[] = ["Rendah", "Sedang", "Tinggi"];
+const CONTENT_REQUEST_STATUSES: ContentRequestStatus[] = ["Baru", "Diproses", "Selesai", "Ditolak"];
+
+/** Cari klien Magnativ by nama -- dipakai beberapa tool content/project yang menerima clientName selain clientId. */
+async function resolveMagnativeClientId(
+  supabase: SupabaseClient,
+  clientName: string
+): Promise<{ clientId: string } | { error: string } | { candidates: unknown[] }> {
+  const { data } = await supabase.from("magnative_clients").select("id, name").ilike("name", likePattern(clientName)).limit(5);
+  if (!data || data.length === 0) return { error: "Klien tidak ditemukan." };
+  if (data.length > 1) return { candidates: data };
+  return { clientId: data[0].id };
+}
+
+async function handleAddMagnativeProject(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  let clientId = str(args.clientId);
+  const clientName = str(args.clientName);
+  if (!clientId && clientName) {
+    const resolved = await resolveMagnativeClientId(supabase, clientName);
+    if ("error" in resolved) return { success: false, error: resolved.error };
+    if ("candidates" in resolved) {
+      return { success: true, data: { message: "Ada beberapa klien yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates } };
+    }
+    clientId = resolved.clientId;
+  }
+  const name = str(args.name);
+  const type = str(args.type) as ProjectType | undefined;
+  const tanggalMulai = isoDate(args.tanggalMulai);
+  const tanggalSelesai = isoDate(args.tanggalSelesai);
+  const budget = num(args.budget);
+  if (!clientId || !name || !type || !PROJECT_TYPES.includes(type) || !tanggalMulai || !tanggalSelesai || budget === undefined) {
+    return { success: false, error: "Klien, nama, tipe, tanggal mulai/selesai, dan budget harus diisi dengan benar." };
+  }
+  const status = (str(args.status) as ProjectStatus | undefined) ?? "Pitching";
+  if (!PROJECT_STATUSES.includes(status)) return { success: false, error: "Status proyek tidak valid." };
+  const statusPembayaran = (str(args.statusPembayaran) as MagnativePaymentStatus | undefined) ?? "Belum Bayar";
+  if (!MAGNATIVE_PAYMENT_STATUSES.includes(statusPembayaran)) return { success: false, error: "Status pembayaran tidak valid." };
+  if (status === "Dibatalkan" && !str(args.alasanKalah)) {
+    return { success: false, error: "Alasan batal/kalah wajib diisi kalau status Dibatalkan." };
+  }
+
+  const result = await addMagnativeProject({
+    clientId,
+    name,
+    type,
+    tanggalMulai,
+    tanggalSelesai,
+    budget,
+    status,
+    statusPembayaran,
+    dpAmount: statusPembayaran === "DP" ? num(args.dpAmount) ?? 0 : 0,
+    catatan: str(args.catatan),
+    alasanKalah: str(args.alasanKalah),
+    sumberUndangan: str(args.sumberUndangan),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Proyek "${name}" berhasil ditambahkan.` } };
+}
+
+async function handleUpdateMagnativeProject(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const resolved = await resolveMagnativeProjectId(supabase, args);
+  if ("error" in resolved) return { success: false, error: resolved.error };
+  if ("candidates" in resolved) {
+    return { success: true, data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates } };
+  }
+
+  const { data: current } = await supabase
+    .from("magnative_projects")
+    .select("client_id, name, type, tanggal_mulai, tanggal_selesai, budget, status, status_pembayaran, dp_amount, catatan, alasan_kalah, pipeline_stage, sumber_undangan")
+    .eq("id", resolved.projectId)
+    .maybeSingle<{
+      client_id: string;
+      name: string;
+      type: ProjectType;
+      tanggal_mulai: string;
+      tanggal_selesai: string;
+      budget: number;
+      status: ProjectStatus;
+      status_pembayaran: MagnativePaymentStatus;
+      dp_amount: number;
+      catatan: string | null;
+      alasan_kalah: string | null;
+      pipeline_stage: PipelineStage | null;
+      sumber_undangan: string | null;
+    }>();
+  if (!current) return { success: false, error: "Proyek tidak ditemukan." };
+
+  const status = (str(args.status) as ProjectStatus | undefined) ?? current.status;
+  if (!PROJECT_STATUSES.includes(status)) return { success: false, error: "Status proyek tidak valid." };
+  const alasanKalah = str(args.alasanKalah) ?? current.alasan_kalah ?? undefined;
+  if (status === "Dibatalkan" && !alasanKalah) {
+    return { success: false, error: "Alasan batal/kalah wajib diisi kalau status diubah ke Dibatalkan." };
+  }
+  const statusPembayaran = (str(args.statusPembayaran) as MagnativePaymentStatus | undefined) ?? current.status_pembayaran;
+  if (!MAGNATIVE_PAYMENT_STATUSES.includes(statusPembayaran)) return { success: false, error: "Status pembayaran tidak valid." };
+
+  const name = str(args.name) ?? current.name;
+  const result = await updateMagnativeProject(resolved.projectId, {
+    clientId: str(args.clientId) ?? current.client_id,
+    name,
+    type: (str(args.type) as ProjectType | undefined) ?? current.type,
+    tanggalMulai: isoDate(args.tanggalMulai) ?? current.tanggal_mulai,
+    tanggalSelesai: isoDate(args.tanggalSelesai) ?? current.tanggal_selesai,
+    budget: num(args.budget) ?? current.budget,
+    status,
+    statusPembayaran,
+    dpAmount: statusPembayaran === "DP" ? num(args.dpAmount) ?? current.dp_amount : 0,
+    catatan: str(args.catatan) ?? current.catatan ?? undefined,
+    alasanKalah,
+    pipelineStage: current.pipeline_stage ?? undefined,
+    sumberUndangan: str(args.sumberUndangan) ?? current.sumber_undangan ?? undefined,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Proyek "${name}" berhasil diperbarui.` } };
+}
+
+async function handleAddProjectCost(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const resolved = await resolveMagnativeProjectId(supabase, args);
+  if ("error" in resolved) return { success: false, error: resolved.error };
+  if ("candidates" in resolved) {
+    return { success: true, data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates } };
+  }
+
+  const description = str(args.description);
+  const amount = num(args.amount);
+  const category = str(args.category);
+  const paymentMethod = str(args.paymentMethod);
+  if (!description || amount === undefined || amount <= 0 || !category || !paymentMethod) {
+    return { success: false, error: "Deskripsi, jumlah, kategori, dan metode bayar harus diisi dengan benar." };
+  }
+
+  const result = await addProjectCost({
+    projectId: resolved.projectId,
+    description,
+    amount,
+    costDate: isoDate(args.costDate) ?? todayJakarta(),
+    category,
+    paymentMethod,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Biaya proyek "${description}" (${num(args.amount) !== undefined ? `Rp ${Math.round(amount).toLocaleString("id-ID")}` : "-"}) berhasil dicatat.` } };
+}
+
+async function handleUpdateProjectCost(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const costId = str(args.costId);
+  if (!costId) return { success: false, error: "ID biaya proyek harus diisi." };
+
+  const { data: current } = await supabase
+    .from("event_expenses")
+    .select("source_id, notes, amount, category, payment_method, expense_date, source_type")
+    .eq("id", costId)
+    .maybeSingle<{
+      source_id: string | null;
+      notes: string | null;
+      amount: number;
+      category: string;
+      payment_method: string;
+      expense_date: string;
+      source_type: string;
+    }>();
+  if (!current || current.source_type !== "magnative_project" || !current.source_id) {
+    return { success: false, error: "Biaya proyek tidak ditemukan." };
+  }
+
+  const description = str(args.description) ?? current.notes ?? undefined;
+  const amount = num(args.amount) ?? current.amount;
+  if (!description || amount <= 0) return { success: false, error: "Deskripsi harus diisi dan jumlah harus lebih dari 0." };
+
+  const result = await updateProjectCost(costId, {
+    projectId: current.source_id,
+    description,
+    amount,
+    costDate: isoDate(args.costDate) ?? current.expense_date,
+    category: str(args.category) ?? current.category,
+    paymentMethod: str(args.paymentMethod) ?? current.payment_method,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Biaya proyek "${description}" berhasil diperbarui.` } };
+}
+
+async function handleAddContentPost(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  let clientId = str(args.clientId);
+  const clientName = str(args.clientName);
+  if (!clientId && clientName) {
+    const resolved = await resolveMagnativeClientId(supabase, clientName);
+    if ("error" in resolved) return { success: false, error: resolved.error };
+    if ("candidates" in resolved) {
+      return { success: true, data: { message: "Ada beberapa klien yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates } };
+    }
+    clientId = resolved.clientId;
+  }
+
+  const title = str(args.title);
+  const platform = str(args.platform) as Platform | undefined;
+  const tanggalPosting = isoDate(args.tanggalPosting);
+  if (!title || !platform || !CONTENT_PLATFORMS.includes(platform) || !tanggalPosting) {
+    return { success: false, error: "Judul, platform, dan tanggal posting harus diisi dengan benar." };
+  }
+  const status = (str(args.status) as ContentStatus | undefined) ?? "Draft";
+  if (!CONTENT_STATUSES.includes(status)) return { success: false, error: "Status konten tidak valid." };
+  const feedbackRevisi = str(args.feedbackRevisi);
+  if (status === "Revisi" && !feedbackRevisi) return { success: false, error: "Catatan revisi wajib diisi kalau status Revisi." };
+
+  const result = await addContentPost({
+    clientId,
+    title,
+    platform,
+    tanggalPosting,
+    status,
+    catatan: str(args.catatan),
+    feedbackRevisi,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Konten "${title}" (${platform}) berhasil dijadwalkan.` } };
+}
+
+async function handleUpdateContentPost(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const postId = str(args.postId);
+  if (!postId) return { success: false, error: "ID konten harus diisi." };
+
+  const { data: current } = await supabase
+    .from("magnative_content_posts")
+    .select("client_id, title, platform, tanggal_posting, status, catatan, feedback_revisi")
+    .eq("id", postId)
+    .maybeSingle<{
+      client_id: string | null;
+      title: string;
+      platform: Platform;
+      tanggal_posting: string;
+      status: ContentStatus;
+      catatan: string | null;
+      feedback_revisi: string | null;
+    }>();
+  if (!current) return { success: false, error: "Konten tidak ditemukan." };
+
+  const status = (str(args.status) as ContentStatus | undefined) ?? current.status;
+  if (!CONTENT_STATUSES.includes(status)) return { success: false, error: "Status konten tidak valid." };
+  const feedbackRevisi = str(args.feedbackRevisi) ?? current.feedback_revisi ?? undefined;
+  if (status === "Revisi" && !feedbackRevisi) return { success: false, error: "Catatan revisi wajib diisi kalau status Revisi." };
+
+  const title = str(args.title) ?? current.title;
+  const result = await updateContentPost(postId, {
+    clientId: str(args.clientId) ?? current.client_id ?? undefined,
+    title,
+    platform: (str(args.platform) as Platform | undefined) ?? current.platform,
+    tanggalPosting: isoDate(args.tanggalPosting) ?? current.tanggal_posting,
+    status,
+    catatan: str(args.catatan) ?? current.catatan ?? undefined,
+    feedbackRevisi,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Konten "${title}" berhasil diperbarui.` } };
+}
+
+async function handleUpdateContentStatus(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const postId = str(args.postId);
+  const status = str(args.status) as ContentStatus | undefined;
+  if (!postId || !status || !CONTENT_STATUSES.includes(status)) {
+    return { success: false, error: "ID konten atau status tidak valid." };
+  }
+  if (status === "Revisi" && !str(args.feedbackRevisi)) {
+    return { success: false, error: "Catatan revisi wajib diisi kalau status Revisi." };
+  }
+
+  const { data: post } = await supabase.from("magnative_content_posts").select("title").eq("id", postId).maybeSingle<{ title: string }>();
+  if (!post) return { success: false, error: "Konten tidak ditemukan." };
+
+  const result = await updateContentStatus(postId, status, str(args.feedbackRevisi));
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Status konten "${post.title}" berhasil diubah ke "${status}".` } };
+}
+
+async function handleAddContentRequest(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  let clientId = str(args.clientId);
+  const clientName = str(args.clientName);
+  if (!clientId && clientName) {
+    const resolved = await resolveMagnativeClientId(supabase, clientName);
+    if ("error" in resolved) return { success: false, error: resolved.error };
+    if ("candidates" in resolved) {
+      return { success: true, data: { message: "Ada beberapa klien yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates } };
+    }
+    clientId = resolved.clientId;
+  }
+
+  const title = str(args.title);
+  const description = str(args.description);
+  if (!clientId || !title || !description) {
+    return { success: false, error: "Klien, judul, dan deskripsi permintaan harus diisi." };
+  }
+  const priority = (str(args.priority) as ContentRequestPriority | undefined) ?? "Sedang";
+  if (!CONTENT_REQUEST_PRIORITIES.includes(priority)) return { success: false, error: "Prioritas tidak valid." };
+
+  const result = await addContentRequest({
+    clientId,
+    title,
+    description,
+    deadline: isoDate(args.deadline),
+    priority,
+    catatan: str(args.catatan),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Permintaan konten "${title}" berhasil dicatat.` } };
+}
+
+async function handleUpdateContentRequestStatus(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const requestId = str(args.requestId);
+  const status = str(args.status) as ContentRequestStatus | undefined;
+  if (!requestId || !status || !CONTENT_REQUEST_STATUSES.includes(status)) {
+    return { success: false, error: "ID permintaan atau status tidak valid." };
+  }
+
+  const { data: reqRow } = await supabase.from("magnative_content_requests").select("title").eq("id", requestId).maybeSingle<{ title: string }>();
+  if (!reqRow) return { success: false, error: "Permintaan konten tidak ditemukan." };
+
+  const result = await updateContentRequestStatus(requestId, status);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Status permintaan konten "${reqRow.title}" berhasil diubah ke "${status}".` } };
+}
+
+async function handleAddProjectVendor(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const resolved = await resolveMagnativeProjectId(supabase, args);
+  if ("error" in resolved) return { success: false, error: resolved.error };
+  if ("candidates" in resolved) {
+    return { success: true, data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates } };
+  }
+
+  let vendorId = str(args.vendorId);
+  const vendorName = str(args.vendorName);
+  if (!vendorId && vendorName) {
+    const { data } = await supabase.from("magnative_vendors").select("id, name").ilike("name", likePattern(vendorName)).limit(5);
+    if (!data || data.length === 0) return { success: false, error: "Vendor tidak ditemukan." };
+    if (data.length > 1) {
+      return { success: true, data: { message: "Ada beberapa vendor yang cocok, tanyakan ke user mana yang dimaksud.", candidates: data } };
+    }
+    vendorId = data[0].id;
+  }
+  if (!vendorId) return { success: false, error: "ID atau nama vendor harus diisi." };
+
+  const result = await addProjectVendor({
+    projectId: resolved.projectId,
+    vendorId,
+    keterangan: str(args.keterangan),
+    biayaEstimasi: num(args.biayaEstimasi) ?? 0,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: "Vendor berhasil dikaitkan ke proyek." } };
+}
+
+async function handleUpdateProjectVendor(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const linkId = str(args.projectVendorId);
+  if (!linkId) return { success: false, error: "ID kaitan vendor-proyek harus diisi." };
+
+  const { data: current } = await supabase
+    .from("magnative_project_vendors")
+    .select("project_id, vendor_id, keterangan, biaya_estimasi")
+    .eq("id", linkId)
+    .maybeSingle<{ project_id: string; vendor_id: string; keterangan: string | null; biaya_estimasi: number }>();
+  if (!current) return { success: false, error: "Kaitan vendor-proyek tidak ditemukan." };
+
+  let vendorId = str(args.vendorId) ?? current.vendor_id;
+  const vendorName = str(args.vendorName);
+  if (!str(args.vendorId) && vendorName) {
+    const { data } = await supabase.from("magnative_vendors").select("id, name").ilike("name", likePattern(vendorName)).limit(5);
+    if (!data || data.length === 0) return { success: false, error: "Vendor tidak ditemukan." };
+    if (data.length > 1) {
+      return { success: true, data: { message: "Ada beberapa vendor yang cocok, tanyakan ke user mana yang dimaksud.", candidates: data } };
+    }
+    vendorId = data[0].id;
+  }
+
+  const result = await updateProjectVendor(linkId, {
+    projectId: current.project_id,
+    vendorId,
+    keterangan: str(args.keterangan) ?? current.keterangan ?? undefined,
+    biayaEstimasi: num(args.biayaEstimasi) ?? current.biaya_estimasi,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: "Kaitan vendor-proyek berhasil diperbarui." } };
+}
+
+async function handleUpdateProjectTask(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const taskId = str(args.taskId);
+  if (!taskId) return { success: false, error: "ID task harus diisi." };
+
+  const { data: current } = await supabase
+    .from("magnative_project_tasks")
+    .select("project_id, title, detail, status, due_date, pic, sort_order, vendor_id, biaya_estimasi")
+    .eq("id", taskId)
+    .maybeSingle<{
+      project_id: string;
+      title: string;
+      detail: string | null;
+      status: ProjectTaskStatus;
+      due_date: string | null;
+      pic: string | null;
+      sort_order: number;
+      vendor_id: string | null;
+      biaya_estimasi: number | null;
+    }>();
+  if (!current) return { success: false, error: "Task tidak ditemukan." };
+
+  const status = (str(args.status) as ProjectTaskStatus | undefined) ?? current.status;
+  if (!PROJECT_TASK_STATUSES.includes(status)) return { success: false, error: "Status task tidak valid." };
+
+  const title = str(args.title) ?? current.title;
+  const result = await updateProjectTask(taskId, {
+    projectId: current.project_id,
+    title,
+    detail: str(args.detail) ?? current.detail ?? undefined,
+    status,
+    dueDate: isoDate(args.dueDate) ?? current.due_date ?? undefined,
+    pic: str(args.pic) ?? current.pic ?? undefined,
+    sortOrder: num(args.sortOrder) ?? current.sort_order,
+    vendorId: str(args.vendorId) ?? current.vendor_id ?? undefined,
+    biayaEstimasi: num(args.biayaEstimasi) ?? current.biaya_estimasi ?? undefined,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Task "${title}" berhasil diperbarui.` } };
+}
+
+async function handleUpdateProjectPipelineStage(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const resolved = await resolveMagnativeProjectId(supabase, args);
+  if ("error" in resolved) return { success: false, error: resolved.error };
+  if ("candidates" in resolved) {
+    return { success: true, data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates } };
+  }
+
+  const stage = str(args.stage) as PipelineStage | undefined;
+  if (!stage || !PIPELINE_STAGES.includes(stage)) {
+    return { success: false, error: `Tahap pipeline tidak valid. Pilihan: ${PIPELINE_STAGES.join(", ")}.` };
+  }
+
+  const result = await updateProjectPipelineStage(resolved.projectId, stage);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Tahap pipeline proyek berhasil diubah ke "${stage}".` } };
+}
+
+async function handleAddAssetComment(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  let assetId = str(args.assetId);
+  const assetTitle = str(args.assetTitle);
+  if (!assetId && assetTitle) {
+    const { data } = await supabase.from("magnative_creative_assets").select("id, title").ilike("title", likePattern(assetTitle)).limit(5);
+    if (!data || data.length === 0) return { success: false, error: "Aset tidak ditemukan." };
+    if (data.length > 1) {
+      return { success: true, data: { message: "Ada beberapa aset yang cocok, tanyakan ke user mana yang dimaksud.", candidates: data } };
+    }
+    assetId = data[0].id;
+  }
+  const commentText = str(args.commentText);
+  if (!assetId || !commentText) return { success: false, error: "ID/judul aset dan isi komentar harus diisi." };
+
+  const result = await addAssetComment(assetId, commentText);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: "Komentar berhasil ditambahkan." } };
+}
+
+async function handleSetAssetCommentResolved(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const commentId = str(args.commentId);
+  if (!commentId) return { success: false, error: "ID komentar harus diisi." };
+  const isResolved = typeof args.isResolved === "boolean" ? args.isResolved : true;
+
+  const result = await setAssetCommentResolved(commentId, isResolved);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Komentar ditandai ${isResolved ? "selesai" : "belum selesai"}.` } };
+}
+
+async function handleCancelPurchaseOrder(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessPurchaseOrders) return denied("Purchase Order");
+
+  const poId = str(args.poId);
+  if (!poId) return { success: false, error: "ID purchase order harus diisi." };
+
+  const { data: po } = await supabase
+    .from("production_purchase_orders")
+    .select("supplier_name, status")
+    .eq("id", poId)
+    .maybeSingle<{ supplier_name: string; status: string }>();
+  if (!po) return { success: false, error: "Purchase order tidak ditemukan." };
+  if (po.status !== "Dipesan") return { success: false, error: `PO ini sudah berstatus "${po.status}", tidak bisa dibatalkan.` };
+
+  const result = await cancelPurchaseOrder(poId);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `PO ke "${po.supplier_name}" berhasil dibatalkan.` } };
+}
+
+async function handleDecideCapitalRequest(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessCapital) return denied("Pengajuan Modal");
+
+  const requestId = str(args.requestId);
+  const status = str(args.status) as CapitalRequestStatus | undefined;
+  if (!requestId || (status !== "Disetujui" && status !== "Ditolak")) {
+    return { success: false, error: "ID pengajuan dan status (Disetujui/Ditolak) harus diisi." };
+  }
+
+  const { data: reqRow } = await supabase
+    .from("capital_requests")
+    .select("event_name, status")
+    .eq("id", requestId)
+    .maybeSingle<{ event_name: string; status: string }>();
+  if (!reqRow) return { success: false, error: "Pengajuan modal tidak ditemukan." };
+  if (reqRow.status !== "Menunggu") return { success: false, error: `Pengajuan ini sudah berstatus "${reqRow.status}".` };
+
+  const result = await decideCapitalRequest(requestId, status, str(args.note) ?? "");
+  if (!result.ok) return { success: false, error: result.error };
+  return {
+    success: true,
+    data: { message: `Pengajuan modal "${reqRow.event_name}" berhasil di${status === "Disetujui" ? "setujui" : "tolak"}.` },
+  };
+}
+
+async function handleUpdateEventExpense(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessExpenses) return denied("Realisasi Event");
+
+  const expenseId = str(args.expenseId);
+  if (!expenseId) return { success: false, error: "ID pengeluaran harus diisi." };
+
+  const { data: current } = await supabase
+    .from("event_expenses")
+    .select("expense_date, division, source_type, source_id, category, amount, pic_name, payment_method, reimbursement_status, notes")
+    .eq("id", expenseId)
+    .maybeSingle<{
+      expense_date: string;
+      division: ExpenseDivision;
+      source_type: ExpenseSourceType;
+      source_id: string | null;
+      category: ExpenseCategory;
+      amount: number;
+      pic_name: string;
+      payment_method: string;
+      reimbursement_status: ReimbursementStatus;
+      notes: string | null;
+    }>();
+  if (!current) return { success: false, error: "Pengeluaran tidak ditemukan." };
+
+  const category = (str(args.category) as ExpenseCategory | undefined) ?? current.category;
+  if (!EXPENSE_CATEGORIES.includes(category)) return { success: false, error: "Kategori tidak valid." };
+  const amount = num(args.amount) ?? current.amount;
+  if (amount <= 0) return { success: false, error: "Jumlah pengeluaran harus lebih dari 0." };
+  const reimbursementStatus = (str(args.reimbursementStatus) as ReimbursementStatus | undefined) ?? current.reimbursement_status;
+  if (!REIMBURSEMENT_STATUSES.includes(reimbursementStatus)) return { success: false, error: "Status penggantian tidak valid." };
+
+  const result = await updateEventExpense(expenseId, {
+    expenseDate: isoDate(args.expenseDate) ?? current.expense_date,
+    division: current.division,
+    sourceType: current.source_type,
+    sourceId: current.source_id,
+    category,
+    amount,
+    picName: str(args.picName) ?? current.pic_name,
+    paymentMethod: str(args.paymentMethod) ?? current.payment_method,
+    reimbursementStatus,
+    notes: str(args.notes) ?? current.notes ?? undefined,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Pengeluaran "${category}" berhasil diperbarui.` } };
+}
+
 // ============================================================================
 // KONFIRMASI
 // ============================================================================
@@ -2469,6 +3215,202 @@ async function buildConfirmationResponse(
       `- Proyek: ${str(args.projectName) ?? str(args.projectId) ?? "-"}`,
       `- Nama: ${str(args.nama) ?? "-"} (${str(args.peran) ?? "-"})`,
     ].join("\n");
+  } else if (toolName === "add_magnative_project") {
+    description = [
+      "Tambah proyek Magnativ baru:",
+      `- Klien: ${str(args.clientName) ?? str(args.clientId) ?? "-"}`,
+      `- Nama: ${str(args.name) ?? "-"}`,
+      `- Tipe: ${str(args.type) ?? "-"}`,
+      `- Periode: ${str(args.tanggalMulai) ?? "-"} s/d ${str(args.tanggalSelesai) ?? "-"}`,
+      `- Budget: ${rupiah(args.budget)}`,
+      `- Status awal: ${str(args.status) ?? "Pitching"}`,
+    ].join("\n");
+  } else if (toolName === "update_magnative_project") {
+    const magProjectId = str(args.projectId);
+    const { data: magProject } = magProjectId
+      ? await supabase.from("magnative_projects").select("name").eq("id", magProjectId).maybeSingle<{ name: string }>()
+      : { data: null };
+    const magProjectLabel = magProject?.name ?? str(args.projectName) ?? magProjectId ?? "-";
+    description = [
+      `Ubah data proyek Magnativ "${magProjectLabel}":`,
+      str(args.name) !== undefined ? `- Nama baru: ${str(args.name)}` : null,
+      str(args.type) !== undefined ? `- Tipe baru: ${str(args.type)}` : null,
+      args.budget !== undefined ? `- Budget baru: ${rupiah(args.budget)}` : null,
+      str(args.status) !== undefined ? `- Status baru: ${str(args.status)}` : null,
+      str(args.statusPembayaran) !== undefined ? `- Status pembayaran baru: ${str(args.statusPembayaran)}` : null,
+      str(args.alasanKalah) !== undefined ? `- Alasan: ${str(args.alasanKalah)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "add_project_cost") {
+    description = [
+      "Catat biaya proyek Magnativ:",
+      `- Proyek: ${str(args.projectName) ?? str(args.projectId) ?? "-"}`,
+      `- Deskripsi: ${str(args.description) ?? "-"}`,
+      `- Jumlah: ${rupiah(args.amount)}`,
+      `- Kategori: ${str(args.category) ?? "-"}`,
+      `- Metode bayar: ${str(args.paymentMethod) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "update_project_cost") {
+    const costId = str(args.costId);
+    const { data: cost } = costId
+      ? await supabase.from("event_expenses").select("notes, amount").eq("id", costId).maybeSingle<{ notes: string | null; amount: number }>()
+      : { data: null };
+    description = [
+      `Ubah biaya proyek "${cost?.notes ?? costId ?? "-"}":`,
+      str(args.description) !== undefined ? `- Deskripsi baru: ${str(args.description)}` : null,
+      args.amount !== undefined ? `- Jumlah baru: ${rupiah(args.amount)}` : `- Jumlah sekarang: ${cost ? rupiah(cost.amount) : "-"}`,
+      str(args.category) !== undefined ? `- Kategori baru: ${str(args.category)}` : null,
+      str(args.paymentMethod) !== undefined ? `- Metode bayar baru: ${str(args.paymentMethod)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "add_content_post") {
+    description = [
+      "Jadwalkan konten baru:",
+      `- Klien: ${str(args.clientName) ?? str(args.clientId) ?? "-"}`,
+      `- Judul: ${str(args.title) ?? "-"}`,
+      `- Platform: ${str(args.platform) ?? "-"}`,
+      `- Tanggal posting: ${str(args.tanggalPosting) ?? "-"}`,
+      `- Status awal: ${str(args.status) ?? "Draft"}`,
+    ].join("\n");
+  } else if (toolName === "update_content_post") {
+    const updPostId = str(args.postId);
+    const { data: updPost } = updPostId
+      ? await supabase.from("magnative_content_posts").select("title").eq("id", updPostId).maybeSingle<{ title: string }>()
+      : { data: null };
+    description = [
+      `Ubah konten "${updPost?.title ?? updPostId ?? "-"}":`,
+      str(args.title) !== undefined ? `- Judul baru: ${str(args.title)}` : null,
+      str(args.platform) !== undefined ? `- Platform baru: ${str(args.platform)}` : null,
+      str(args.tanggalPosting) !== undefined ? `- Tanggal posting baru: ${str(args.tanggalPosting)}` : null,
+      str(args.status) !== undefined ? `- Status baru: ${str(args.status)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "update_content_status") {
+    const statusPostId = str(args.postId);
+    const { data: statusPost } = statusPostId
+      ? await supabase.from("magnative_content_posts").select("title, status").eq("id", statusPostId).maybeSingle<{ title: string; status: string }>()
+      : { data: null };
+    if (!statusPost) return { success: false, error: "Konten tidak ditemukan. Cari dulu ID konten yang benar." };
+    description = [`Ubah status konten "${statusPost.title}":`, `- Status: ${statusPost.status} → ${args.status}`].join("\n");
+  } else if (toolName === "add_content_request") {
+    description = [
+      "Catat permintaan konten baru:",
+      `- Klien: ${str(args.clientName) ?? str(args.clientId) ?? "-"}`,
+      `- Judul: ${str(args.title) ?? "-"}`,
+      `- Deskripsi: ${str(args.description) ?? "-"}`,
+      `- Prioritas: ${str(args.priority) ?? "Sedang"}`,
+      `- Deadline: ${str(args.deadline) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "update_content_request_status") {
+    const contentReqId = str(args.requestId);
+    const { data: contentReq } = contentReqId
+      ? await supabase.from("magnative_content_requests").select("title, status").eq("id", contentReqId).maybeSingle<{ title: string; status: string }>()
+      : { data: null };
+    if (!contentReq) return { success: false, error: "Permintaan konten tidak ditemukan. Cari dulu ID yang benar." };
+    description = [`Ubah status permintaan konten "${contentReq.title}":`, `- Status: ${contentReq.status} → ${args.status}`].join("\n");
+  } else if (toolName === "add_project_vendor") {
+    description = [
+      "Kaitkan vendor ke proyek Magnativ:",
+      `- Proyek: ${str(args.projectName) ?? str(args.projectId) ?? "-"}`,
+      `- Vendor: ${str(args.vendorName) ?? str(args.vendorId) ?? "-"}`,
+      `- Keterangan: ${str(args.keterangan) ?? "-"}`,
+      `- Estimasi biaya: ${args.biayaEstimasi !== undefined ? rupiah(args.biayaEstimasi) : "-"}`,
+    ].join("\n");
+  } else if (toolName === "update_project_vendor") {
+    description = [
+      "Ubah kaitan vendor-proyek Magnativ:",
+      `- ID kaitan: ${str(args.projectVendorId) ?? "-"}`,
+      str(args.vendorName) !== undefined ? `- Vendor baru: ${str(args.vendorName)}` : null,
+      str(args.keterangan) !== undefined ? `- Keterangan baru: ${str(args.keterangan)}` : null,
+      args.biayaEstimasi !== undefined ? `- Estimasi biaya baru: ${rupiah(args.biayaEstimasi)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "update_project_task") {
+    const updTaskId = str(args.taskId);
+    const { data: updTask } = updTaskId
+      ? await supabase.from("magnative_project_tasks").select("title").eq("id", updTaskId).maybeSingle<{ title: string }>()
+      : { data: null };
+    description = [
+      `Ubah task "${updTask?.title ?? updTaskId ?? "-"}":`,
+      str(args.title) !== undefined ? `- Judul baru: ${str(args.title)}` : null,
+      str(args.status) !== undefined ? `- Status baru: ${str(args.status)}` : null,
+      str(args.dueDate) !== undefined ? `- Tenggat baru: ${str(args.dueDate)}` : null,
+      str(args.pic) !== undefined ? `- PIC baru: ${str(args.pic)}` : null,
+      args.biayaEstimasi !== undefined ? `- Estimasi biaya baru: ${rupiah(args.biayaEstimasi)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "update_project_pipeline_stage") {
+    description = [
+      "Ubah tahap pipeline proyek:",
+      `- Proyek: ${str(args.projectName) ?? str(args.projectId) ?? "-"}`,
+      `- Tahap baru: ${str(args.stage) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "add_asset_comment") {
+    description = [
+      "Tambah komentar pada aset kreatif:",
+      `- Aset: ${str(args.assetTitle) ?? str(args.assetId) ?? "-"}`,
+      `- Komentar: ${str(args.commentText) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "set_asset_comment_resolved") {
+    description = [
+      "Tandai komentar aset kreatif:",
+      `- ID komentar: ${str(args.commentId) ?? "-"}`,
+      `- Status: ${args.isResolved === false ? "Belum selesai" : "Selesai"}`,
+    ].join("\n");
+  } else if (toolName === "cancel_purchase_order") {
+    const cancelPoId = str(args.poId);
+    const { data: cancelPo } = cancelPoId
+      ? await supabase
+          .from("production_purchase_orders")
+          .select("supplier_name, status")
+          .eq("id", cancelPoId)
+          .maybeSingle<{ supplier_name: string; status: string }>()
+      : { data: null };
+    if (!cancelPo) return { success: false, error: "Purchase order tidak ditemukan. Cari dulu ID PO yang benar." };
+    if (cancelPo.status !== "Dipesan") return { success: false, error: `PO ini sudah berstatus "${cancelPo.status}", tidak bisa dibatalkan.` };
+    description = ["Batalkan purchase order:", `- Supplier: ${cancelPo.supplier_name}`, `- Status sekarang: ${cancelPo.status} → Dibatalkan`].join(
+      "\n"
+    );
+  } else if (toolName === "decide_capital_request") {
+    const decideReqId = str(args.requestId);
+    const { data: decideReq } = decideReqId
+      ? await supabase
+          .from("capital_requests")
+          .select("event_name, status")
+          .eq("id", decideReqId)
+          .maybeSingle<{ event_name: string; status: string }>()
+      : { data: null };
+    if (!decideReq) return { success: false, error: "Pengajuan modal tidak ditemukan. Cari dulu ID yang benar." };
+    description = [
+      `Putuskan pengajuan modal "${decideReq.event_name}":`,
+      `- Status: ${decideReq.status} → ${args.status}`,
+      str(args.note) !== undefined ? `- Catatan: ${str(args.note)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "update_event_expense") {
+    const expId = str(args.expenseId);
+    const { data: exp } = expId
+      ? await supabase
+          .from("event_expenses")
+          .select("notes, category, amount")
+          .eq("id", expId)
+          .maybeSingle<{ notes: string | null; category: string; amount: number }>()
+      : { data: null };
+    description = [
+      `Ubah pengeluaran "${exp?.notes ?? exp?.category ?? expId ?? "-"}":`,
+      str(args.category) !== undefined ? `- Kategori baru: ${str(args.category)}` : null,
+      args.amount !== undefined ? `- Jumlah baru: ${rupiah(args.amount)}` : `- Jumlah sekarang: ${exp ? rupiah(exp.amount) : "-"}`,
+      str(args.paymentMethod) !== undefined ? `- Metode bayar baru: ${str(args.paymentMethod)}` : null,
+      str(args.reimbursementStatus) !== undefined ? `- Status penggantian baru: ${str(args.reimbursementStatus)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
   } else {
     description = `Jalankan ${toolName}`;
   }

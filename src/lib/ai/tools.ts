@@ -640,6 +640,49 @@ export const QUERY_TOOLS: ToolDefinition[] = [
       parameters: { type: "object", properties: {} },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_asset_comments",
+      description: "Ambil komentar/anotasi ('proofing ringan') pada satu aset kreatif Magnativ.",
+      parameters: {
+        type: "object",
+        properties: {
+          assetId: { type: "string", description: "ID aset kreatif" },
+          assetTitle: { type: "string", description: "Judul aset (partial match), dipakai kalau assetId belum diketahui" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_content_requests",
+      description: "Ambil daftar permintaan konten dari klien Magnativ (antrean masuk sebelum dijadwalkan jadi konten). Bisa difilter status atau nama klien.",
+      parameters: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["Baru", "Diproses", "Selesai", "Ditolak"], description: "Filter status permintaan" },
+          clientName: { type: "string", description: "Filter nama klien (partial match)" },
+          limit: { type: "number", description: "Jumlah maksimal hasil (default: 20)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_project_vendors",
+      description: "Ambil daftar vendor yang dikaitkan ke satu proyek Magnativ, beserta keterangan & estimasi biayanya.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek (dari get_projects)" },
+          projectName: { type: "string", description: "Nama proyek (partial match) kalau projectId belum diketahui" },
+        },
+      },
+    },
+  },
 ];
 
 /**
@@ -1516,6 +1559,354 @@ export const ACTION_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "add_magnative_project",
+      description: "Tambah proyek Magnativ baru (Event Organizer/Creative Agency/Media Sosial). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          clientId: { type: "string", description: "ID klien (dari get_clients/search_global)" },
+          clientName: { type: "string", description: "Nama klien, dipakai kalau clientId belum diketahui" },
+          name: { type: "string", description: "Nama proyek" },
+          type: { type: "string", enum: ["Event Organizer", "Creative Agency", "Media Sosial", "Lainnya"], description: "Tipe proyek" },
+          tanggalMulai: { type: "string", description: "Tanggal mulai (YYYY-MM-DD)" },
+          tanggalSelesai: { type: "string", description: "Tanggal selesai (YYYY-MM-DD)" },
+          budget: { type: "number", description: "Budget proyek (Rupiah)" },
+          status: { type: "string", enum: ["Pitching", "Perencanaan", "Berjalan", "Selesai", "Dibatalkan"], description: "Status awal (default: Pitching)" },
+          statusPembayaran: { type: "string", enum: ["Belum Bayar", "DP", "Lunas"], description: "Status pembayaran (default: Belum Bayar)" },
+          dpAmount: { type: "number", description: "Nominal DP yang sudah diterima (kalau statusPembayaran DP)" },
+          sumberUndangan: { type: "string", description: "Sumber undangan pitching, mis. 'Client' atau 'Brand' (opsional)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["name", "type", "tanggalMulai", "tanggalSelesai", "budget"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_magnative_project",
+      description: "Ubah data proyek Magnativ (budget, status, tanggal, dst). Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek (dari get_projects)" },
+          projectName: { type: "string", description: "Nama proyek, dipakai kalau projectId belum diketahui" },
+          clientId: { type: "string", description: "ID klien baru" },
+          name: { type: "string", description: "Nama baru" },
+          type: { type: "string", enum: ["Event Organizer", "Creative Agency", "Media Sosial", "Lainnya"], description: "Tipe baru" },
+          tanggalMulai: { type: "string", description: "Tanggal mulai baru (YYYY-MM-DD)" },
+          tanggalSelesai: { type: "string", description: "Tanggal selesai baru (YYYY-MM-DD)" },
+          budget: { type: "number", description: "Budget baru (Rupiah)" },
+          status: { type: "string", enum: ["Pitching", "Perencanaan", "Berjalan", "Selesai", "Dibatalkan"], description: "Status baru" },
+          statusPembayaran: { type: "string", enum: ["Belum Bayar", "DP", "Lunas"], description: "Status pembayaran baru" },
+          dpAmount: { type: "number", description: "Nominal DP baru" },
+          alasanKalah: { type: "string", description: "Alasan batal/kalah -- WAJIB diisi kalau status diubah ke Dibatalkan" },
+          sumberUndangan: { type: "string", description: "Sumber undangan baru" },
+          catatan: { type: "string", description: "Catatan baru" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_project_cost",
+      description: "Catat biaya/pengeluaran untuk proyek Magnativ (pitching, produksi, vendor, dst). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek (dari get_projects)" },
+          projectName: { type: "string", description: "Nama proyek, dipakai kalau projectId belum diketahui" },
+          description: { type: "string", description: "Deskripsi biaya" },
+          amount: { type: "number", description: "Jumlah (Rupiah)" },
+          costDate: { type: "string", description: "Tanggal biaya (YYYY-MM-DD, default: hari ini)" },
+          category: { type: "string", description: "Kategori biaya, mis. Sewa Venue, Dekorasi & Material, Talent / Vendor, Lain-lain" },
+          paymentMethod: { type: "string", description: "Metode pembayaran, mis. Cash, Transfer BCA" },
+        },
+        required: ["description", "amount", "category", "paymentMethod"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_project_cost",
+      description: "Ubah biaya proyek Magnativ yang sudah tercatat. Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          costId: { type: "string", description: "ID biaya proyek" },
+          description: { type: "string", description: "Deskripsi baru" },
+          amount: { type: "number", description: "Jumlah baru (Rupiah)" },
+          costDate: { type: "string", description: "Tanggal baru (YYYY-MM-DD)" },
+          category: { type: "string", description: "Kategori baru" },
+          paymentMethod: { type: "string", description: "Metode pembayaran baru" },
+        },
+        required: ["costId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_content_post",
+      description: "Jadwalkan konten/post sosmed baru untuk klien Magnativ. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          clientId: { type: "string", description: "ID klien (opsional)" },
+          clientName: { type: "string", description: "Nama klien, dipakai kalau clientId belum diketahui" },
+          title: { type: "string", description: "Judul konten" },
+          platform: { type: "string", enum: ["Instagram", "TikTok", "Facebook", "YouTube", "LinkedIn", "Lainnya"], description: "Platform" },
+          tanggalPosting: { type: "string", description: "Tanggal posting (YYYY-MM-DD)" },
+          status: { type: "string", enum: ["Draft", "Revisi", "Disetujui", "Tayang"], description: "Status awal (default: Draft)" },
+          feedbackRevisi: { type: "string", description: "Catatan revisi (wajib kalau status Revisi)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["title", "platform", "tanggalPosting"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_content_post",
+      description: "Ubah seluruh data konten Magnativ (judul, platform, tanggal, status, dst). Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          postId: { type: "string", description: "ID konten (dari get_content_posts)" },
+          clientId: { type: "string", description: "ID klien baru" },
+          title: { type: "string", description: "Judul baru" },
+          platform: { type: "string", enum: ["Instagram", "TikTok", "Facebook", "YouTube", "LinkedIn", "Lainnya"], description: "Platform baru" },
+          tanggalPosting: { type: "string", description: "Tanggal posting baru (YYYY-MM-DD)" },
+          status: { type: "string", enum: ["Draft", "Revisi", "Disetujui", "Tayang"], description: "Status baru" },
+          feedbackRevisi: { type: "string", description: "Catatan revisi (wajib kalau status Revisi)" },
+          catatan: { type: "string", description: "Catatan baru" },
+        },
+        required: ["postId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_content_status",
+      description: "Ganti status konten Magnativ secara cepat (approve/minta revisi/tandai tayang) tanpa mengubah field lain. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          postId: { type: "string", description: "ID konten (dari get_content_posts)" },
+          status: { type: "string", enum: ["Draft", "Revisi", "Disetujui", "Tayang"], description: "Status baru" },
+          feedbackRevisi: { type: "string", description: "Catatan revisi (wajib kalau status Revisi)" },
+        },
+        required: ["postId", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_content_request",
+      description: "Catat permintaan konten baru dari klien Magnativ (antrean masuk sebelum dijadwalkan). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          clientId: { type: "string", description: "ID klien (dari get_clients/search_global)" },
+          clientName: { type: "string", description: "Nama klien, dipakai kalau clientId belum diketahui" },
+          title: { type: "string", description: "Judul permintaan" },
+          description: { type: "string", description: "Deskripsi kebutuhan" },
+          deadline: { type: "string", description: "Tenggat (YYYY-MM-DD), opsional" },
+          priority: { type: "string", enum: ["Rendah", "Sedang", "Tinggi"], description: "Prioritas (default: Sedang)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["title", "description"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_content_request_status",
+      description: "Ubah status permintaan konten Magnativ (Baru/Diproses/Selesai/Ditolak). HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          requestId: { type: "string", description: "ID permintaan konten (dari get_content_requests)" },
+          status: { type: "string", enum: ["Baru", "Diproses", "Selesai", "Ditolak"], description: "Status baru" },
+        },
+        required: ["requestId", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_project_vendor",
+      description: "Kaitkan vendor ke satu proyek Magnativ, beserta estimasi biaya. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek (dari get_projects)" },
+          projectName: { type: "string", description: "Nama proyek, dipakai kalau projectId belum diketahui" },
+          vendorId: { type: "string", description: "ID vendor (dari search_global)" },
+          vendorName: { type: "string", description: "Nama vendor, dipakai kalau vendorId belum diketahui" },
+          keterangan: { type: "string", description: "Keterangan, mis. jenis jasa/produk dari vendor ini" },
+          biayaEstimasi: { type: "number", description: "Estimasi biaya dari quote vendor (Rupiah)" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_project_vendor",
+      description: "Ubah keterangan/estimasi biaya kaitan vendor-proyek Magnativ. Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectVendorId: { type: "string", description: "ID kaitan vendor-proyek (dari get_project_vendors)" },
+          vendorId: { type: "string", description: "ID vendor baru (opsional, untuk ganti vendor)" },
+          vendorName: { type: "string", description: "Nama vendor baru, dipakai kalau vendorId belum diketahui" },
+          keterangan: { type: "string", description: "Keterangan baru" },
+          biayaEstimasi: { type: "number", description: "Estimasi biaya baru (Rupiah)" },
+        },
+        required: ["projectVendorId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_project_task",
+      description: "Ubah seluruh data task proyek Magnativ (judul, detail, tenggat, PIC, vendor, estimasi biaya, dst) -- untuk sekadar ganti status cepat pakai update_project_task_status. Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          taskId: { type: "string", description: "ID task (dari get_project_tasks)" },
+          title: { type: "string", description: "Judul baru" },
+          detail: { type: "string", description: "Detail baru" },
+          status: { type: "string", enum: ["Belum Mulai", "Berjalan", "Selesai"], description: "Status baru" },
+          dueDate: { type: "string", description: "Tenggat baru (YYYY-MM-DD)" },
+          pic: { type: "string", description: "ID PIC baru (dari daftar staf yang bisa ditunjuk)" },
+          vendorId: { type: "string", description: "ID vendor sourcing baru (opsional)" },
+          biayaEstimasi: { type: "number", description: "Estimasi biaya baru (Rupiah)" },
+        },
+        required: ["taskId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_project_pipeline_stage",
+      description: "Ubah tahap pipeline proposal (Invitation/Briefing/Submit/Present) proyek Magnativ yang masih Pitching. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek (dari get_projects)" },
+          projectName: { type: "string", description: "Nama proyek, dipakai kalau projectId belum diketahui" },
+          stage: { type: "string", enum: ["Invitation", "Briefing", "Submit", "Present"], description: "Tahap baru" },
+        },
+        required: ["stage"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_asset_comment",
+      description: "Tambah komentar/anotasi ('proofing ringan') pada satu aset kreatif Magnativ. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          assetId: { type: "string", description: "ID aset kreatif" },
+          assetTitle: { type: "string", description: "Judul aset, dipakai kalau assetId belum diketahui" },
+          commentText: { type: "string", description: "Isi komentar" },
+        },
+        required: ["commentText"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_asset_comment_resolved",
+      description: "Tandai komentar aset kreatif Magnativ sebagai selesai/belum selesai ditindaklanjuti. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          commentId: { type: "string", description: "ID komentar (dari get_asset_comments)" },
+          isResolved: { type: "boolean", description: "true = selesai, false = belum selesai (default: true)" },
+        },
+        required: ["commentId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cancel_purchase_order",
+      description: "Batalkan purchase order material Production yang masih berstatus Dipesan. HARUS konfirmasi dengan user sebelum membatalkan.",
+      parameters: {
+        type: "object",
+        properties: {
+          poId: { type: "string", description: "ID purchase order (dari get_purchase_orders)" },
+        },
+        required: ["poId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "decide_capital_request",
+      description: "Putuskan (Setujui/Tolak) satu pengajuan modal event. HANYA bisa dipakai akun investor. HARUS konfirmasi dengan user sebelum memutuskan.",
+      parameters: {
+        type: "object",
+        properties: {
+          requestId: { type: "string", description: "ID pengajuan modal (dari get_capital_requests)" },
+          status: { type: "string", enum: ["Disetujui", "Ditolak"], description: "Keputusan" },
+          note: { type: "string", description: "Catatan investor, opsional" },
+        },
+        required: ["requestId", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_event_expense",
+      description: "Ubah pengeluaran (Realisasi Event) yang sudah tercatat (kategori, jumlah, metode bayar, dst). Terkait event/booking/proyeknya TIDAK bisa diubah lewat tool ini. Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          expenseId: { type: "string", description: "ID pengeluaran (dari get_expenses)" },
+          category: {
+            type: "string",
+            enum: ["Sewa Venue", "Dekorasi & Material", "Transportasi", "Konsumsi", "Talent / Vendor", "Percetakan", "Operasional Kantor", "Lain-lain"],
+            description: "Kategori baru",
+          },
+          amount: { type: "number", description: "Jumlah baru (Rupiah)" },
+          expenseDate: { type: "string", description: "Tanggal baru (YYYY-MM-DD)" },
+          picName: { type: "string", description: "PIC baru" },
+          paymentMethod: { type: "string", description: "Metode bayar baru" },
+          reimbursementStatus: {
+            type: "string",
+            enum: ["Dibayar Perusahaan", "Belum Diganti", "Sudah Diganti", "Tidak Perlu"],
+            description: "Status penggantian baru",
+          },
+          notes: { type: "string", description: "Catatan baru" },
+        },
+        required: ["expenseId"],
+      },
+    },
+  },
 ];
 
 /**
@@ -1609,6 +2000,27 @@ export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
     update_crew_piece_payment_status: ctx.canAccessProduction,
     add_project_crew: ctx.canAccessProduction,
     get_portfolio_folders: ctx.canAccessMagnative,
+    get_asset_comments: ctx.canAccessMagnative,
+    get_content_requests: ctx.canAccessMagnative,
+    get_project_vendors: ctx.canAccessMagnative,
+    add_magnative_project: ctx.canAccessMagnative,
+    update_magnative_project: ctx.canAccessMagnative,
+    add_project_cost: ctx.canAccessMagnative,
+    update_project_cost: ctx.canAccessMagnative,
+    add_content_post: ctx.canAccessMagnative,
+    update_content_post: ctx.canAccessMagnative,
+    update_content_status: ctx.canAccessMagnative,
+    add_content_request: ctx.canAccessMagnative,
+    update_content_request_status: ctx.canAccessMagnative,
+    add_project_vendor: ctx.canAccessMagnative,
+    update_project_vendor: ctx.canAccessMagnative,
+    update_project_task: ctx.canAccessMagnative,
+    update_project_pipeline_stage: ctx.canAccessMagnative,
+    add_asset_comment: ctx.canAccessMagnative,
+    set_asset_comment_resolved: ctx.canAccessMagnative,
+    cancel_purchase_order: ctx.canAccessPurchaseOrders,
+    decide_capital_request: ctx.canAccessCapital,
+    update_event_expense: ctx.canAccessExpenses,
   };
   return AI_TOOLS.filter((t) => allowed[t.function.name]);
 }
@@ -1669,6 +2081,24 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "add_magnative_vendor",
     "update_magnative_vendor",
     "get_portfolio_folders",
+    "get_asset_comments",
+    "get_content_requests",
+    "get_project_vendors",
+    "add_magnative_project",
+    "update_magnative_project",
+    "add_project_cost",
+    "update_project_cost",
+    "add_content_post",
+    "update_content_post",
+    "update_content_status",
+    "add_content_request",
+    "update_content_request_status",
+    "add_project_vendor",
+    "update_project_vendor",
+    "update_project_task",
+    "update_project_pipeline_stage",
+    "add_asset_comment",
+    "set_asset_comment_resolved",
   ];
   const PRODUCTION_TOOLS = [
     ...COMMON_TOOLS,
@@ -1678,6 +2108,7 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_equipment",
     "get_project_crew",
     "receive_purchase_order",
+    "cancel_purchase_order",
     "update_production_status",
     "add_material",
     "update_material",
@@ -1715,6 +2146,8 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_journal_entries",
     "create_capital_request",
     "mark_invoice_status",
+    "decide_capital_request",
+    "update_event_expense",
   ];
   const EVENT_TOOLS = [...COMMON_TOOLS, "create_event_expense"];
 
