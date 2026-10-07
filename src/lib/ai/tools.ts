@@ -436,6 +436,105 @@ export const QUERY_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_warehouses",
+      description: "Ambil daftar gudang fisik Magnarent (nama, alamat, catatan) -- dipakai sebagai pilihan lokasi/tujuan transfer unit alat.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_subrent_records",
+      description: "Ambil riwayat alat yang disubrent (dipinjam dari vendor luar) Magnarent. Bisa difilter per booking.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "Filter berdasarkan ID booking (dari get_bookings), opsional -- kosongkan untuk semua riwayat" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_checkin_links",
+      description: "Ambil daftar link check-in tamu (QR) untuk satu proyek Magnativ, beserta token-nya.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek (dari get_projects/search_global)" },
+          projectName: { type: "string", description: "Nama proyek, dipakai kalau projectId belum diketahui" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_production_vendors",
+      description: "Ambil daftar vendor/supplier Production (kayu, cat, hardware, elektrikal, jasa kontraktor, dst) beserta kontaknya.",
+      parameters: {
+        type: "object",
+        properties: {
+          category: { type: "string", enum: ["Kayu & Panel", "Cat & Finishing", "Hardware & Rangka", "Elektrikal", "Jasa/Kontraktor", "Lainnya"], description: "Filter kategori vendor" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_nc_reports",
+      description: "Ambil daftar laporan NC/CAPA (temuan ketidaksesuaian kualitas material/vendor/kru/proses) Production beserta status tindak lanjutnya.",
+      parameters: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["Open", "Investigasi", "Tindakan Korektif", "Ditutup"], description: "Filter status" },
+          severity: { type: "string", enum: ["Rendah", "Sedang", "Tinggi"], description: "Filter tingkat keparahan" },
+          limit: { type: "number", description: "Jumlah maksimal hasil (default: 20)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_subcontract_orders",
+      description: "Ambil daftar pesanan subkontrak (material dikirim ke vendor luar, mis. laser cutting/printing) untuk satu proyek Production.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek booth (dari get_projects/search_global)" },
+          projectName: { type: "string", description: "Nama proyek, dipakai kalau projectId belum diketahui" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_bom_templates",
+      description: "Ambil daftar template BOM (resep alokasi material per tipe booth) Production, beserta daftar item materialnya.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_crew_timelogs",
+      description: "Ambil riwayat jam kerja (internal, belum terhubung payroll) satu kru proyek Production.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectCrewId: { type: "string", description: "ID penugasan kru (dari get_project_crew)" },
+        },
+        required: ["projectCrewId"],
+      },
+    },
+  },
 ];
 
 /**
@@ -867,6 +966,241 @@ export const ACTION_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "add_subrent_record",
+      description: "Catat alat yang dipinjam dari vendor luar (subrent) buat menutupi kekurangan stok Magnarent. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "ID booking terkait (dari get_bookings), opsional" },
+          itemId: { type: "string", description: "ID jenis alat terkait (dari get_inventory), opsional" },
+          vendorName: { type: "string", description: "Nama vendor penyedia alat subrent" },
+          jumlahUnit: { type: "number", description: "Jumlah unit yang disubrent" },
+          hargaSewaTotal: { type: "number", description: "Total harga sewa (Rupiah), opsional" },
+          tanggalMulai: { type: "string", description: "Tanggal mulai (YYYY-MM-DD)" },
+          tanggalSelesai: { type: "string", description: "Tanggal selesai (YYYY-MM-DD)" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["vendorName", "jumlahUnit", "tanggalMulai", "tanggalSelesai"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_checkin_link",
+      description: "Buat link check-in tamu (QR) baru untuk satu proyek Magnativ. HARUS konfirmasi dengan user sebelum membuat.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek (dari get_projects/search_global)" },
+          projectName: { type: "string", description: "Nama proyek, dipakai kalau projectId belum diketahui" },
+          label: { type: "string", description: "Label link, mis. 'Hari-H' atau 'Gala Dinner', opsional" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_magnative_vendor",
+      description: "Tambah vendor/supplier baru ke database vendor Magnativ (venue, katering, dekorasi, dst). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nama vendor" },
+          category: { type: "string", enum: ["Venue", "Katering", "Dekorasi", "Sound System & Lighting", "Fotografi/Videografi", "Percetakan", "Lainnya"], description: "Kategori vendor" },
+          contactName: { type: "string", description: "Nama kontak" },
+          contactPhone: { type: "string", description: "Nomor telepon kontak" },
+          contactEmail: { type: "string", description: "Email kontak" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["name", "category"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_magnative_vendor",
+      description: "Ubah data vendor Magnativ. Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          vendorId: { type: "string", description: "ID vendor (dari search_global)" },
+          name: { type: "string", description: "Nama vendor baru" },
+          category: { type: "string", enum: ["Venue", "Katering", "Dekorasi", "Sound System & Lighting", "Fotografi/Videografi", "Percetakan", "Lainnya"], description: "Kategori baru" },
+          contactName: { type: "string", description: "Nama kontak baru" },
+          contactPhone: { type: "string", description: "Nomor telepon kontak baru" },
+          contactEmail: { type: "string", description: "Email kontak baru" },
+          catatan: { type: "string", description: "Catatan baru" },
+        },
+        required: ["vendorId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_production_vendor",
+      description: "Tambah vendor/supplier baru ke database vendor Production (kayu, cat, hardware, elektrikal, jasa kontraktor, dst). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nama vendor" },
+          category: { type: "string", enum: ["Kayu & Panel", "Cat & Finishing", "Hardware & Rangka", "Elektrikal", "Jasa/Kontraktor", "Lainnya"], description: "Kategori vendor" },
+          contactName: { type: "string", description: "Nama kontak" },
+          contactPhone: { type: "string", description: "Nomor telepon kontak" },
+          contactEmail: { type: "string", description: "Email kontak" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["name", "category"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_production_vendor",
+      description: "Ubah data vendor Production. Field yang tidak diisi TETAP memakai nilai lama. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          vendorId: { type: "string", description: "ID vendor (dari get_production_vendors/search_global)" },
+          name: { type: "string", description: "Nama vendor baru" },
+          category: { type: "string", enum: ["Kayu & Panel", "Cat & Finishing", "Hardware & Rangka", "Elektrikal", "Jasa/Kontraktor", "Lainnya"], description: "Kategori baru" },
+          contactName: { type: "string", description: "Nama kontak baru" },
+          contactPhone: { type: "string", description: "Nomor telepon kontak baru" },
+          contactEmail: { type: "string", description: "Email kontak baru" },
+          catatan: { type: "string", description: "Catatan baru" },
+        },
+        required: ["vendorId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_nc_report",
+      description: "Catat laporan NC/CAPA baru (temuan ketidaksesuaian kualitas material/vendor/kru/proses) Production. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek terkait, opsional" },
+          vendorId: { type: "string", description: "ID vendor terkait, opsional" },
+          projectCrewId: { type: "string", description: "ID kru terkait, opsional" },
+          kategori: { type: "string", enum: ["Material", "Vendor", "Kru", "Proses", "Lainnya"], description: "Kategori temuan" },
+          judul: { type: "string", description: "Judul temuan" },
+          deskripsi: { type: "string", description: "Deskripsi detail temuan" },
+          severity: { type: "string", enum: ["Rendah", "Sedang", "Tinggi"], description: "Tingkat keparahan" },
+          pic: { type: "string", description: "PIC penanggung jawab, opsional" },
+          tanggalDitemukan: { type: "string", description: "Tanggal ditemukan (YYYY-MM-DD), default hari ini" },
+        },
+        required: ["kategori", "judul", "deskripsi", "severity"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_nc_report_progress",
+      description: "Ubah status & tindak lanjut (akar masalah, tindakan korektif/preventif) satu laporan NC. HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          ncReportId: { type: "string", description: "ID laporan NC (dari get_nc_reports)" },
+          status: { type: "string", enum: ["Open", "Investigasi", "Tindakan Korektif", "Ditutup"], description: "Status baru" },
+          akarMasalah: { type: "string", description: "Akar masalah, opsional" },
+          tindakanKorektif: { type: "string", description: "Tindakan korektif, opsional" },
+          tindakanPreventif: { type: "string", description: "Tindakan preventif, opsional" },
+        },
+        required: ["ncReportId", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_subcontract_order",
+      description: "Buat pesanan subkontrak baru (material BOM proyek dikirim ke vendor luar, mis. laser cutting/printing besar). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek booth" },
+          projectName: { type: "string", description: "Nama proyek, dipakai kalau projectId belum diketahui" },
+          vendorId: { type: "string", description: "ID vendor Production tujuan, opsional" },
+          deskripsiPekerjaan: { type: "string", description: "Deskripsi pekerjaan yang disubkontrakkan" },
+          tanggalKirim: { type: "string", description: "Tanggal kirim (YYYY-MM-DD), opsional" },
+          estimasiTerima: { type: "string", description: "Perkiraan tanggal terima (YYYY-MM-DD), opsional" },
+          biayaJasa: { type: "number", description: "Biaya jasa (Rupiah), opsional" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["deskripsiPekerjaan"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_subcontract_status",
+      description: "Ubah status pesanan subkontrak (Dikirim/Diproses/Diterima/Dibatalkan). HARUS konfirmasi dengan user sebelum mengubah.",
+      parameters: {
+        type: "object",
+        properties: {
+          subcontractOrderId: { type: "string", description: "ID pesanan subkontrak (dari get_subcontract_orders)" },
+          status: { type: "string", enum: ["Dikirim", "Diproses", "Diterima", "Dibatalkan"], description: "Status baru" },
+          tanggalTerima: { type: "string", description: "Tanggal terima (YYYY-MM-DD), dipakai kalau status Diterima" },
+        },
+        required: ["subcontractOrderId", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_bom_template",
+      description: "Buat template BOM baru (resep alokasi material per tipe booth) Production. HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nama template" },
+          description: { type: "string", description: "Deskripsi template, opsional" },
+          items: {
+            type: "array",
+            description: "Daftar item material template (ID material dari get_materials + jumlah)",
+            items: {
+              type: "object",
+              properties: {
+                materialId: { type: "string", description: "ID material (dari get_materials)" },
+                qty: { type: "number", description: "Jumlah yang dibutuhkan" },
+              },
+              required: ["materialId", "qty"],
+            },
+          },
+        },
+        required: ["name", "items"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_crew_timelog",
+      description: "Catat jam kerja kru proyek Production (internal, belum terhubung payroll). HARUS konfirmasi dengan user sebelum menyimpan.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectCrewId: { type: "string", description: "ID penugasan kru (dari get_project_crew)" },
+          tanggal: { type: "string", description: "Tanggal kerja (YYYY-MM-DD)" },
+          jam: { type: "number", description: "Jumlah jam kerja" },
+          catatan: { type: "string", description: "Catatan tambahan" },
+        },
+        required: ["projectCrewId", "tanggal", "jam"],
+      },
+    },
+  },
 ];
 
 /**
@@ -920,6 +1254,26 @@ export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
     update_material: ctx.canAccessProduction,
     add_purchase_order: ctx.canAccessPurchaseOrders,
     mark_invoice_status: ctx.canAccessInvoices,
+    get_warehouses: ctx.canAccessMagnarent,
+    get_subrent_records: ctx.canAccessMagnarent,
+    add_subrent_record: ctx.canAccessMagnarent,
+    get_checkin_links: ctx.canAccessMagnative,
+    create_checkin_link: ctx.canAccessMagnative,
+    add_magnative_vendor: ctx.canAccessMagnative,
+    update_magnative_vendor: ctx.canAccessMagnative,
+    get_production_vendors: ctx.canAccessProduction,
+    add_production_vendor: ctx.canAccessProduction,
+    update_production_vendor: ctx.canAccessProduction,
+    get_nc_reports: ctx.canAccessProduction,
+    add_nc_report: ctx.canAccessProduction,
+    update_nc_report_progress: ctx.canAccessProduction,
+    get_subcontract_orders: ctx.canAccessProduction,
+    add_subcontract_order: ctx.canAccessProduction,
+    update_subcontract_status: ctx.canAccessProduction,
+    get_bom_templates: ctx.canAccessProduction,
+    add_bom_template: ctx.canAccessProduction,
+    get_crew_timelogs: ctx.canAccessProduction,
+    add_crew_timelog: ctx.canAccessProduction,
   };
   return AI_TOOLS.filter((t) => allowed[t.function.name]);
 }
@@ -951,6 +1305,9 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "schedule_delivery",
     "add_inventory_item",
     "update_inventory_item",
+    "get_warehouses",
+    "get_subrent_records",
+    "add_subrent_record",
   ];
   const MAGNATIVE_TOOLS = [
     ...COMMON_TOOLS,
@@ -962,6 +1319,10 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "update_project_task_status",
     "add_client",
     "update_client",
+    "get_checkin_links",
+    "create_checkin_link",
+    "add_magnative_vendor",
+    "update_magnative_vendor",
   ];
   const PRODUCTION_TOOLS = [
     ...COMMON_TOOLS,
@@ -975,6 +1336,19 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "add_material",
     "update_material",
     "add_purchase_order",
+    "get_production_vendors",
+    "add_production_vendor",
+    "update_production_vendor",
+    "get_nc_reports",
+    "add_nc_report",
+    "update_nc_report_progress",
+    "get_subcontract_orders",
+    "add_subcontract_order",
+    "update_subcontract_status",
+    "get_bom_templates",
+    "add_bom_template",
+    "get_crew_timelogs",
+    "add_crew_timelog",
   ];
   const FINANCE_TOOLS = [
     ...COMMON_TOOLS,

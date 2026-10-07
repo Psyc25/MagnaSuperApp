@@ -21,11 +21,45 @@ import { getAvailableUnitsInRange } from "@/lib/magnarent/availability";
 import { rowToBooking, rowToInventory, type BookingRow, type InventoryRow } from "@/lib/magnarent/mappers";
 import type { BookingStatus, PaymentStatus, InventoryItem } from "@/lib/magnarent/types";
 import { BOOKING_TRANSITIONS } from "@/lib/magnarent/booking-status";
-import { addMaintenanceLog, saveDelivery } from "@/lib/magnarent/extras-actions";
+import { addMaintenanceLog, saveDelivery, getWarehouses, getAllSubrentRecords, getSubrentRecords, addSubrentRecord } from "@/lib/magnarent/extras-actions";
 import { MAINTENANCE_JENIS, DELIVERY_STATUS, type MaintenanceJenis, type DeliveryStage, type DeliveryStatus } from "@/lib/magnarent/extras-types";
-import { addProjectTask, updateProjectTaskStatus, addClient, updateClient } from "@/lib/magnative/actions";
-import type { ProjectTaskStatus, Client, ClientStatus } from "@/lib/magnative/types";
-import { getEquipment, getProjectCrew } from "@/lib/production/extras-actions";
+import {
+  addProjectTask,
+  updateProjectTaskStatus,
+  addClient,
+  updateClient,
+  addVendor as addMagnativeVendorAction,
+  updateVendor as updateMagnativeVendorAction,
+  createCheckinLink,
+  listCheckinLinks,
+} from "@/lib/magnative/actions";
+import type { ProjectTaskStatus, Client, ClientStatus, VendorCategory as MagnativeVendorCategory } from "@/lib/magnative/types";
+import {
+  getEquipment,
+  getProjectCrew,
+  getVendors as getProductionVendorsAction,
+  addVendor as addProductionVendorAction,
+  updateVendor as updateProductionVendorAction,
+  getNcReports,
+  addNcReport,
+  updateNcReportProgress,
+  getSubcontractOrders,
+  addSubcontractOrder,
+  updateSubcontractStatus,
+  getBomTemplates,
+  createBomTemplate,
+  getCrewTimelogs,
+  addCrewTimelog,
+} from "@/lib/production/extras-actions";
+import type {
+  VendorCategory as ProductionVendorCategory,
+  NcCategory,
+  NcSeverity,
+  NcStatus,
+  SubcontractStatus,
+  SubcontractMaterialItem,
+  BomTemplateItem,
+} from "@/lib/production/extras-types";
 import { receivePurchaseOrder, updateProjectStatus, addMaterial, updateMaterial, addPurchaseOrder } from "@/lib/production/actions";
 import type { BoothStatus, MaterialItem, MaterialCategory, MaterialUnit } from "@/lib/production/types";
 import { getChartOfAccounts, getManualJournalEntries } from "@/lib/accounting/data";
@@ -124,6 +158,22 @@ export async function executeToolCall(
         return await handleGetChartOfAccounts(ctx, args);
       case "get_journal_entries":
         return await handleGetJournalEntries(ctx, args);
+      case "get_warehouses":
+        return await handleGetWarehouses(ctx);
+      case "get_subrent_records":
+        return await handleGetSubrentRecords(ctx, args);
+      case "get_checkin_links":
+        return await handleGetCheckinLinks(supabase, ctx, args);
+      case "get_production_vendors":
+        return await handleGetProductionVendors(ctx, args);
+      case "get_nc_reports":
+        return await handleGetNcReports(ctx, args);
+      case "get_subcontract_orders":
+        return await handleGetSubcontractOrders(supabase, ctx, args);
+      case "get_bom_templates":
+        return await handleGetBomTemplates(ctx);
+      case "get_crew_timelogs":
+        return await handleGetCrewTimelogs(ctx, args);
 
       // Action tools (sudah dikonfirmasi)
       case "create_booking":
@@ -162,6 +212,30 @@ export async function executeToolCall(
         return await handleAddPurchaseOrder(ctx, args);
       case "mark_invoice_status":
         return await handleMarkInvoiceStatus(supabase, ctx, args);
+      case "add_subrent_record":
+        return await handleAddSubrentRecord(ctx, args);
+      case "create_checkin_link":
+        return await handleCreateCheckinLink(supabase, ctx, args);
+      case "add_magnative_vendor":
+        return await handleAddMagnativeVendor(ctx, args);
+      case "update_magnative_vendor":
+        return await handleUpdateMagnativeVendor(supabase, ctx, args);
+      case "add_production_vendor":
+        return await handleAddProductionVendor(ctx, args);
+      case "update_production_vendor":
+        return await handleUpdateProductionVendor(supabase, ctx, args);
+      case "add_nc_report":
+        return await handleAddNcReport(ctx, args);
+      case "update_nc_report_progress":
+        return await handleUpdateNcReportProgress(ctx, args);
+      case "add_subcontract_order":
+        return await handleAddSubcontractOrder(supabase, ctx, args);
+      case "update_subcontract_status":
+        return await handleUpdateSubcontractStatus(ctx, args);
+      case "add_bom_template":
+        return await handleAddBomTemplate(ctx, args);
+      case "add_crew_timelog":
+        return await handleAddCrewTimelog(ctx, args);
 
       default:
         return { success: false, error: `Tool tidak dikenal: ${toolName}` };
@@ -637,6 +711,111 @@ async function handleGetJournalEntries(ctx: UserContext, args: Args): Promise<To
   const limit = num(args.limit);
   const entries = await getManualJournalEntries(limit && limit > 0 ? Math.min(Math.floor(limit), 100) : 20);
   return { success: true, data: { entries, count: entries.length } };
+}
+
+async function handleGetWarehouses(ctx: UserContext): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const warehouses = await getWarehouses();
+  return { success: true, data: { warehouses, count: warehouses.length } };
+}
+
+async function handleGetSubrentRecords(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const bookingId = str(args.bookingId);
+  const records = bookingId ? await getSubrentRecords(bookingId) : await getAllSubrentRecords();
+  return { success: true, data: { records, count: records.length } };
+}
+
+async function handleGetCheckinLinks(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  let projectId = str(args.projectId);
+  const projectName = str(args.projectName);
+  if (!projectId && projectName) {
+    const { data } = await supabase
+      .from("magnative_projects")
+      .select("id, name")
+      .ilike("name", likePattern(projectName))
+      .limit(5);
+    if (!data || data.length === 0) return { success: false, error: "Proyek tidak ditemukan." };
+    if (data.length > 1) {
+      return {
+        success: true,
+        data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: data },
+      };
+    }
+    projectId = data[0].id;
+  }
+  if (!projectId) return { success: false, error: "ID atau nama proyek harus diisi." };
+
+  const links = await listCheckinLinks(projectId);
+  return { success: true, data: { links, count: links.length } };
+}
+
+async function handleGetProductionVendors(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  let vendors = await getProductionVendorsAction();
+  const category = str(args.category);
+  if (category) vendors = vendors.filter((v) => v.category === category);
+  return { success: true, data: { vendors, count: vendors.length } };
+}
+
+async function handleGetNcReports(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  let reports = await getNcReports();
+  const status = str(args.status);
+  if (status) reports = reports.filter((r) => r.status === status);
+  const severity = str(args.severity);
+  if (severity) reports = reports.filter((r) => r.severity === severity);
+  const limited = reports.slice(0, limitOf(args));
+  return { success: true, data: { reports: limited, count: limited.length } };
+}
+
+async function handleGetSubcontractOrders(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  let projectId = str(args.projectId);
+  const projectName = str(args.projectName);
+  if (!projectId && projectName) {
+    const { data } = await supabase
+      .from("production_booth_projects")
+      .select("id, name")
+      .ilike("name", likePattern(projectName))
+      .limit(5);
+    if (!data || data.length === 0) return { success: false, error: "Proyek tidak ditemukan." };
+    if (data.length > 1) {
+      return {
+        success: true,
+        data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: data },
+      };
+    }
+    projectId = data[0].id;
+  }
+  if (!projectId) return { success: false, error: "ID atau nama proyek harus diisi." };
+
+  const orders = await getSubcontractOrders(projectId);
+  return { success: true, data: { orders, count: orders.length } };
+}
+
+async function handleGetBomTemplates(ctx: UserContext): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const templates = await getBomTemplates();
+  return { success: true, data: { templates, count: templates.length } };
+}
+
+async function handleGetCrewTimelogs(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const projectCrewId = str(args.projectCrewId);
+  if (!projectCrewId) return { success: false, error: "ID penugasan kru harus diisi." };
+
+  const logs = await getCrewTimelogs(projectCrewId);
+  return { success: true, data: { logs, count: logs.length } };
 }
 
 // ============================================================================
@@ -1205,6 +1384,278 @@ async function handleMarkInvoiceStatus(supabase: SupabaseClient, ctx: UserContex
   };
 }
 
+const NC_CATEGORIES_VALUES: NcCategory[] = ["Material", "Vendor", "Kru", "Proses", "Lainnya"];
+const NC_SEVERITIES_VALUES: NcSeverity[] = ["Rendah", "Sedang", "Tinggi"];
+const NC_STATUSES_VALUES: NcStatus[] = ["Open", "Investigasi", "Tindakan Korektif", "Ditutup"];
+const SUBCONTRACT_STATUSES_VALUES: SubcontractStatus[] = ["Dikirim", "Diproses", "Diterima", "Dibatalkan"];
+
+async function resolveProductionProjectId(supabase: SupabaseClient, args: Args): Promise<{ projectId: string } | { error: string } | { candidates: unknown[] }> {
+  let projectId = str(args.projectId);
+  const projectName = str(args.projectName);
+  if (!projectId && projectName) {
+    const { data } = await supabase
+      .from("production_booth_projects")
+      .select("id, name")
+      .ilike("name", likePattern(projectName))
+      .limit(5);
+    if (!data || data.length === 0) return { error: "Proyek tidak ditemukan." };
+    if (data.length > 1) return { candidates: data };
+    projectId = data[0].id;
+  }
+  if (!projectId) return { error: "ID atau nama proyek harus diisi." };
+  return { projectId };
+}
+
+async function handleAddSubrentRecord(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+
+  const vendorName = str(args.vendorName);
+  const jumlahUnit = num(args.jumlahUnit);
+  const tanggalMulai = isoDate(args.tanggalMulai);
+  const tanggalSelesai = isoDate(args.tanggalSelesai);
+  if (!vendorName || jumlahUnit === undefined || !tanggalMulai || !tanggalSelesai) {
+    return { success: false, error: "Vendor, jumlah unit, dan tanggal mulai/selesai harus diisi dengan benar." };
+  }
+
+  const result = await addSubrentRecord({
+    bookingId: str(args.bookingId),
+    itemId: str(args.itemId),
+    vendorName,
+    jumlahUnit,
+    hargaSewaTotal: num(args.hargaSewaTotal),
+    tanggalMulai,
+    tanggalSelesai,
+    catatan: str(args.catatan),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Subrent ${jumlahUnit} unit dari "${vendorName}" berhasil dicatat.` } };
+}
+
+async function handleCreateCheckinLink(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  let projectId = str(args.projectId);
+  const projectName = str(args.projectName);
+  if (!projectId && projectName) {
+    const { data } = await supabase
+      .from("magnative_projects")
+      .select("id, name")
+      .ilike("name", likePattern(projectName))
+      .limit(5);
+    if (!data || data.length === 0) return { success: false, error: "Proyek tidak ditemukan." };
+    if (data.length > 1) {
+      return {
+        success: true,
+        data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: data },
+      };
+    }
+    projectId = data[0].id;
+  }
+  if (!projectId) return { success: false, error: "ID atau nama proyek harus diisi." };
+
+  const result = await createCheckinLink(projectId, str(args.label));
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: "Link check-in berhasil dibuat.", token: result.token } };
+}
+
+async function handleAddMagnativeVendor(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const name = str(args.name);
+  const category = str(args.category) as MagnativeVendorCategory | undefined;
+  if (!name || !category) return { success: false, error: "Nama dan kategori vendor harus diisi." };
+
+  const result = await addMagnativeVendorAction({
+    name,
+    category,
+    contactName: str(args.contactName),
+    contactPhone: str(args.contactPhone),
+    contactEmail: str(args.contactEmail),
+    catatan: str(args.catatan),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Vendor "${name}" berhasil ditambahkan.` } };
+}
+
+async function handleUpdateMagnativeVendor(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnative) return denied("Magnativ");
+
+  const vendorId = str(args.vendorId);
+  if (!vendorId) return { success: false, error: "ID vendor harus diisi." };
+  const { data: current } = await supabase
+    .from("magnative_vendors")
+    .select("*")
+    .eq("id", vendorId)
+    .maybeSingle<{ name: string; category: MagnativeVendorCategory; contact_name: string | null; contact_phone: string | null; contact_email: string | null; catatan: string | null }>();
+  if (!current) return { success: false, error: "Vendor tidak ditemukan." };
+
+  const merged = {
+    name: str(args.name) ?? current.name,
+    category: (str(args.category) as MagnativeVendorCategory | undefined) ?? current.category,
+    contactName: str(args.contactName) ?? current.contact_name ?? undefined,
+    contactPhone: str(args.contactPhone) ?? current.contact_phone ?? undefined,
+    contactEmail: str(args.contactEmail) ?? current.contact_email ?? undefined,
+    catatan: str(args.catatan) ?? current.catatan ?? undefined,
+  };
+  const result = await updateMagnativeVendorAction(vendorId, merged);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Vendor "${merged.name}" berhasil diperbarui.` } };
+}
+
+async function handleAddProductionVendor(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const name = str(args.name);
+  const category = str(args.category) as ProductionVendorCategory | undefined;
+  if (!name || !category) return { success: false, error: "Nama dan kategori vendor harus diisi." };
+
+  const result = await addProductionVendorAction({
+    name,
+    category,
+    contactName: str(args.contactName),
+    contactPhone: str(args.contactPhone),
+    contactEmail: str(args.contactEmail),
+    catatan: str(args.catatan),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Vendor "${name}" berhasil ditambahkan.` } };
+}
+
+async function handleUpdateProductionVendor(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const vendorId = str(args.vendorId);
+  if (!vendorId) return { success: false, error: "ID vendor harus diisi." };
+  const { data: current } = await supabase
+    .from("production_vendors")
+    .select("*")
+    .eq("id", vendorId)
+    .maybeSingle<{ name: string; category: ProductionVendorCategory; contact_name: string | null; contact_phone: string | null; contact_email: string | null; catatan: string | null }>();
+  if (!current) return { success: false, error: "Vendor tidak ditemukan." };
+
+  const merged = {
+    name: str(args.name) ?? current.name,
+    category: (str(args.category) as ProductionVendorCategory | undefined) ?? current.category,
+    contactName: str(args.contactName) ?? current.contact_name ?? undefined,
+    contactPhone: str(args.contactPhone) ?? current.contact_phone ?? undefined,
+    contactEmail: str(args.contactEmail) ?? current.contact_email ?? undefined,
+    catatan: str(args.catatan) ?? current.catatan ?? undefined,
+  };
+  const result = await updateProductionVendorAction(vendorId, merged);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Vendor "${merged.name}" berhasil diperbarui.` } };
+}
+
+async function handleAddNcReport(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const kategori = str(args.kategori) as NcCategory | undefined;
+  const judul = str(args.judul);
+  const deskripsi = str(args.deskripsi);
+  const severity = str(args.severity) as NcSeverity | undefined;
+  if (!kategori || !NC_CATEGORIES_VALUES.includes(kategori) || !judul || !deskripsi || !severity || !NC_SEVERITIES_VALUES.includes(severity)) {
+    return { success: false, error: "Kategori, judul, deskripsi, dan severity temuan harus diisi dengan benar." };
+  }
+
+  const result = await addNcReport({
+    projectId: str(args.projectId),
+    vendorId: str(args.vendorId),
+    projectCrewId: str(args.projectCrewId),
+    kategori,
+    judul,
+    deskripsi,
+    severity,
+    pic: str(args.pic),
+    tanggalDitemukan: isoDate(args.tanggalDitemukan),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Laporan NC "${judul}" berhasil dicatat.` } };
+}
+
+async function handleUpdateNcReportProgress(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const ncReportId = str(args.ncReportId);
+  const status = str(args.status) as NcStatus | undefined;
+  if (!ncReportId || !status || !NC_STATUSES_VALUES.includes(status)) {
+    return { success: false, error: "ID laporan NC atau status tidak valid." };
+  }
+
+  const result = await updateNcReportProgress(ncReportId, {
+    status,
+    akarMasalah: str(args.akarMasalah),
+    tindakanKorektif: str(args.tindakanKorektif),
+    tindakanPreventif: str(args.tindakanPreventif),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Status laporan NC berhasil diubah ke "${status}".` } };
+}
+
+async function handleAddSubcontractOrder(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const deskripsiPekerjaan = str(args.deskripsiPekerjaan);
+  if (!deskripsiPekerjaan) return { success: false, error: "Deskripsi pekerjaan harus diisi." };
+
+  const resolved = await resolveProductionProjectId(supabase, args);
+  if ("error" in resolved) return { success: false, error: resolved.error };
+  if ("candidates" in resolved) {
+    return { success: true, data: { message: "Ada beberapa proyek yang cocok, tanyakan ke user mana yang dimaksud.", candidates: resolved.candidates } };
+  }
+
+  const result = await addSubcontractOrder(resolved.projectId, {
+    vendorId: str(args.vendorId),
+    deskripsiPekerjaan,
+    tanggalKirim: isoDate(args.tanggalKirim),
+    estimasiTerima: isoDate(args.estimasiTerima),
+    biayaJasa: num(args.biayaJasa),
+    catatan: str(args.catatan),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Pesanan subkontrak "${deskripsiPekerjaan}" berhasil dibuat.` } };
+}
+
+async function handleUpdateSubcontractStatus(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const subcontractOrderId = str(args.subcontractOrderId);
+  const status = str(args.status) as SubcontractStatus | undefined;
+  if (!subcontractOrderId || !status || !SUBCONTRACT_STATUSES_VALUES.includes(status)) {
+    return { success: false, error: "ID pesanan subkontrak atau status tidak valid." };
+  }
+
+  const result = await updateSubcontractStatus(subcontractOrderId, status, isoDate(args.tanggalTerima));
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Status pesanan subkontrak berhasil diubah ke "${status}".` } };
+}
+
+async function handleAddBomTemplate(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const name = str(args.name);
+  const items = Array.isArray(args.items) ? (args.items as SubcontractMaterialItem[]) : [];
+  if (!name || items.length === 0) return { success: false, error: "Nama template dan daftar item material harus diisi." };
+
+  const result = await createBomTemplate({ name, description: str(args.description), items: items as unknown as BomTemplateItem[] });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Template BOM "${name}" berhasil dibuat.` } };
+}
+
+async function handleAddCrewTimelog(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+
+  const projectCrewId = str(args.projectCrewId);
+  const tanggal = isoDate(args.tanggal);
+  const jam = num(args.jam);
+  if (!projectCrewId || !tanggal || jam === undefined || jam <= 0) {
+    return { success: false, error: "Penugasan kru, tanggal, dan jam kerja harus diisi dengan benar." };
+  }
+
+  const result = await addCrewTimelog(projectCrewId, { tanggal, jam, catatan: str(args.catatan) });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Jam kerja (${jam} jam) berhasil dicatat.` } };
+}
+
 // ============================================================================
 // KONFIRMASI
 // ============================================================================
@@ -1435,6 +1886,86 @@ async function buildConfirmationResponse(
       "Ubah status invoice:",
       `- Invoice: ${invoice.invoice_number} (${invoice.client_name})`,
       `- Status: ${invoice.status} → ${args.status}`,
+    ].join("\n");
+  } else if (toolName === "add_subrent_record") {
+    description = [
+      "Catat subrent alat Magnarent:",
+      `- Vendor: ${str(args.vendorName) ?? "-"}`,
+      `- Jumlah unit: ${args.jumlahUnit ?? "-"}`,
+      `- Periode: ${str(args.tanggalMulai) ?? "-"} s/d ${str(args.tanggalSelesai) ?? "-"}`,
+      `- Harga sewa total: ${args.hargaSewaTotal !== undefined ? rupiah(args.hargaSewaTotal) : "-"}`,
+    ].join("\n");
+  } else if (toolName === "create_checkin_link") {
+    description = [
+      "Buat link check-in tamu Magnativ:",
+      `- Proyek: ${str(args.projectName) ?? str(args.projectId) ?? "-"}`,
+      `- Label: ${str(args.label) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "add_magnative_vendor" || toolName === "add_production_vendor") {
+    description = [
+      `Tambah vendor ${toolName === "add_magnative_vendor" ? "Magnativ" : "Production"} baru:`,
+      `- Nama: ${str(args.name) ?? "-"}`,
+      `- Kategori: ${str(args.category) ?? "-"}`,
+      `- Kontak: ${str(args.contactName) ?? "-"} (${str(args.contactPhone) ?? "-"})`,
+    ].join("\n");
+  } else if (toolName === "update_magnative_vendor" || toolName === "update_production_vendor") {
+    const vendorId = str(args.vendorId);
+    const table = toolName === "update_magnative_vendor" ? "magnative_vendors" : "production_vendors";
+    const { data: vendor } = vendorId
+      ? await supabase.from(table).select("name").eq("id", vendorId).maybeSingle<{ name: string }>()
+      : { data: null };
+    if (!vendor) return { success: false, error: "Vendor tidak ditemukan. Cari dulu ID vendor yang benar." };
+    description = [`Ubah data vendor "${vendor.name}":`, "- Field yang tidak disebut tetap memakai nilai lama."].join("\n");
+  } else if (toolName === "add_nc_report") {
+    description = [
+      "Catat laporan NC/CAPA Production baru:",
+      `- Judul: ${str(args.judul) ?? "-"}`,
+      `- Kategori: ${str(args.kategori) ?? "-"} | Severity: ${str(args.severity) ?? "-"}`,
+      `- Deskripsi: ${str(args.deskripsi) ?? "-"}`,
+    ].join("\n");
+  } else if (toolName === "update_nc_report_progress") {
+    const ncReportId = str(args.ncReportId);
+    const { data: nc } = ncReportId
+      ? await supabase.from("production_nc_reports").select("judul, status").eq("id", ncReportId).maybeSingle<{ judul: string; status: string }>()
+      : { data: null };
+    if (!nc) return { success: false, error: "Laporan NC tidak ditemukan. Cari dulu ID yang benar." };
+    description = [
+      `Ubah status laporan NC "${nc.judul}":`,
+      `- Status: ${nc.status} → ${args.status}`,
+    ].join("\n");
+  } else if (toolName === "add_subcontract_order") {
+    description = [
+      "Buat pesanan subkontrak Production baru:",
+      `- Proyek: ${str(args.projectName) ?? str(args.projectId) ?? "-"}`,
+      `- Pekerjaan: ${str(args.deskripsiPekerjaan) ?? "-"}`,
+      `- Biaya jasa: ${args.biayaJasa !== undefined ? rupiah(args.biayaJasa) : "-"}`,
+    ].join("\n");
+  } else if (toolName === "update_subcontract_status") {
+    const subcontractOrderId = str(args.subcontractOrderId);
+    const { data: order } = subcontractOrderId
+      ? await supabase
+          .from("production_subcontract_orders")
+          .select("deskripsi_pekerjaan, status")
+          .eq("id", subcontractOrderId)
+          .maybeSingle<{ deskripsi_pekerjaan: string; status: string }>()
+      : { data: null };
+    if (!order) return { success: false, error: "Pesanan subkontrak tidak ditemukan. Cari dulu ID yang benar." };
+    description = [
+      `Ubah status subkontrak "${order.deskripsi_pekerjaan}":`,
+      `- Status: ${order.status} → ${args.status}`,
+    ].join("\n");
+  } else if (toolName === "add_bom_template") {
+    const items = Array.isArray(args.items) ? args.items.length : 0;
+    description = [
+      "Buat template BOM Production baru:",
+      `- Nama: ${str(args.name) ?? "-"}`,
+      `- Jumlah item material: ${items}`,
+    ].join("\n");
+  } else if (toolName === "add_crew_timelog") {
+    description = [
+      "Catat jam kerja kru Production:",
+      `- Tanggal: ${str(args.tanggal) ?? "-"}`,
+      `- Jam: ${args.jam ?? "-"}`,
     ].join("\n");
   } else {
     description = `Jalankan ${toolName}`;
