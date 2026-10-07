@@ -820,6 +820,72 @@ export const QUERY_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_maintenance_status",
+      description: "Cek status banner maintenance sistem (aktif/tidak dan pesannya).",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_taggable_users",
+      description: "Cari user untuk di-@tag di chat tim, berdasarkan nama panggilan (username).",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Kata kunci nama panggilan" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_booking_checks",
+      description: "Ambil checklist kondisi alat (keluar/kembali) untuk satu booking Magnarent.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "ID booking" },
+        },
+        required: ["bookingId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_production_checks",
+      description: "Ambil checklist instalasi/bongkar untuk satu proyek booth Production.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek booth" },
+        },
+        required: ["projectId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_all_maintenance_logs",
+      description: "Ambil semua log servis/maintenance alat Magnarent lintas alat (untuk analisis tren biaya).",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
 ];
 
 /**
@@ -2586,6 +2652,170 @@ export const ACTION_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "set_maintenance_banner",
+      description: "Aktifkan/matikan banner maintenance sistem untuk semua user. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          active: { type: "boolean", description: "true untuk aktifkan, false untuk matikan" },
+          message: { type: "string", description: "Pesan banner (wajib kalau active=true)" },
+        },
+        required: ["active"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_chat_message",
+      description: "Edit pesan chat milik sendiri (maksimal 15 menit setelah terkirim). HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          messageId: { type: "string", description: "ID pesan chat" },
+          message: { type: "string", description: "Isi pesan baru" },
+        },
+        required: ["messageId", "message"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_my_theme_preference",
+      description: "Ganti preferensi tema tampilan (terang/gelap/ikuti sistem) untuk user yang sedang chat. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          theme: { type: "string", enum: ["light", "dark", "system"], description: "Tema tampilan" },
+        },
+        required: ["theme"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_my_language_preference",
+      description: "Ganti preferensi bahasa tampilan untuk user yang sedang chat. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          language: {
+            type: "string",
+            enum: ["id", "en", "ms", "zh", "ja", "ko", "ar", "fr", "th"],
+            description: "Kode bahasa",
+          },
+        },
+        required: ["language"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_my_profile_name",
+      description: "Ganti nama lengkap (full name) profil sendiri. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          fullName: { type: "string", description: "Nama lengkap baru" },
+        },
+        required: ["fullName"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "save_booking_check",
+      description:
+        "Simpan catatan checklist kondisi alat (tahap keluar/kembali) untuk satu booking Magnarent (tanpa foto). HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          bookingId: { type: "string", description: "ID booking" },
+          stage: { type: "string", enum: ["keluar", "kembali"], description: "Tahap checklist" },
+          catatan: { type: "string", description: "Catatan kondisi alat" },
+        },
+        required: ["bookingId", "stage"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "save_production_check",
+      description:
+        "Simpan catatan checklist instalasi/bongkar untuk satu proyek booth Production (tanpa foto). HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", description: "ID proyek booth" },
+          stage: { type: "string", enum: ["instalasi", "bongkar"], description: "Tahap checklist" },
+          catatan: { type: "string", description: "Catatan instalasi/bongkar" },
+        },
+        required: ["projectId", "stage"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_gallery_folder",
+      description: "Edit nama/caption folder kategori galeri foto Magnarent. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          folderId: { type: "string", description: "ID folder galeri" },
+          title: { type: "string", description: "Nama kategori baru" },
+          caption: { type: "string", description: "Caption baru" },
+        },
+        required: ["folderId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_inventory_unit",
+      description: "Tambah unit fisik individual (dengan kode QR) untuk satu alat Magnarent. HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          itemId: { type: "string", description: "ID alat (inventaris)" },
+          kodeUnit: { type: "string", description: "Kode unik unit, mis. KAM-01" },
+          status: { type: "string", enum: ["Tersedia", "Dipinjam", "Maintenance", "Hilang"], description: "Status unit" },
+          catatan: { type: "string", description: "Catatan unit" },
+          rfidTag: { type: "string", description: "Tag RFID (opsional)" },
+          warehouseId: { type: "string", description: "ID gudang lokasi unit (opsional)" },
+        },
+        required: ["itemId", "kodeUnit"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_inventory_unit",
+      description: "Edit unit fisik individual alat Magnarent (kode, status, catatan, RFID, gudang). HARUS konfirmasi dengan user sebelum menjalankan.",
+      parameters: {
+        type: "object",
+        properties: {
+          unitId: { type: "string", description: "ID unit" },
+          kodeUnit: { type: "string", description: "Kode unit baru" },
+          status: { type: "string", enum: ["Tersedia", "Dipinjam", "Maintenance", "Hilang"], description: "Status unit baru" },
+          catatan: { type: "string", description: "Catatan unit baru" },
+          rfidTag: { type: "string", description: "Tag RFID baru" },
+          warehouseId: { type: "string", description: "ID gudang lokasi unit baru" },
+        },
+        required: ["unitId"],
+      },
+    },
+  },
 ];
 
 /**
@@ -2735,6 +2965,21 @@ export function getToolsForUser(ctx: UserContext): ToolDefinition[] {
     mark_all_notifications_read: true,
     broadcast_notification: ctx.canAccessAdmin,
     update_my_nickname: true,
+    get_maintenance_status: true,
+    search_taggable_users: ctx.division !== "investor",
+    get_booking_checks: ctx.canAccessMagnarent,
+    get_production_checks: ctx.canAccessProduction,
+    get_all_maintenance_logs: ctx.canAccessMagnarent,
+    set_maintenance_banner: ctx.canAccessAdmin,
+    edit_chat_message: ctx.division !== "investor",
+    update_my_theme_preference: true,
+    update_my_language_preference: true,
+    update_my_profile_name: true,
+    save_booking_check: ctx.canAccessMagnarent,
+    save_production_check: ctx.canAccessProduction,
+    update_gallery_folder: ctx.canAccessMagnarent,
+    add_inventory_unit: ctx.canAccessMagnarent,
+    update_inventory_unit: ctx.canAccessMagnarent,
   };
   return AI_TOOLS.filter((t) => allowed[t.function.name]);
 }
@@ -2765,6 +3010,12 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "get_unread_important_notifications",
     "mark_all_notifications_read",
     "update_my_nickname",
+    "get_maintenance_status",
+    "search_taggable_users",
+    "edit_chat_message",
+    "update_my_theme_preference",
+    "update_my_language_preference",
+    "update_my_profile_name",
   ];
   const MAGNARENT_TOOLS = [
     ...COMMON_TOOLS,
@@ -2802,6 +3053,12 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "create_portal_link",
     "revoke_portal_link",
     "get_portal_signatures",
+    "get_booking_checks",
+    "save_booking_check",
+    "get_all_maintenance_logs",
+    "update_gallery_folder",
+    "add_inventory_unit",
+    "update_inventory_unit",
   ];
   const MAGNATIVE_TOOLS = [
     ...COMMON_TOOLS,
@@ -2888,6 +3145,8 @@ export function getToolsForAgent(agentId: string): ToolDefinition[] {
     "add_crew_piece_payment",
     "update_crew_piece_payment_status",
     "add_project_crew",
+    "get_production_checks",
+    "save_production_check",
   ];
   const FINANCE_TOOLS = [
     ...COMMON_TOOLS,

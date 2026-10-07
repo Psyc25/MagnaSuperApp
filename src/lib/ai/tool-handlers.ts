@@ -43,6 +43,12 @@ import {
   updateWarehouse,
   updateSubrentStatus,
   bulkScanUpdateStatus,
+  getBookingChecks,
+  saveBookingCheck,
+  getAllMaintenanceLogs,
+  updateGalleryFolder,
+  addInventoryUnit,
+  updateInventoryUnit,
 } from "@/lib/magnarent/extras-actions";
 import {
   MAINTENANCE_JENIS,
@@ -54,6 +60,7 @@ import {
   type DepositJenis,
   type CrewRole as MagnarentCrewRole,
   type SubrentStatus,
+  type CheckStage as MagnarentCheckStage,
 } from "@/lib/magnarent/extras-types";
 import {
   addProjectTask,
@@ -128,6 +135,8 @@ import {
   transferMaterialStock,
   getMaterialTransfers,
   getProjectDocuments,
+  getProjectChecks,
+  saveProjectCheck,
 } from "@/lib/production/extras-actions";
 import type {
   VendorCategory as ProductionVendorCategory,
@@ -141,6 +150,7 @@ import type {
   EquipmentCondition,
   PiecePaymentStatus,
   CrewRole as ProductionCrewRole,
+  CheckStage as ProductionCheckStage,
 } from "@/lib/production/extras-types";
 import {
   receivePurchaseOrder,
@@ -171,11 +181,12 @@ import {
   listUnreadImportantNotifications,
   markAllNotificationsRead,
 } from "@/lib/notifications/actions";
-import { sendChatMessage, getChatMessages } from "@/lib/chat/actions";
+import { sendChatMessage, getChatMessages, searchTaggableUsers, editChatMessage } from "@/lib/chat/actions";
 import { isRoomAllowed, type ChatRoom } from "@/lib/chat/rooms";
 import { broadcastNotification } from "@/lib/push/actions";
-import { updateNickname } from "@/lib/settings/actions";
-import type { Division } from "@/lib/supabase/types";
+import { updateNickname, updateThemePreference, updateLanguagePreference, updateProfileInfo } from "@/lib/settings/actions";
+import { getMaintenanceStatus, setMaintenanceBanner } from "@/lib/system-status/actions";
+import type { Division, ThemePreference, LanguagePreference } from "@/lib/supabase/types";
 import { addCapitalRequest, decideCapitalRequest } from "@/lib/capital-requests/actions";
 import type { CapitalRequestStatus } from "@/lib/capital-requests/types";
 import {
@@ -213,6 +224,10 @@ type Args = Record<string, unknown>;
 const BOOKING_STATUSES: BookingStatus[] = ["Menunggu", "Dikonfirmasi", "Selesai", "Dibatalkan"];
 const PAYMENT_STATUSES: PaymentStatus[] = ["Belum Bayar", "DP", "Lunas"];
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const THEME_PREFERENCES: ThemePreference[] = ["light", "dark", "system"];
+const LANGUAGE_PREFERENCES: LanguagePreference[] = ["id", "en", "ms", "zh", "ja", "ko", "ar", "fr", "th"];
+const MAGNARENT_CHECK_STAGES: MagnarentCheckStage[] = ["keluar", "kembali"];
+const PRODUCTION_CHECK_STAGES: ProductionCheckStage[] = ["instalasi", "bongkar"];
 
 /**
  * Execute a tool call and return the result.
@@ -511,6 +526,36 @@ export async function executeToolCall(
         return await handleBroadcastNotification(ctx, args);
       case "update_my_nickname":
         return await handleUpdateMyNickname(args);
+      case "get_maintenance_status":
+        return await handleGetMaintenanceStatus();
+      case "search_taggable_users":
+        return await handleSearchTaggableUsers(ctx, args);
+      case "get_booking_checks":
+        return await handleGetBookingChecks(ctx, args);
+      case "get_production_checks":
+        return await handleGetProductionChecks(ctx, args);
+      case "get_all_maintenance_logs":
+        return await handleGetAllMaintenanceLogs(ctx);
+      case "set_maintenance_banner":
+        return await handleSetMaintenanceBanner(ctx, args);
+      case "edit_chat_message":
+        return await handleEditChatMessage(ctx, args);
+      case "update_my_theme_preference":
+        return await handleUpdateMyThemePreference(args);
+      case "update_my_language_preference":
+        return await handleUpdateMyLanguagePreference(args);
+      case "update_my_profile_name":
+        return await handleUpdateMyProfileName(args);
+      case "save_booking_check":
+        return await handleSaveBookingCheck(ctx, args);
+      case "save_production_check":
+        return await handleSaveProductionCheck(ctx, args);
+      case "update_gallery_folder":
+        return await handleUpdateGalleryFolder(ctx, args);
+      case "add_inventory_unit":
+        return await handleAddInventoryUnit(ctx, args);
+      case "update_inventory_unit":
+        return await handleUpdateInventoryUnit(supabase, ctx, args);
 
       default:
         return { success: false, error: `Tool tidak dikenal: ${toolName}` };
@@ -3681,6 +3726,184 @@ async function handleUpdateMyNickname(args: Args): Promise<ToolResult> {
 }
 
 // ============================================================================
+// WAVE 8 -- Status maintenance, cari user chat, checklist kondisi alat
+// Magnarent/instalasi Production, preferensi tema/bahasa/nama profil,
+// edit pesan chat, unit inventaris individual, folder galeri Magnarent
+// ============================================================================
+
+async function handleGetMaintenanceStatus(): Promise<ToolResult> {
+  const status = await getMaintenanceStatus();
+  return { success: true, data: status };
+}
+
+async function handleSearchTaggableUsers(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (ctx.division === "investor") return denied("Chat");
+  const query = str(args.query) ?? "";
+  const users = await searchTaggableUsers(query);
+  return { success: true, data: { users, count: users.length } };
+}
+
+async function handleGetBookingChecks(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+  const bookingId = str(args.bookingId);
+  if (!bookingId) return { success: false, error: "ID booking harus diisi." };
+  const checks = await getBookingChecks(bookingId);
+  return { success: true, data: { checks, count: checks.length } };
+}
+
+async function handleGetProductionChecks(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+  const projectId = str(args.projectId);
+  if (!projectId) return { success: false, error: "ID proyek harus diisi." };
+  const checks = await getProjectChecks(projectId);
+  return { success: true, data: { checks, count: checks.length } };
+}
+
+async function handleGetAllMaintenanceLogs(ctx: UserContext): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+  const logs = await getAllMaintenanceLogs();
+  return { success: true, data: { logs, count: logs.length } };
+}
+
+async function handleSetMaintenanceBanner(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessAdmin) return denied("Admin");
+  const active = Boolean(args.active);
+  const message = str(args.message) ?? "";
+  const result = await setMaintenanceBanner(active, message);
+  if (!result.ok) return { success: false, error: result.error };
+  return {
+    success: true,
+    data: { message: active ? "Banner maintenance berhasil diaktifkan." : "Banner maintenance berhasil dimatikan." },
+  };
+}
+
+async function handleEditChatMessage(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (ctx.division === "investor") return denied("Chat");
+  const messageId = str(args.messageId);
+  const message = str(args.message);
+  if (!messageId || !message) return { success: false, error: "ID pesan dan isi pesan baru harus diisi." };
+  const result = await editChatMessage(messageId, message);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: "Pesan berhasil diedit." } };
+}
+
+async function handleUpdateMyThemePreference(args: Args): Promise<ToolResult> {
+  const theme = THEME_PREFERENCES.includes(args.theme as ThemePreference) ? (args.theme as ThemePreference) : undefined;
+  if (!theme) return { success: false, error: "Tema harus salah satu dari: light, dark, system." };
+  const result = await updateThemePreference(theme);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Tema berhasil diubah jadi "${theme}".` } };
+}
+
+async function handleUpdateMyLanguagePreference(args: Args): Promise<ToolResult> {
+  const language = LANGUAGE_PREFERENCES.includes(args.language as LanguagePreference)
+    ? (args.language as LanguagePreference)
+    : undefined;
+  if (!language) return { success: false, error: "Bahasa tidak valid." };
+  const result = await updateLanguagePreference(language);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Preferensi bahasa berhasil diubah jadi "${language}".` } };
+}
+
+async function handleUpdateMyProfileName(args: Args): Promise<ToolResult> {
+  const fullName = str(args.fullName);
+  if (!fullName) return { success: false, error: "Nama lengkap harus diisi." };
+  const formData = new FormData();
+  formData.set("fullName", fullName);
+  const result = await updateProfileInfo(formData);
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Nama profil berhasil diubah jadi "${fullName}".` } };
+}
+
+async function handleSaveBookingCheck(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+  const bookingId = str(args.bookingId);
+  const stage = MAGNARENT_CHECK_STAGES.includes(args.stage as MagnarentCheckStage)
+    ? (args.stage as MagnarentCheckStage)
+    : undefined;
+  if (!bookingId || !stage) return { success: false, error: "ID booking dan tahap (keluar/kembali) harus diisi." };
+  const catatan = str(args.catatan) ?? "";
+  const result = await saveBookingCheck(bookingId, stage, catatan, new FormData());
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Checklist kondisi alat (${stage}) berhasil disimpan.` } };
+}
+
+async function handleSaveProductionCheck(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessProduction) return denied("Production");
+  const projectId = str(args.projectId);
+  const stage = PRODUCTION_CHECK_STAGES.includes(args.stage as ProductionCheckStage)
+    ? (args.stage as ProductionCheckStage)
+    : undefined;
+  if (!projectId || !stage) return { success: false, error: "ID proyek dan tahap (instalasi/bongkar) harus diisi." };
+  const catatan = str(args.catatan) ?? "";
+  const result = await saveProjectCheck(projectId, stage, catatan, new FormData());
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Checklist instalasi/bongkar (${stage}) berhasil disimpan.` } };
+}
+
+async function handleUpdateGalleryFolder(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+  const folderId = str(args.folderId);
+  if (!folderId) return { success: false, error: "ID folder harus diisi." };
+  const title = str(args.title);
+  if (!title) return { success: false, error: "Nama kategori harus diisi." };
+  const result = await updateGalleryFolder(folderId, { title, caption: str(args.caption) });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Folder galeri "${title}" berhasil diperbarui.` } };
+}
+
+async function handleAddInventoryUnit(ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+  const itemId = str(args.itemId);
+  const kodeUnit = str(args.kodeUnit);
+  if (!itemId || !kodeUnit) return { success: false, error: "ID alat dan kode unit harus diisi." };
+  const status = INVENTORY_UNIT_STATUSES.includes(args.status as InventoryUnitStatus)
+    ? (args.status as InventoryUnitStatus)
+    : "Tersedia";
+  const result = await addInventoryUnit(itemId, {
+    kodeUnit,
+    status,
+    catatan: str(args.catatan),
+    rfidTag: str(args.rfidTag),
+    warehouseId: str(args.warehouseId),
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Unit "${kodeUnit}" berhasil ditambahkan.` } };
+}
+
+async function handleUpdateInventoryUnit(supabase: SupabaseClient, ctx: UserContext, args: Args): Promise<ToolResult> {
+  if (!ctx.canAccessMagnarent) return denied("Magnarent");
+  const unitId = str(args.unitId);
+  if (!unitId) return { success: false, error: "ID unit harus diisi." };
+  const { data: current } = await supabase
+    .from("magnarent_inventory_units")
+    .select("kode_unit, status, catatan, rfid_tag, warehouse_id")
+    .eq("id", unitId)
+    .maybeSingle<{
+      kode_unit: string;
+      status: InventoryUnitStatus;
+      catatan: string | null;
+      rfid_tag: string | null;
+      warehouse_id: string | null;
+    }>();
+  if (!current) return { success: false, error: "Unit tidak ditemukan." };
+
+  const kodeUnit = str(args.kodeUnit) ?? current.kode_unit;
+  const status = INVENTORY_UNIT_STATUSES.includes(args.status as InventoryUnitStatus)
+    ? (args.status as InventoryUnitStatus)
+    : current.status;
+  const result = await updateInventoryUnit(unitId, {
+    kodeUnit,
+    status,
+    catatan: str(args.catatan) ?? current.catatan ?? undefined,
+    rfidTag: str(args.rfidTag) ?? current.rfid_tag ?? undefined,
+    warehouseId: str(args.warehouseId) ?? current.warehouse_id ?? undefined,
+  });
+  if (!result.ok) return { success: false, error: result.error };
+  return { success: true, data: { message: `Unit "${kodeUnit}" berhasil diperbarui.` } };
+}
+
+// ============================================================================
 // KONFIRMASI
 // ============================================================================
 
@@ -4535,6 +4758,69 @@ async function buildConfirmationResponse(
     ].join("\n");
   } else if (toolName === "update_my_nickname") {
     description = `Ganti nama panggilan jadi "@${str(args.nickname) ?? "-"}".`;
+  } else if (toolName === "set_maintenance_banner") {
+    const bannerActive = Boolean(args.active);
+    description = bannerActive
+      ? `Aktifkan banner maintenance dengan pesan: "${str(args.message) ?? "-"}"`
+      : "Matikan banner maintenance.";
+  } else if (toolName === "edit_chat_message") {
+    const editMsg = str(args.message) ?? "";
+    description = [
+      "Edit pesan chat jadi:",
+      `"${editMsg.length > 200 ? `${editMsg.slice(0, 197)}...` : editMsg}"`,
+    ].join("\n");
+  } else if (toolName === "update_my_theme_preference") {
+    description = `Ganti tema tampilan jadi "${str(args.theme) ?? "-"}".`;
+  } else if (toolName === "update_my_language_preference") {
+    description = `Ganti preferensi bahasa jadi "${str(args.language) ?? "-"}".`;
+  } else if (toolName === "update_my_profile_name") {
+    description = `Ganti nama profil jadi "${str(args.fullName) ?? "-"}".`;
+  } else if (toolName === "save_booking_check") {
+    description = [
+      `Simpan checklist kondisi alat (${str(args.stage) ?? "-"}) untuk booking ini:`,
+      str(args.catatan) !== undefined ? `- Catatan: ${str(args.catatan)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "save_production_check") {
+    description = [
+      `Simpan checklist instalasi/bongkar (${str(args.stage) ?? "-"}) untuk proyek ini:`,
+      str(args.catatan) !== undefined ? `- Catatan: ${str(args.catatan)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "update_gallery_folder") {
+    const galFolderId = str(args.folderId);
+    const { data: galFolder } = galFolderId
+      ? await supabase.from("magnarent_gallery_folders").select("title").eq("id", galFolderId).maybeSingle<{ title: string }>()
+      : { data: null };
+    if (!galFolder) return { success: false, error: "Folder galeri tidak ditemukan. Cari dulu ID yang benar." };
+    description = [
+      `Ubah folder galeri "${galFolder.title}":`,
+      str(args.title) !== undefined ? `- Nama baru: ${str(args.title)}` : null,
+      str(args.caption) !== undefined ? `- Caption baru: ${str(args.caption)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
+  } else if (toolName === "add_inventory_unit") {
+    description = [
+      "Tambah unit alat baru:",
+      `- Kode unit: ${str(args.kodeUnit) ?? "-"}`,
+      `- Status: ${str(args.status) ?? "Tersedia"}`,
+    ].join("\n");
+  } else if (toolName === "update_inventory_unit") {
+    const updUnitId = str(args.unitId);
+    const { data: updUnit } = updUnitId
+      ? await supabase.from("magnarent_inventory_units").select("kode_unit").eq("id", updUnitId).maybeSingle<{ kode_unit: string }>()
+      : { data: null };
+    if (!updUnit) return { success: false, error: "Unit tidak ditemukan. Cari dulu ID yang benar." };
+    description = [
+      `Ubah unit "${updUnit.kode_unit}":`,
+      str(args.kodeUnit) !== undefined ? `- Kode unit baru: ${str(args.kodeUnit)}` : null,
+      str(args.status) !== undefined ? `- Status baru: ${str(args.status)}` : null,
+    ]
+      .filter((l): l is string => l !== null)
+      .join("\n");
   } else {
     description = `Jalankan ${toolName}`;
   }
