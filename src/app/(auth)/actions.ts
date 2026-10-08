@@ -67,7 +67,18 @@ export async function requestPasswordReset(formData: FormData) {
 
   if (email) {
     try {
-      const origin = (await headers()).get("origin") ?? "";
+      // Bugfix (permintaan Owner Okt 2026, "link reset masih belum bisa
+      // diakses"): header `origin` TIDAK selalu ikut terkirim ke Server
+      // Action -- browser/proxy tertentu bisa saja tidak menyertakannya.
+      // Sebelum ini origin kosong ("") diam-diam menghasilkan redirectTo
+      // berupa path relatif saja ("/reset-password", tanpa domain), yang
+      // ditolak/diabaikan Supabase (redirect URL harus absolut) -- tautan
+      // di email jadi mengarah ke Site URL default proyek, BUKAN ke
+      // /reset-password, jadi kelihatan seperti "link tidak bisa diakses"
+      // padahal emailnya memang terkirim. NEXT_PUBLIC_SITE_URL (domain
+      // produksi) sekarang jadi sumber utama, header `origin` cuma
+      // fallback kalau env itu belum diset.
+      const origin = process.env.NEXT_PUBLIC_SITE_URL || (await headers()).get("origin") || "https://magnasuperapp.com";
       const supabase = await createClient();
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${origin}/reset-password`,

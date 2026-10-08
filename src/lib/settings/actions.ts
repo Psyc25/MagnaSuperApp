@@ -194,3 +194,61 @@ export async function updateNickname(input: string): Promise<NicknameUpdateResul
   revalidatePath("/", "layout");
   return { ok: true, nickname };
 }
+
+export type PasswordUpdateResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Ganti password akun SENDIRI dari halaman Pengaturan, tanpa perlu lewat
+ * email/"Lupa password?" atau minta admin -- permintaan Owner Okt 2026
+ * ("mereka dapat mengganti password mereka sendiri tanpa harus
+ * menghubungi saya"). Beda dari `updatePassword` di (auth)/actions.ts:
+ * yang itu dipakai SETELAH menukar tautan reset email jadi sesi (pengguna
+ * belum tentu ingat password lama -- itu justru maksudnya "lupa"), ini
+ * dipakai saat pengguna SUDAH login normal dan MASIH INGAT password
+ * lamanya, jadi wajib diverifikasi dulu.
+ *
+ * `auth.updateUser({ password })` Supabase sendiri TIDAK minta password
+ * lama sama sekali -- cukup sesi yang valid. Tanpa verifikasi di sini,
+ * siapa pun yang kebetulan memegang sesi yang masih login (HP/komputer
+ * bersama yang lupa logout) bisa mengganti password akun orang lain tanpa
+ * tahu password lamanya sama sekali. Jadi diverifikasi dulu lewat
+ * `signInWithPassword` ulang -- kalau currentPassword salah, Supabase
+ * sendiri yang menolak di sini, SEBELUM updateUser dipanggil.
+ */
+export async function updateOwnPassword(formData: FormData): Promise<PasswordUpdateResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !user.email) return { ok: false, error: "Sesi sudah berakhir, silakan masuk ulang." };
+
+  const currentPassword = String(formData.get("currentPassword") ?? "");
+  const newPassword = String(formData.get("newPassword") ?? "");
+  const confirmPassword = String(formData.get("confirmPassword") ?? "");
+
+  if (!currentPassword) return { ok: false, error: "Password saat ini wajib diisi." };
+  if (newPassword.length < 6) return { ok: false, error: "Password baru minimal 6 karakter." };
+  if (newPassword !== confirmPassword) return { ok: false, error: "Konfirmasi password baru tidak cocok." };
+
+  const { error: reauthError } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password: currentPassword,
+  });
+  if (reauthError) {
+    return { ok: false, error: "Password saat ini salah." };
+  }
+
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) {
+    console.error("[settings] updateOwnPassword gagal:", error.message);
+    // Sama seperti `updatePassword` di (auth)/actions.ts -- satu-satunya
+    // pesan error Supabase mentah yang memang berguna ditampilkan apa
+    // adanya, selain itu selalu pesan generik.
+    const message = error.message.toLowerCase().includes("different from the old password")
+      ? "Password baru harus berbeda dari password lama."
+      : GENERIC_ERROR;
+    return { ok: false, error: message };
+  }
+
+  return { ok: true };
+}

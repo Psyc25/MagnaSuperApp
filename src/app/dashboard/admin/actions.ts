@@ -156,6 +156,66 @@ export async function updateStaffDivision(formData: FormData) {
   redirect(`/dashboard/admin/pengguna?notice=${encodeURIComponent("Divisi berhasil diperbarui.")}`);
 }
 
+/**
+ * Reset password akun staf LAIN -- permintaan Owner Okt 2026 ("saya juga
+ * tidak bisa mengganti password mereka dari supabase"). Sebelum ini,
+ * satu-satunya cara mengatur password staf adalah saat `createStaffAccount`
+ * (sekali, waktu akun dibuat) -- tidak ada jalur di dalam app untuk
+ * menggantinya lagi kalau staf lupa password DAN email "Lupa password?"
+ * tidak sampai/tidak bisa diakses. Lewat service role (`updateUserById`),
+ * jadi tidak tergantung sama sekali pada email terkirim atau tautan reset
+ * -- sama prinsipnya dengan password awal di `createStaffAccount`.
+ *
+ * Password baru TIDAK pernah disimpan di mana pun oleh server (cuma
+ * diteruskan apa adanya ke Supabase Auth) -- jadi begitu redirect ini
+ * selesai, satu-satunya tempat nilainya ada adalah di layar admin SAAT
+ * mengisi form (lihat peringatan "salin dulu" di ResetPasswordModal pada
+ * StaffTable.tsx). Admin wajib membagikannya sendiri ke staf terkait.
+ */
+export async function resetStaffPassword(formData: FormData) {
+  await requireFullAccess();
+
+  const userId = String(formData.get("userId") ?? "");
+  const password = String(formData.get("password") ?? "");
+
+  if (!userId) {
+    redirect(`/dashboard/admin/pengguna?error=${encodeURIComponent("Data tidak valid.")}`);
+  }
+  if (password.length < 6) {
+    redirect(`/dashboard/admin/pengguna?error=${encodeURIComponent("Password minimal 6 karakter.")}`);
+  }
+
+  const admin = createAdminClient();
+  const { data: existing } = await admin.auth.admin.getUserById(userId);
+  const staffName =
+    (existing?.user?.user_metadata as { full_name?: string } | null | undefined)?.full_name ||
+    existing?.user?.email ||
+    userId;
+
+  const { error } = await admin.auth.admin.updateUserById(userId, { password });
+  if (error) {
+    console.error("[admin] resetStaffPassword gagal:", error.message);
+    redirect(`/dashboard/admin/pengguna?error=${encodeURIComponent(GENERIC_ERROR)}`);
+  }
+
+  revalidatePath("/dashboard/admin/pengguna");
+  // Detail LOG sengaja tidak menyertakan password baru sama sekali --
+  // riwayat aktivitas (lihat lib/activity/log.ts) bisa dibaca admin lain,
+  // tidak boleh jadi tempat bocor password staf.
+  void logActivity({
+    module: "admin",
+    action: "update",
+    entityType: "staf",
+    entityLabel: staffName,
+    detail: "password direset admin",
+  });
+  redirect(
+    `/dashboard/admin/pengguna?notice=${encodeURIComponent(
+      `Password ${staffName} berhasil direset -- segera bagikan password barunya ke orang tersebut.`
+    )}`
+  );
+}
+
 export async function deleteStaffAccount(formData: FormData) {
   const currentProfile = await requireFullAccess();
 

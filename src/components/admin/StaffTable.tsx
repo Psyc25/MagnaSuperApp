@@ -1,13 +1,25 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Trash2, Users } from "lucide-react";
-import { deleteStaffAccount, updateStaffDivision } from "@/app/dashboard/admin/actions";
+import { Copy, KeyRound, Trash2, Users } from "lucide-react";
+import { deleteStaffAccount, resetStaffPassword, updateStaffDivision } from "@/app/dashboard/admin/actions";
 import { DIVISION_BADGE_CLASSES, DIVISION_LABELS, type Division } from "@/lib/supabase/types";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { Modal } from "@/components/ui/Modal";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_SURFACE } from "@/lib/glass";
+
+/** Sama persis dengan generatePassword() di CreateStaffForm.tsx -- dipakai
+ * lagi di sini untuk mengisi awal password reset, admin tetap bebas
+ * mengetik sendiri kalau mau. Diduplikasi (bukan diimpor) sengaja, pola
+ * sudah dipakai di tempat lain di modul ini untuk helper kecil semacam ini. */
+function generatePassword() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  let out = "";
+  for (let i = 0; i < 10; i += 1) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
 
 type StaffRow = {
   id: string;
@@ -41,6 +53,26 @@ const DIVISION_DOT_CLASSES: Record<Division, string> = {
 export function StaffTable({ staff, currentUserId }: { staff: StaffRow[]; currentUserId: string }) {
   const deleteFormRefs = useRef<Map<string, HTMLFormElement>>(new Map());
   const [confirmTarget, setConfirmTarget] = useState<StaffRow | null>(null);
+  const [resetTarget, setResetTarget] = useState<StaffRow | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetCopied, setResetCopied] = useState(false);
+
+  function openResetModal(s: StaffRow) {
+    setResetTarget(s);
+    setResetPassword(generatePassword());
+    setResetCopied(false);
+  }
+
+  async function handleResetCopy() {
+    if (!resetPassword) return;
+    try {
+      await navigator.clipboard.writeText(resetPassword);
+      setResetCopied(true);
+      setTimeout(() => setResetCopied(false), 2000);
+    } catch {
+      // Diamkan -- clipboard API bisa gagal tanpa izin browser, tidak fatal.
+    }
+  }
 
   return (
     <div className={cn("overflow-hidden rounded-2xl border shadow-sm", GLASS_SURFACE, GLASS_BORDER)}>
@@ -114,25 +146,36 @@ export function StaffTable({ staff, currentUserId }: { staff: StaffRow[]; curren
                     </td>
                     <td className="px-4 py-3 text-right">
                       {!isSelf && (
-                        <form
-                          action={deleteStaffAccount}
-                          ref={(el) => {
-                            if (el) deleteFormRefs.current.set(s.id, el);
-                            else deleteFormRefs.current.delete(s.id);
-                          }}
-                          className="inline"
-                        >
-                          <input type="hidden" name="userId" value={s.id} />
+                        <div className="inline-flex items-center gap-1">
                           <button
                             type="button"
-                            onClick={() => setConfirmTarget(s)}
-                            title="Hapus akun"
-                            aria-label="Hapus akun"
-                            className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+                            onClick={() => openResetModal(s)}
+                            title="Reset password"
+                            aria-label="Reset password"
+                            className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-400"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <KeyRound className="h-4 w-4" />
                           </button>
-                        </form>
+                          <form
+                            action={deleteStaffAccount}
+                            ref={(el) => {
+                              if (el) deleteFormRefs.current.set(s.id, el);
+                              else deleteFormRefs.current.delete(s.id);
+                            }}
+                            className="inline"
+                          >
+                            <input type="hidden" name="userId" value={s.id} />
+                            <button
+                              type="button"
+                              onClick={() => setConfirmTarget(s)}
+                              title="Hapus akun"
+                              aria-label="Hapus akun"
+                              className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </form>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -161,6 +204,98 @@ export function StaffTable({ staff, currentUserId }: { staff: StaffRow[]; curren
           )
         }
       />
+
+      {/*
+        Reset password staf lain -- jalur yang sebelumnya tidak ada sama
+        sekali (permintaan Owner Okt 2026): dulu password staf hanya bisa
+        diatur SEKALI saat `createStaffAccount`, tidak ada cara mengubahnya
+        lagi dari dalam app kalau staf lupa dan email "Lupa password?"
+        tidak bisa diandalkan. Password BARU digenerate/diketik di sini,
+        DIPERLIHATKAN APA ADANYA (bukan PasswordInput tersembunyi) supaya
+        admin bisa menyalin & membagikannya ke staf -- begitu modal ditutup
+        atau form berhasil disubmit, nilainya hilang dari layar ini
+        SELAMANYA (server tidak pernah menyimpannya di tempat lain, lihat
+        komentar `resetStaffPassword` di actions.ts), jadi peringatan
+        "salin dulu" di bawah ini penting, bukan formalitas.
+      */}
+      <Modal open={resetTarget !== null} onClose={() => setResetTarget(null)} title="Reset Password Staf" maxWidth="max-w-sm">
+        {resetTarget && (
+          <form action={resetStaffPassword} className="space-y-4">
+            <input type="hidden" name="userId" value={resetTarget.id} />
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
+              Atur password baru untuk{" "}
+              <strong>{resetTarget.full_name || resetTarget.username || resetTarget.email}</strong>. Password lamanya
+              langsung tidak berlaku begitu disimpan.
+            </p>
+
+            <div>
+              <label
+                htmlFor="reset-staff-password"
+                className="mb-1.5 block text-xs font-semibold text-zinc-600 dark:text-zinc-300"
+              >
+                Password Baru
+              </label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <KeyRound className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                  <input
+                    id="reset-staff-password"
+                    type="text"
+                    name="password"
+                    required
+                    minLength={6}
+                    value={resetPassword}
+                    onChange={(e) => setResetPassword(e.target.value)}
+                    placeholder="min. 6 karakter"
+                    className="w-full rounded-xl border border-black/10 bg-transparent py-2 pl-10 pr-3 text-sm text-zinc-900 outline-none ring-indigo-500/40 placeholder:text-zinc-400 focus:ring-2 dark:border-white/10 dark:text-white"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetPassword(generatePassword());
+                    setResetCopied(false);
+                  }}
+                  className="shrink-0 rounded-xl border border-black/10 px-3 text-xs font-semibold text-zinc-600 transition-colors hover:bg-zinc-50 dark:border-white/10 dark:text-zinc-300 dark:hover:bg-white/5"
+                >
+                  Acak
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetCopy}
+                  title="Salin password"
+                  aria-label="Salin password"
+                  className="shrink-0 rounded-xl border border-black/10 px-2.5 text-zinc-500 transition-colors hover:bg-zinc-50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-white/5"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <p className="mt-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                {resetCopied
+                  ? "Password disalin ke clipboard."
+                  : "Salin dulu sebelum menyimpan -- tidak akan ditampilkan lagi sesudah ini."}
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setResetTarget(null)}
+                className="rounded-full px-4 py-2 text-sm font-semibold text-zinc-600 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-white/10"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={resetPassword.length < 6}
+                className="rounded-full bg-gradient-to-r from-indigo-500 via-fuchsia-500 to-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Reset Password Sekarang
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
     </div>
   );
 }

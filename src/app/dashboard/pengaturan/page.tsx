@@ -5,6 +5,7 @@ import { ToastProvider } from "@/components/ui/ToastProvider";
 import { ProfileSettingsForm } from "@/components/settings/ProfileSettingsForm";
 import { AppearanceSettingsForm } from "@/components/settings/AppearanceSettingsForm";
 import { PushToggleSettingsForm } from "@/components/settings/PushToggleSettingsForm";
+import { ChangePasswordForm } from "@/components/settings/ChangePasswordForm";
 import { t } from "@/lib/i18n/dictionary";
 
 /**
@@ -53,6 +54,9 @@ export default async function PengaturanPage() {
             initialTheme={profile.theme_preference}
             initialLanguage={profile.language_preference}
           />
+        </ToastProvider>
+        <ToastProvider>
+          <ChangePasswordForm />
         </ToastProvider>
         <PushToggleSettingsForm />
       </div>
