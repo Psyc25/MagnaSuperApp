@@ -22,6 +22,14 @@ import { prepareUploadFiles } from "@/lib/shared/image";
 
 const GRADIENT = "linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)";
 
+/** Maksimal foto per sekali pilih/upload (Opsi A, laporan gap Oktober 2026) —
+ * `mapWithConcurrency` di lib/shared/image.ts sudah membatasi beban CPU per
+ * batch jadi 3 foto paralel, tapi tanpa batas jumlah total, pilih 30-50 foto
+ * sekaligus tetap bisa makan waktu sangat lama & terasa seperti macet. Angka
+ * ini yang ditampilkan ke user kalau kelebihan, bukan dipotong diam-diam --
+ * supaya user tahu harus unggah bertahap. */
+const MAX_PHOTOS_PER_UPLOAD = 10;
+
 /**
  * Galeri portofolio Magnativ — model FOLDER/ALBUM (migrasi 0057, Update
  * Opsional 1 butir 5), menggantikan grid satu-foto-per-kartu yang lama.
@@ -80,6 +88,13 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
 
   function handleAddFilesChange() {
     const files = Array.from(addFileInputRef.current?.files ?? []);
+    if (files.length > MAX_PHOTOS_PER_UPLOAD) {
+      setError(`Maksimal ${MAX_PHOTOS_PER_UPLOAD} foto per sekali unggah. Pilih ulang foto dengan jumlah lebih sedikit, lalu unggah sisanya lewat "Tambah Foto Lagi" setelah folder dibuat.`);
+      setAddPreviews([]);
+      if (addFileInputRef.current) addFileInputRef.current.value = "";
+      return;
+    }
+    setError(null);
     setAddPreviews(files.map((f) => URL.createObjectURL(f)));
   }
 
@@ -88,6 +103,12 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
     const files = Array.from(addFileInputRef.current?.files ?? []);
     if (files.length === 0) {
       setError("Pilih minimal satu foto terlebih dahulu.");
+      return;
+    }
+    if (files.length > MAX_PHOTOS_PER_UPLOAD) {
+      // Jaring pengaman -- seharusnya sudah tertangkap di handleAddFilesChange,
+      // tapi dicek ulang di sini kalau-kalau input berubah lewat jalur lain.
+      setError(`Maksimal ${MAX_PHOTOS_PER_UPLOAD} foto per sekali unggah.`);
       return;
     }
     if (!addTitle.trim()) {
@@ -127,6 +148,11 @@ export function PortfolioGallery({ folders }: { folders: PortfolioFolder[] }) {
     if (!viewingFolder) return;
     const files = Array.from(morePhotosInputRef.current?.files ?? []);
     if (files.length === 0) return;
+    if (files.length > MAX_PHOTOS_PER_UPLOAD) {
+      showToast(`Maksimal ${MAX_PHOTOS_PER_UPLOAD} foto per sekali unggah. Pilih ulang dengan jumlah lebih sedikit, lalu unggah sisanya secara bertahap.`, "error");
+      if (morePhotosInputRef.current) morePhotosInputRef.current.value = "";
+      return;
+    }
 
     setAddingPhotos(true);
     setMorePhotosProgress({ done: 0, total: files.length });
