@@ -22,7 +22,11 @@ export type EventDateNotificationRow = {
 /**
  * Event yang `start_date`-nya SUDAH TIBA (<= hari ini) tapi belum pernah
  * dikirimi notifikasi "Event Dimulai". Event "Dibatalkan" dilewati -- tidak
- * ada gunanya mengumumkan event yang sudah batal.
+ * ada gunanya mengumumkan event yang sudah batal. Event "Selesai" (staf
+ * sudah menutupnya manual dari Papan Tracking/Admin, lihat `updateEventStatus`
+ * di actions.ts) juga dilewati, SENGAJA DITAMBAHKAN (bugfix, permintaan
+ * Owner Okt 2026) -- kalau event sudah ditutup duluan, tidak ada gunanya
+ * lagi mengingatkan "siap-siap mulai".
  *
  * Pakai kolom `start_notified_at` (migrasi 0097) sebagai penanda, SENGAJA
  * BEDA dari pola cocok-hari-H-persis di `computeDueReminders`
@@ -33,13 +37,22 @@ export type EventDateNotificationRow = {
  */
 export function computeStartDue(events: EventDateNotificationRow[], today: string): EventDateNotificationRow[] {
   return events.filter(
-    (e) => e.status !== "Dibatalkan" && !!e.startDate && e.startDate <= today && !e.startNotifiedAt
+    (e) => e.status === "Berjalan" && !!e.startDate && e.startDate <= today && !e.startNotifiedAt
   );
 }
 
-/** Sama seperti `computeStartDue`, untuk `end_date` + `end_notified_at`. */
+/**
+ * Sama seperti `computeStartDue`, untuk `end_date` + `end_notified_at`.
+ * Bugfix (permintaan Owner Okt 2026): sebelum ini cuma melewati status
+ * "Dibatalkan" -- event yang sudah ditandai "Selesai" (staf sudah tutup
+ * sendiri checklist Loading Out/Finish-nya) TETAP kebagian notifikasi
+ * "Event Selesai" yang isinya menyuruh cek checklist & tutup realisasi,
+ * padahal itu sudah dilakukan. Sekarang event "Selesai" dilewati juga --
+ * lihat `updateEventStatus` di actions.ts untuk pembersihan notifikasi
+ * yang SUDAH terkirim sebelum status berubah jadi "Selesai".
+ */
 export function computeEndDue(events: EventDateNotificationRow[], today: string): EventDateNotificationRow[] {
-  return events.filter((e) => e.status !== "Dibatalkan" && !!e.endDate && e.endDate <= today && !e.endNotifiedAt);
+  return events.filter((e) => e.status === "Berjalan" && !!e.endDate && e.endDate <= today && !e.endNotifiedAt);
 }
 
 function label(e: Pick<EventDateNotificationRow, "name" | "clientName">): string {

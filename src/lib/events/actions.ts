@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { logActivity } from "@/lib/activity/log";
 import { notifyDivision, notifyUsers } from "@/lib/push/notify";
+import { startTitle, endTitle } from "./date-notifications";
 import {
   CHECKLIST_PHASE_LABELS,
   type ChecklistComment,
@@ -432,6 +434,31 @@ export async function updateEventStatus(id: string, status: EventStatus): Promis
   if (error) {
     console.error("[events] updateEventStatus gagal:", error.message);
     return { ok: false, error: GENERIC_ERROR };
+  }
+
+  // Bugfix (permintaan Owner Okt 2026): event yang ditandai "Selesai" di
+  // sini tetap kebagian notifikasi tanggal otomatis "Event Dimulai"/"Event
+  // Selesai" (cron /api/cron/event-date-notifications) yang SUDAH terkirim
+  // sebelum status ini diubah -- isinya jadi basi/redundan (staf sudah
+  // menutup sendiri event ini). Dibersihkan di sini supaya notifikasi itu
+  // otomatis menghilang dari kotak masuk SEMUA staf begitu status jadi
+  // "Selesai", bukan cuma dicegah untuk event baru lewat `computeEndDue`/
+  // `computeStartDue` (lihat date-notifications.ts). Cocokkan lewat `url`
+  // (notify.ts tidak menyimpan event_id di tabel `notifications`) + judul,
+  // supaya notifikasi LAIN yang menuju event ini (mis. "Event Baru", yang
+  // url-nya kosong) tidak ikut terhapus. Admin client karena RLS
+  // `notifications` membatasi baris ke divisi/akun PENERIMA, bukan
+  // pembuatnya -- alasan sama dengan `sendPushToDivisions` di notify.ts.
+  if (status === "Selesai") {
+    const admin = createAdminClient();
+    const { error: cleanupError } = await admin
+      .from("notifications")
+      .delete()
+      .eq("url", `${TRACKING_PATH}/${id}`)
+      .in("title", [startTitle(), endTitle()]);
+    if (cleanupError) {
+      console.error("[events] updateEventStatus: gagal bersihkan notifikasi tanggal lama:", cleanupError.message);
+    }
   }
 
   revalidatePath(EVENTS_PATH);
