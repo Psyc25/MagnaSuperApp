@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { Loader2, Pencil, Plus, Receipt, Search, Trash2 } from "lucide-react";
+import { Loader2, Paperclip, Pencil, Plus, Receipt, Search, Trash2 } from "lucide-react";
 import { EventExpenseFormModal } from "./EventExpenseFormModal";
+import { QuickProofModal } from "./QuickProofModal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ExportButton, type ExportSheet } from "@/components/ui/ExportButton";
@@ -61,6 +62,10 @@ export function EventExpenseManager({
   const [formOpen, setFormOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<EventExpense | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<EventExpense | null>(null);
+  // Baris pengeluaran yang modal "Bukti Transaksi" cepat (badge/tombol di
+  // kolom Bukti) sedang terbuka untuknya -- lihat QuickProofModal.tsx,
+  // Opsi A laporan gap Oktober 2026.
+  const [quickProofTarget, setQuickProofTarget] = useState<EventExpense | null>(null);
   const [divisionFilter, setDivisionFilter] = useState<ExpenseDivision | "all">("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
@@ -294,23 +299,24 @@ export function EventExpenseManager({
                     </td>
                     <td className="max-w-[160px] px-4 py-3">
                       {e.proofs.length === 0 ? (
-                        <span className="text-xs italic text-rose-500">Belum diunggah</span>
+                        <button
+                          type="button"
+                          onClick={() => setQuickProofTarget(e)}
+                          className="inline-flex items-center gap-1 rounded-full border border-dashed border-rose-300 px-2.5 py-1 text-xs font-medium text-rose-500 transition-colors hover:border-rose-400 hover:bg-rose-50 dark:border-rose-500/40 dark:text-rose-300 dark:hover:bg-rose-500/10"
+                        >
+                          <Plus className="h-3 w-3" />
+                          Upload Bukti
+                        </button>
                       ) : (
-                        <ul className="space-y-0.5">
-                          {e.proofs.map((p) => (
-                            <li key={p.id}>
-                              <a
-                                href={p.fileUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="block truncate text-xs text-blue-600 underline hover:text-blue-700 dark:text-blue-400"
-                                title={p.fileName}
-                              >
-                                {p.fileName}
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
+                        <button
+                          type="button"
+                          onClick={() => setQuickProofTarget(e)}
+                          title="Lihat/kelola bukti transaksi"
+                          className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
+                        >
+                          <Paperclip className="h-3 w-3" />
+                          {e.proofs.length}
+                        </button>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -392,6 +398,18 @@ export function EventExpenseManager({
         onProofsChanged={(expenseId, proofs) =>
           setExpenses((prev) => prev.map((item) => (item.id === expenseId ? { ...item, proofs } : item)))
         }
+      />
+
+      <QuickProofModal
+        expense={quickProofTarget}
+        onClose={() => setQuickProofTarget(null)}
+        onProofsChanged={(expenseId, proofs) => {
+          setExpenses((prev) => prev.map((item) => (item.id === expenseId ? { ...item, proofs } : item)));
+          // Modal cepat ini satu objek expense yang dipegang di state lokalnya
+          // sendiri (lihat QuickProofModal.tsx) -- samakan juga quickProofTarget
+          // supaya badge/daftar di dalam modal ikut update tanpa perlu menutup-buka.
+          setQuickProofTarget((prev) => (prev && prev.id === expenseId ? { ...prev, proofs } : prev));
+        }}
       />
 
       <ConfirmDialog
