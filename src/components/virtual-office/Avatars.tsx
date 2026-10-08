@@ -7,7 +7,13 @@ import * as THREE from "three";
 import type { AIAgent } from "@/lib/ai/agents";
 import type { AvatarLook } from "@/lib/virtual-office/avatar-look";
 import { SPAWN, type Dir, type Pos, type RemotePos } from "@/lib/virtual-office/house";
-import { EMOTE_DURATION_MS, STATUS_COLORS, type PresenceStatus } from "@/lib/virtual-office/presence";
+import {
+  ACTION_ANIM_MS,
+  EMOTE_DURATION_MS,
+  STATUS_COLORS,
+  type AvatarActionKind,
+  type PresenceStatus,
+} from "@/lib/virtual-office/presence";
 import { toScene } from "./HouseScene";
 
 // Re-export supaya kode lama yang mengimpor Dir/RemotePos dari "./Avatars"
@@ -119,11 +125,20 @@ function Accessory({ look }: { look: AvatarLook }) {
   return null;
 }
 
+/** Satu aksi gestur yang sedang/baru dipicu -- `at` dibandingkan ke
+ * `Date.now()` tiap frame, jadi animasinya berhenti sendiri setelah
+ * ACTION_ANIM_MS tanpa perlu effect/timeout terpisah untuk membersihkan
+ * rotasi lengan. */
+export type AvatarAction = { kind: AvatarActionKind; at: number };
+
 /** Karakter chibi. `sleeping`: rebah telentang (dipakai di Kamar Staff).
  * `emote`: teks/emoji ephemeral yang numpang tampil di atas kepala (lihat
  * presence.ts EMOTE_DURATION_MS) -- null/undefined = tidak ada bubble.
  * `status`: dot warna available/meeting/fokus di bahu kanan -- tidak
- * tampil kalau sleeping (offline tidak punya status). */
+ * tampil kalau sleeping (offline tidak punya status). `action`: gestur
+ * tonjok/tos/lambai (Opsi B gap Oktober 2026) -- menggerakkan lengan
+ * sungguhan selama ACTION_ANIM_MS lewat useFrame di bawah, bukan cuma
+ * ikon di atas kepala. */
 export const ChibiAvatar = forwardRef<
   THREE.Group,
   {
@@ -133,8 +148,50 @@ export const ChibiAvatar = forwardRef<
     sleeping?: boolean;
     emote?: string | null;
     status?: PresenceStatus | null;
+    action?: AvatarAction | null;
   }
->(function ChibiAvatar({ look, label, isSelf = false, sleeping = false, emote = null, status = null }, ref) {
+>(function ChibiAvatar({ look, label, isSelf = false, sleeping = false, emote = null, status = null, action = null }, ref) {
+  // Lengan dibungkus group tersendiri dengan pivot di bahu (position y=23,
+  // mesh-nya digeser -6 supaya posisi visual diam identik dengan sebelum
+  // ada animasi) -- rotasi lengan jadi berputar dari bahu, bukan dari
+  // tengah kapsul, supaya gestur kelihatan natural.
+  const leftArmRef = useRef<THREE.Group>(null);
+  const rightArmRef = useRef<THREE.Group>(null);
+
+  useFrame(() => {
+    if (sleeping) return;
+    const left = leftArmRef.current;
+    const right = rightArmRef.current;
+    if (!left || !right) return;
+
+    const elapsed = action ? Date.now() - action.at : Infinity;
+    if (!action || elapsed < 0 || elapsed >= ACTION_ANIM_MS) {
+      left.rotation.set(0, 0, 0);
+      right.rotation.set(0, 0, 0);
+      return;
+    }
+
+    const t = elapsed / ACTION_ANIM_MS;
+    const envelope = Math.sin(t * Math.PI); // 0 -> 1 -> 0 selama satu aksi
+    switch (action.kind) {
+      case "tonjok":
+        // Lengan kanan menonjok ke depan lalu balik.
+        right.rotation.x = -envelope * 1.9;
+        left.rotation.set(0, 0, 0);
+        break;
+      case "tos":
+        // Kedua lengan terangkat ke atas-samping.
+        right.rotation.z = envelope * 1.5;
+        left.rotation.z = -envelope * 1.5;
+        break;
+      case "lambai":
+        // Lengan kanan terangkat lalu melambai cepat ke kiri-kanan.
+        right.rotation.z = envelope * 1.7 + Math.sin(t * Math.PI * 5) * 0.3;
+        left.rotation.set(0, 0, 0);
+        break;
+    }
+  });
+
   return (
     <group ref={ref}>
       <group rotation={sleeping ? [-Math.PI / 2, 0, 0] : [0, 0, 0]} position={sleeping ? [0, 6, 20] : [0, 0, 0]}>
@@ -157,10 +214,12 @@ export const ChibiAvatar = forwardRef<
           <meshStandardMaterial color={look.shirt} />
         </mesh>
         {[-11, 11].map((x) => (
-          <mesh key={x} position={[x, 17, 0]}>
-            <capsuleGeometry args={[3.3, 7, 4, 8]} />
-            <meshStandardMaterial color={look.shirt} />
-          </mesh>
+          <group key={x} ref={x < 0 ? leftArmRef : rightArmRef} position={[x, 23, 0]}>
+            <mesh position={[0, -6, 0]}>
+              <capsuleGeometry args={[3.3, 7, 4, 8]} />
+              <meshStandardMaterial color={look.shirt} />
+            </mesh>
+          </group>
         ))}
         {/* Kepala */}
         <mesh position={[0, 36, 0]}>
@@ -241,6 +300,7 @@ export function PlayerAvatar({
   label,
   emote,
   status,
+  action,
 }: {
   posRef: { current: Pos };
   dirRef: { current: Dir };
@@ -248,6 +308,7 @@ export function PlayerAvatar({
   label: string;
   emote?: string | null;
   status?: PresenceStatus | null;
+  action?: AvatarAction | null;
 }) {
   const groupRef = useRef<THREE.Group | null>(null);
   const lastRef = useRef<Pos | null>(null);
@@ -265,13 +326,14 @@ export function PlayerAvatar({
     g.rotation.y = dirToRadians(dirRef.current);
   });
 
-  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} status={status} isSelf />;
+  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} status={status} action={action} isSelf />;
 }
 
 export function RemoteAvatar({
   id,
   remoteRef,
   remoteEmoteRef,
+  remoteActionRef,
   look,
   label,
   status,
@@ -279,6 +341,7 @@ export function RemoteAvatar({
   id: string;
   remoteRef: { current: Map<string, RemotePos> };
   remoteEmoteRef?: { current: Map<string, { content: string; at: number }> };
+  remoteActionRef?: { current: Map<string, { action: AvatarActionKind; at: number }> };
   look: AvatarLook;
   label: string;
   status?: PresenceStatus | null;
@@ -287,6 +350,12 @@ export function RemoteAvatar({
   const targetRef = useRef(new THREE.Vector3());
   const lastEmoteAtRef = useRef(0);
   const [emote, setEmote] = useState<string | null>(null);
+  // Aksi gestur rekan lain -- tidak perlu dibersihkan balik ke null lewat
+  // timeout: ChibiAvatar sendiri yang menganggap aksi "kadaluarsa" setelah
+  // ACTION_ANIM_MS lewat (lihat useFrame di sana), objek `action` di sini
+  // boleh tetap sama selama menunggu broadcast aksi baru.
+  const lastActionAtRef = useRef(0);
+  const [action, setAction] = useState<AvatarAction | null>(null);
 
   useFrame(() => {
     const g = groupRef.current;
@@ -307,9 +376,17 @@ export function RemoteAvatar({
     } else if (emote && (!e || Date.now() - e.at >= EMOTE_DURATION_MS)) {
       setEmote(null);
     }
+
+    // Aksi gestur masuk -- sama pola dengan emote di atas, cuma update
+    // state saat broadcast baru masuk (dideteksi lewat `at` berubah).
+    const a = remoteActionRef?.current.get(id);
+    if (a && a.at !== lastActionAtRef.current) {
+      lastActionAtRef.current = a.at;
+      setAction({ kind: a.action, at: a.at });
+    }
   });
 
-  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} status={status} />;
+  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} status={status} action={action} />;
 }
 
 /** Orang yang sedang "online" (membuka MagnaSuperApp) tapi TIDAK sedang di

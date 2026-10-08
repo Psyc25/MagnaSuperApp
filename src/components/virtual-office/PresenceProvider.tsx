@@ -16,6 +16,8 @@ import { sanitizeLook, defaultLook, type AvatarLook } from "@/lib/virtual-office
 import type { Dir, RemotePos } from "@/lib/virtual-office/house";
 import {
   VIRTUAL_OFFICE_CHANNEL,
+  type ActionPayload,
+  type AvatarActionKind,
   type EmotePayload,
   type PresenceMeta,
   type PresenceStatus,
@@ -45,6 +47,11 @@ type ContextValue = {
    * RemoteAvatar sama seperti remoteRef dipakai utk posisi live. */
   remoteEmoteRef: { current: Map<string, { content: string; at: number }> };
   broadcastEmote: (content: string) => void;
+  /** Aksi gestur avatar orang lain (Opsi B, gap Oktober 2026) -- key
+   * userId, value kadaluarsa sendiri lewat `at` (lihat ACTION_ANIM_MS),
+   * dibaca per-frame oleh RemoteAvatar sama seperti remoteEmoteRef. */
+  remoteActionRef: { current: Map<string, { action: AvatarActionKind; at: number }> };
+  broadcastAction: (action: AvatarActionKind) => void;
   myLook: AvatarLook;
   myStatus: PresenceStatus;
   /** Gabungkan field ke presence milik sendiri lalu track() ulang --
@@ -65,6 +72,7 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
   const channelRef = useRef<RealtimeChannel | null>(null);
   const remoteRef = useRef<Map<string, RemotePos>>(new Map());
   const remoteEmoteRef = useRef<Map<string, { content: string; at: number }>>(new Map());
+  const remoteActionRef = useRef<Map<string, { action: AvatarActionKind; at: number }>>(new Map());
   const trackedRef = useRef<PresenceMeta>({ inOffice: false, status: null });
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
   const [presenceMeta, setPresenceMeta] = useState<Map<string, ResolvedPresence>>(new Map());
@@ -88,6 +96,12 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
       const p = payload as EmotePayload;
       if (p.id === userId) return;
       remoteEmoteRef.current.set(p.id, { content: p.content, at: Date.now() });
+    });
+
+    channel.on("broadcast", { event: "action" }, ({ payload }) => {
+      const p = payload as ActionPayload;
+      if (p.id === userId) return;
+      remoteActionRef.current.set(p.id, { action: p.action, at: Date.now() });
     });
 
     channel.on("presence", { event: "sync" }, () => {
@@ -147,6 +161,13 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
     [userId]
   );
 
+  const broadcastAction = useCallback(
+    (action: AvatarActionKind) => {
+      channelRef.current?.send({ type: "broadcast", event: "action", payload: { id: userId, action } });
+    },
+    [userId]
+  );
+
   const updatePresence = useCallback(
     (patch: Partial<Pick<PresenceMeta, "look" | "inOffice" | "status">>) => {
       trackedRef.current = { ...trackedRef.current, ...patch };
@@ -162,15 +183,17 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
       channelRef,
       remoteRef,
       remoteEmoteRef,
+      remoteActionRef,
       onlineIds,
       presenceMeta,
       myLook,
       myStatus,
       broadcastMove,
       broadcastEmote,
+      broadcastAction,
       updatePresence,
     }),
-    [onlineIds, presenceMeta, myLook, myStatus, broadcastMove, broadcastEmote, updatePresence]
+    [onlineIds, presenceMeta, myLook, myStatus, broadcastMove, broadcastEmote, broadcastAction, updatePresence]
   );
 
   return <VirtualOfficePresenceContext.Provider value={value}>{children}</VirtualOfficePresenceContext.Provider>;

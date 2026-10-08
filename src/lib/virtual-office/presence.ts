@@ -58,3 +58,26 @@ export const EMOTE_DURATION_MS = 4000;
 export type EmotePayload = { id: string; content: string };
 
 export const QUICK_EMOTES = ["👍", "😂", "❤️", "😮", "👋", "✅"] as const;
+
+/**
+ * Aksi gestur avatar (Opsi B, laporan gap Oktober 2026) -- beda dari emote
+ * di atas: emote cuma bubble teks/emoji mengambang, aksi ini benar-benar
+ * menggerakkan lengan/badan avatar 3D (lihat ChibiAvatar di Avatars.tsx)
+ * selama ACTION_ANIM_MS lalu kembali ke pose normal. Disiarkan lewat
+ * broadcast "action" terpisah dari broadcast "emote", numpang channel
+ * presence yang sama.
+ */
+export type AvatarActionKind = "tonjok" | "tos" | "lambai";
+
+export const QUICK_ACTIONS: { id: AvatarActionKind; emoji: string; label: string }[] = [
+  { id: "tonjok", emoji: "👊", label: "Tonjok" },
+  { id: "tos", emoji: "🙌", label: "Tos" },
+  { id: "lambai", emoji: "👋", label: "Lambai" },
+];
+
+export type ActionPayload = { id: string; action: AvatarActionKind };
+
+/** Durasi animasi lengan sekali aksi (~0,4 detik sesuai keputusan Owner). */
+export const ACTION_ANIM_MS = 400;
+/** Cooldown antar aksi per orang -- cegah spam tombol (~3 detik). */
+export const ACTION_COOLDOWN_MS = 3000;

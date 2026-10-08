@@ -53,14 +53,26 @@ import {
 } from "@/lib/virtual-office/house";
 import { getAgentById, type AIAgent } from "@/lib/ai/agents";
 import {
+  ACTION_COOLDOWN_MS,
   EMOTE_DURATION_MS,
+  QUICK_ACTIONS,
   QUICK_EMOTES,
   STATUS_COLORS,
   STATUS_LABELS,
+  type AvatarActionKind,
   type PresenceStatus,
 } from "@/lib/virtual-office/presence";
 import { HouseScene, toScene } from "./HouseScene";
-import { AgentNPC, DeskAvatar, PlayerAvatar, RemoteAvatar, SleeperAvatar, type Dir, type RemotePos } from "./Avatars";
+import {
+  AgentNPC,
+  DeskAvatar,
+  PlayerAvatar,
+  RemoteAvatar,
+  SleeperAvatar,
+  type AvatarAction,
+  type Dir,
+  type RemotePos,
+} from "./Avatars";
 import { CharacterEditor } from "./CharacterEditor";
 import { useVirtualOfficePresence } from "./PresenceProvider";
 
@@ -109,8 +121,18 @@ export function VirtualOfficeClient({
     [roster]
   );
 
-  const { onlineIds, presenceMeta, remoteRef, remoteEmoteRef, broadcastMove, broadcastEmote, myStatus, updatePresence } =
-    useVirtualOfficePresence();
+  const {
+    onlineIds,
+    presenceMeta,
+    remoteRef,
+    remoteEmoteRef,
+    remoteActionRef,
+    broadcastMove,
+    broadcastEmote,
+    broadcastAction,
+    myStatus,
+    updatePresence,
+  } = useVirtualOfficePresence();
 
   const posRef = useRef<Pos>({ ...SPAWN });
   const dirRef = useRef<Dir>("up");
@@ -127,6 +149,16 @@ export function VirtualOfficeClient({
   const [emotePickerOpen, setEmotePickerOpen] = useState(false);
   const [emoteDraft, setEmoteDraft] = useState("");
   const myEmoteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Aksi gestur (tonjok/tos/lambai, Opsi B gap Oktober 2026) -- beda dari
+  // emote: ini menggerakkan lengan avatar sungguhan (lihat ChibiAvatar di
+  // Avatars.tsx), bukan cuma bubble di atas kepala. `lastActionAtRef`
+  // dipakai buat cooldown (ACTION_COOLDOWN_MS) supaya tombolnya tidak bisa
+  // dispam -- disimpan di ref (bukan cuma dicek dari state) supaya klik
+  // beruntun yang terjadi sebelum re-render pun tetap kena cooldown.
+  const [myAction, setMyAction] = useState<AvatarAction | null>(null);
+  const lastActionAtRef = useRef(0);
+  const [actionOnCooldown, setActionOnCooldown] = useState(false);
+  const actionCooldownTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [statusPickerOpen, setStatusPickerOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -201,6 +233,31 @@ export function VirtualOfficeClient({
   useEffect(() => {
     return () => {
       if (myEmoteTimeoutRef.current) clearTimeout(myEmoteTimeoutRef.current);
+    };
+  }, []);
+
+  // Pemicu gestur tonjok/tos/lambai -- hanya jalan kalau ada rekan di
+  // radius interaksi (`nearby`, dipakai juga oleh tombol Chat) dan tidak
+  // sedang cooldown. Avatar sendiri langsung dianimasikan (tidak nunggu
+  // round-trip broadcast), lalu disiarkan ke semua orang lain lewat
+  // channel yang sama supaya kelihatan juga di avatarnya.
+  const performAction = useCallback(
+    (kind: AvatarActionKind) => {
+      const now = Date.now();
+      if (now - lastActionAtRef.current < ACTION_COOLDOWN_MS) return;
+      lastActionAtRef.current = now;
+      setMyAction({ kind, at: now });
+      broadcastAction(kind);
+      setActionOnCooldown(true);
+      if (actionCooldownTimeoutRef.current) clearTimeout(actionCooldownTimeoutRef.current);
+      actionCooldownTimeoutRef.current = setTimeout(() => setActionOnCooldown(false), ACTION_COOLDOWN_MS);
+    },
+    [broadcastAction]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (actionCooldownTimeoutRef.current) clearTimeout(actionCooldownTimeoutRef.current);
     };
   }, []);
 
@@ -342,6 +399,7 @@ export function VirtualOfficeClient({
             label={`${firstName(currentUser.fullName)} (Kamu)`}
             emote={myEmote}
             status={myStatus}
+            action={myAction}
           />
 
           {othersInOffice.map((id) => {
@@ -353,6 +411,7 @@ export function VirtualOfficeClient({
                 id={id}
                 remoteRef={remoteRef}
                 remoteEmoteRef={remoteEmoteRef}
+                remoteActionRef={remoteActionRef}
                 look={lookFor(entry)}
                 label={firstName(entry.fullName)}
                 status={presenceMeta.get(id)?.status}
@@ -472,6 +531,23 @@ export function VirtualOfficeClient({
               <MessageSquare className="h-4 w-4" />
               Chat dengan {firstName(nearby.fullName)}
             </Link>
+          )}
+          {nearby && (
+            <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-black/60 p-1.5 shadow-lg backdrop-blur">
+              {QUICK_ACTIONS.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => performAction(a.id)}
+                  disabled={actionOnCooldown}
+                  title={`${a.label} ke ${firstName(nearby.fullName)}`}
+                  aria-label={a.label}
+                  className="grid h-9 w-9 place-items-center rounded-full bg-slate-800 text-base transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {a.emoji}
+                </button>
+              ))}
+            </div>
           )}
           {canKnock && (
             <Link
