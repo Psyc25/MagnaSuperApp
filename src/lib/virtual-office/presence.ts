@@ -62,7 +62,7 @@ export const QUICK_EMOTES = ["👍", "😂", "❤️", "😮", "👋", "✅"] as
 /**
  * Aksi gestur avatar (Opsi B, laporan gap Oktober 2026) -- beda dari emote
  * di atas: emote cuma bubble teks/emoji mengambang, aksi ini benar-benar
- * menggerakkan lengan/badan avatar 3D (lihat ChibiAvatar di Avatars.tsx)
+ * menggerakkan lengan/badan avatar (lihat drawAvatar di Avatars.tsx)
  * selama ACTION_ANIM_MS lalu kembali ke pose normal. Disiarkan lewat
  * broadcast "action" terpisah dari broadcast "emote", numpang channel
  * presence yang sama.
@@ -81,3 +81,14 @@ export type ActionPayload = { id: string; action: AvatarActionKind };
 export const ACTION_ANIM_MS = 400;
 /** Cooldown antar aksi per orang -- cegah spam tombol (~3 detik). */
 export const ACTION_COOLDOWN_MS = 3000;
+
+/**
+ * Interaksi perabot (lihat interactions.ts, laporan gap Oktober 2026:
+ * "semua perabot bisa dipakai, bukan cuma dekorasi") -- beda dari
+ * action/emote di atas: ini status TOGGLE (sedang memakai perabot id X,
+ * atau tidak sama sekali), bukan animasi sesaat, jadi TIDAK kadaluarsa
+ * sendiri lewat `at` -- cuma berubah saat orangnya mulai/berhenti
+ * memakai perabotnya (lihat broadcastInteract di PresenceProvider).
+ * `furnitureId: null` = orang itu sedang tidak memakai perabot apa pun.
+ */
+export type InteractPayload = { id: string; furnitureId: string | null };

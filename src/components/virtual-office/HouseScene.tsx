@@ -1,133 +1,185 @@
 "use client";
 
-import { Suspense } from "react";
-import { Billboard, Text } from "@react-three/drei";
 import {
   ARTWORKS,
   FENCE,
   FLOOR2_BOUNDS,
-  FURNITURE,
-  GROUND_BOUNDS,
   OUTBUILDING_WALLS,
   OWNER_DOOR,
   ROOMS,
   SIGNS,
   STAIRS_DOWN_ZONE,
   WALLS,
-  WALL_HEIGHT,
   WINDOWS,
   getRoom,
   type Furniture,
-  type Rect,
 } from "@/lib/virtual-office/house";
+import { chunkyCircle, chunkyRect, outlinedText } from "./draw2d";
 
-/** Pusat lantai 1 dipakai sebagai titik nol scene 3D. */
-const ORIGIN_X = GROUND_BOUNDS.x + GROUND_BOUNDS.w / 2;
-const ORIGIN_Y = GROUND_BOUNDS.y + GROUND_BOUNDS.h / 2;
+/**
+ * Render 2D top-down Kantor Virtual (rewrite Oktober 2026 dari
+ * react-three-fiber ke Canvas 2D API -- permintaan Owner: "diubah seperti
+ * gambar referensi, dibuat interaktif seperti game"). Gaya "chunky
+ * pixel-art" dibuat 100% lewat kode (lihat draw2d.ts), BUKAN menjiplak
+ * gambar referensi yang dikirim -- itu cuma dipakai sebagai inspirasi
+ * palet warna & suasana, sudah dikonfirmasi ke Owner.
+ *
+ * Semua fungsi di sini menggambar langsung di koordinat DUNIA (sama
+ * seperti Rect/Pos di house.ts) -- kamera (lihat Camera & applyCameraTransform
+ * di bawah) diterapkan SEKALI per frame oleh pemanggil (VirtualOfficeClient)
+ * lewat ctx.setTransform, jadi fungsi gambar di sini tidak perlu tahu soal
+ * kamera/zoom/posisi layar sama sekali.
+ *
+ * FURNITURE SENGAJA TIDAK digambar di drawGround -- itu digambar satu per
+ * satu lewat drawFurnitureItem oleh VirtualOfficeClient, diurutkan bareng
+ * avatar berdasarkan Y (painter's algorithm) supaya avatar bisa kelihatan
+ * benar di depan/belakang perabot. Tembok/pagar aman digambar di sini
+ * (tidak diurutkan) karena avatar tidak pernah bisa menempati pixel
+ * tembok itu sendiri (dicegah tabrakan di house.ts resolveMove).
+ */
 
-export function toScene(x: number, y: number): [number, number, number] {
-  return [x - ORIGIN_X, 0, y - ORIGIN_Y];
+export type Camera = { x: number; y: number; scale: number };
+export const DEFAULT_CAMERA_SCALE = 1.3;
+
+/** Terapkan transform kamera (posisi dunia -> tengah layar) satu kali per
+ * frame, SEBELUM menggambar apa pun -- dipanggil VirtualOfficeClient. */
+export function applyCameraTransform(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  dpr: number,
+  cssWidth: number,
+  cssHeight: number
+): void {
+  const s = cam.scale * dpr;
+  ctx.setTransform(s, 0, 0, s, (cssWidth / 2) * dpr - cam.x * s, (cssHeight / 2) * dpr - cam.y * s);
 }
 
-function center(rect: Rect): [number, number] {
-  const [x, , z] = toScene(rect.x + rect.w / 2, rect.y + rect.h / 2);
-  return [x, z];
+const WALL_COLORS = {
+  house: "#e7e5e4",
+  outbuilding: "#d6d3d1",
+  fence: "#3f6212",
+  doorClosed: "#92400e",
+} as const;
+
+function drawWallRect(ctx: CanvasRenderingContext2D, rect: { x: number; y: number; w: number; h: number }, variant: keyof typeof WALL_COLORS): void {
+  chunkyRect(ctx, rect.x, rect.y, rect.w, rect.h, WALL_COLORS[variant], { radius: variant === "fence" ? 1.5 : 2.5 });
 }
 
-function Box({
-  rect,
-  height,
-  y = 0,
-  color,
-  opacity,
-  emissive,
-}: {
-  rect: Rect;
-  height: number;
-  y?: number;
-  color: string;
-  opacity?: number;
-  emissive?: string;
-}) {
-  const [x, z] = center(rect);
-  return (
-    <mesh position={[x, y + height / 2, z]}>
-      <boxGeometry args={[rect.w, height, rect.h]} />
-      <meshStandardMaterial
-        color={color}
-        transparent={opacity !== undefined}
-        opacity={opacity ?? 1}
-        emissive={emissive ?? "#000000"}
-        emissiveIntensity={emissive ? 0.35 : 0}
-      />
-    </mesh>
-  );
+function drawStairs(ctx: CanvasRenderingContext2D): void {
+  const tangga = getRoom("tangga").rect;
+  const steps = 8;
+  const stepDepth = tangga.h / steps;
+  for (let i = 0; i < steps; i += 1) {
+    const sy = tangga.y + tangga.h - (i + 1) * stepDepth;
+    chunkyRect(ctx, tangga.x + 4, sy, tangga.w - 8, stepDepth - 1, i % 2 ? "#a8a29e" : "#d6d3d1", {
+      radius: 1,
+      shadow: false,
+    });
+  }
+  outlinedText(ctx, "TANGGA ↑ GUDANG", tangga.x + tangga.w / 2, tangga.y - 10, { size: 8 });
 }
 
-function FloorPlane({ rect, color, y = 0.5 }: { rect: Rect; color: string; y?: number }) {
-  const [x, z] = center(rect);
-  return (
-    <mesh position={[x, y, z]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[rect.w, rect.h]} />
-      <meshStandardMaterial color={color} />
-    </mesh>
-  );
+function drawFloor2(ctx: CanvasRenderingContext2D): void {
+  const b = FLOOR2_BOUNDS;
+  ctx.fillStyle = "#0b1120";
+  ctx.fillRect(b.x - 40, b.y - 40, b.w + 80, b.h + 80);
+  ctx.fillStyle = getRoom("gudang").floor;
+  ctx.fillRect(b.x, b.y, b.w, b.h);
+
+  const walls = [
+    { x: b.x, y: b.y - 4, w: b.w, h: 8 },
+    { x: b.x, y: b.y + b.h - 4, w: b.w, h: 8 },
+    { x: b.x - 4, y: b.y, w: 8, h: b.h },
+    { x: b.x + b.w - 4, y: b.y, w: 8, h: b.h },
+  ];
+  for (const w of walls) drawWallRect(ctx, w, "outbuilding");
+
+  const z = STAIRS_DOWN_ZONE;
+  chunkyRect(ctx, z.x, z.y, z.w, z.h, "#d6d3d1", { radius: 2, shadow: false });
+  outlinedText(ctx, "TANGGA ↓ TURUN", z.x + z.w / 2, z.y + z.h / 2, { size: 9 });
+  outlinedText(ctx, "GUDANG ALAT & BARANG · LT. 2", b.x + 390, b.y + 30, { size: 14 });
 }
 
-function FloorLabel({ text, x, y, size = 13 }: { text: string; x: number; y: number; size?: number }) {
-  const [sx, , sz] = toScene(x, y);
-  return (
-    <Suspense fallback={null}>
-    <Text
-      position={[sx, 1.2, sz]}
-      rotation={[-Math.PI / 2, 0, 0]}
-      fontSize={size}
-      color="#ffffff"
-      fillOpacity={0.55}
-      anchorX="center"
-      anchorY="middle"
-    >
-      {text}
-    </Text>
-    </Suspense>
-  );
+/** Lantai, tembok, pagar, jendela, pajangan, tangga -- semua yang TIDAK
+ * perlu diurutkan Y dengan avatar. Dipanggil sekali per frame, setelah
+ * applyCameraTransform, sebelum perabot & avatar digambar. */
+export function drawGround(ctx: CanvasRenderingContext2D, opts: { ownerDoorOpen: boolean }): void {
+  const g = { x: 40, y: 40, w: 820, h: 950 };
+
+  ctx.fillStyle = "#14532d";
+  ctx.fillRect(g.x - 160, g.y - 160, g.w + 320, g.h + 320);
+
+  for (const r of ROOMS) {
+    if (r.id === "belakang" || r.id === "halamandepan") {
+      ctx.fillStyle = r.floor;
+      ctx.fillRect(r.rect.x, r.rect.y, r.rect.w, r.rect.h);
+    }
+  }
+
+  // Jalan setapak gerbang -> pintu utama.
+  ctx.fillStyle = "#a8a29e";
+  ctx.fillRect(420, 880, 60, 108);
+
+  for (const r of ROOMS) {
+    if (r.id === "belakang" || r.id === "halamandepan" || r.id === "gudang") continue;
+    ctx.fillStyle = r.floor;
+    ctx.fillRect(r.rect.x, r.rect.y, r.rect.w, r.rect.h);
+  }
+  for (const r of ROOMS) {
+    if (!r.showLabel || r.id === "gudang") continue;
+    outlinedText(ctx, r.label.toUpperCase(), r.rect.x + r.rect.w / 2, r.rect.y + 22, {
+      size: r.id === "it" ? 9 : 12,
+      color: "rgba(255,255,255,0.6)",
+      outline: "rgba(0,0,0,0.4)",
+    });
+  }
+
+  for (const w of FENCE) drawWallRect(ctx, w, "fence");
+  chunkyRect(ctx, 382, 982, 10, 12, "#57534e");
+  chunkyRect(ctx, 508, 982, 10, 12, "#57534e");
+  outlinedText(ctx, "GERBANG", 450, 970, { size: 10 });
+
+  for (const w of WINDOWS) {
+    chunkyRect(ctx, w.x, w.y - 1, w.w, w.h + 2, "#7dd3fc", { glow: "#0ea5e9", opacity: 0.85, radius: 1.5 });
+  }
+
+  for (const w of OUTBUILDING_WALLS) drawWallRect(ctx, w, "outbuilding");
+  for (const w of WALLS) drawWallRect(ctx, w, "house");
+
+  if (!opts.ownerDoorOpen) drawWallRect(ctx, OWNER_DOOR, "doorClosed");
+
+  for (const a of ARTWORKS) {
+    chunkyRect(ctx, a.x - 2, a.y - 16, 4, 32, a.color, { glow: a.color, radius: 1.5 });
+    outlinedText(ctx, a.label, a.wall === "left" ? a.x + 26 : a.x - 26, a.y, { size: 8 });
+  }
+  for (const s of SIGNS) outlinedText(ctx, s.text, s.x, s.y, { size: 9, color: "#fef3c7" });
+
+  drawStairs(ctx);
+  drawFloor2(ctx);
 }
 
-function SmallLabel({ text, x, y, height }: { text: string; x: number; y: number; height: number }) {
-  const [sx, , sz] = toScene(x, y);
-  return (
-    <Billboard position={[sx, height, sz]}>
-      <Suspense fallback={null}>
-      <Text fontSize={7} color="#ffffff" outlineWidth={0.4} outlineColor="#000000" anchorX="center" anchorY="middle">
-        {text}
-      </Text>
-      </Suspense>
-    </Billboard>
-  );
-}
-
-function FurnitureMesh({ item }: { item: Furniture }) {
+/** Satu item perabot -- dipanggil terpisah per item (bukan lewat
+ * drawGround) supaya VirtualOfficeClient bisa mengurutkannya bareng
+ * avatar berdasarkan Y sebelum digambar (painter's algorithm). `now` =
+ * Date.now() milik pemanggil, cuma dipakai bonfire untuk kedip nyala api. */
+export function drawFurnitureItem(ctx: CanvasRenderingContext2D, item: Furniture, now: number): void {
   const r = item.rect;
   const cx = r.x + r.w / 2;
   const cy = r.y + r.h / 2;
+
   switch (item.kind) {
-    case "bunkbed":
-      return (
-        <group>
-          <Box rect={r} height={8} y={4} color="#cbd5e1" />
-          <Box rect={{ x: r.x + 2, y: r.y + 2, w: 10, h: r.h - 4 }} height={3} y={12} color="#f8fafc" />
-          <Box rect={r} height={8} y={32} color="#cbd5e1" />
-          <Box rect={{ x: r.x + 2, y: r.y + 2, w: 10, h: r.h - 4 }} height={3} y={40} color="#f8fafc" />
-          {[
-            [r.x, r.y],
-            [r.x + r.w - 3, r.y],
-            [r.x, r.y + r.h - 3],
-            [r.x + r.w - 3, r.y + r.h - 3],
-          ].map(([px, py], i) => (
-            <Box key={i} rect={{ x: px, y: py, w: 3, h: 3 }} height={46} color="#64748b" />
-          ))}
-        </group>
-      );
+    case "bunkbed": {
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#cbd5e1", { radius: 2 });
+      chunkyRect(ctx, r.x + 3, r.y + 3, r.w - 6, 7, "#f8fafc", { radius: 2, shadow: false });
+      const corners: Array<[number, number]> = [
+        [r.x, r.y],
+        [r.x + r.w - 3, r.y],
+        [r.x, r.y + r.h - 3],
+        [r.x + r.w - 3, r.y + r.h - 3],
+      ];
+      for (const [px, py] of corners) chunkyRect(ctx, px, py, 3, 3, "#64748b", { shadow: false, radius: 0.5 });
+      break;
+    }
     case "bigtable": {
       const chairs: Array<[number, number]> = [
         ...[128, 168, 210, 252].flatMap((x) => [
@@ -137,255 +189,110 @@ function FurnitureMesh({ item }: { item: Furniture }) {
         [r.x - 10, cy],
         [r.x + r.w + 10, cy],
       ];
-      return (
-        <group>
-          <Box rect={r} height={4} y={18} color="#e2c9a0" />
-          <Box rect={{ x: r.x + 6, y: r.y + 6, w: r.w - 12, h: r.h - 12 }} height={18} color="#7c5a3a" />
-          {chairs.map(([x, y], i) => (
-            <Box key={i} rect={{ x: x - 6, y: y - 6, w: 12, h: 12 }} height={12} color="#1f2937" />
-          ))}
-        </group>
-      );
+      for (const [x, y] of chairs) chunkyRect(ctx, x - 6, y - 6, 12, 12, "#1f2937", { radius: 2 });
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#e2c9a0");
+      chunkyRect(ctx, r.x + 6, r.y + 6, r.w - 12, r.h - 12, "#7c5a3a", { shadow: false, radius: 2 });
+      if (item.label) outlinedText(ctx, item.label, cx, r.y - 6, { size: 8 });
+      break;
     }
     case "fridge":
-      return (
-        <group>
-          <Box rect={r} height={44} color="#e5e7eb" />
-          <SmallLabel text={item.label ?? ""} x={cx} y={cy} height={54} />
-        </group>
-      );
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#e5e7eb");
+      if (item.label) outlinedText(ctx, item.label, cx, r.y - 6, { size: 8 });
+      break;
     case "freezer":
-      return (
-        <group>
-          <Box rect={r} height={26} color="#bae6fd" />
-          <SmallLabel text={item.label ?? ""} x={cx} y={cy} height={36} />
-        </group>
-      );
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#bae6fd");
+      if (item.label) outlinedText(ctx, item.label, cx, r.y - 6, { size: 8 });
+      break;
     case "coffee":
-      return (
-        <group>
-          <Box rect={r} height={16} color="#78350f" />
-          <Box rect={{ x: r.x + 4, y: r.y + 4, w: r.w - 8, h: r.h - 8 }} height={10} y={16} color="#111827" />
-          <SmallLabel text={item.label ?? ""} x={cx} y={cy} height={36} />
-        </group>
-      );
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#78350f");
+      chunkyRect(ctx, r.x + 4, r.y + 4, r.w - 8, r.h - 8, "#111827", { shadow: false, radius: 1.5 });
+      if (item.label) outlinedText(ctx, item.label, cx, r.y - 6, { size: 8 });
+      break;
     case "counter":
-      return <Box rect={r} height={20} color="#b08968" />;
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#b08968");
+      break;
     case "desk":
-      return (
-        <group>
-          <Box rect={r} height={18} color="#d6d3d1" />
-          <Box rect={{ x: cx - 8, y: r.y + 2, w: 16, h: 3 }} height={12} y={18} color="#111827" emissive="#38bdf8" />
-          {item.label && <SmallLabel text={item.label} x={cx} y={cy} height={40} />}
-        </group>
-      );
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#d6d3d1");
+      chunkyRect(ctx, cx - 8, r.y + 2, 16, r.h - 4, "#111827", { shadow: false, glow: "#38bdf8", radius: 1.5 });
+      if (item.label) outlinedText(ctx, item.label, cx, r.y - 6, { size: 8 });
+      break;
     case "board":
-      return (
-        <group>
-          <Box rect={r} height={30} y={10} color="#f8fafc" />
-          <SmallLabel text={item.label ?? ""} x={cx + 10} y={cy} height={48} />
-        </group>
-      );
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#f8fafc");
+      if (item.label) outlinedText(ctx, item.label, cx + 10, cy, { size: 8 });
+      break;
     case "tv":
-      return (
-        <group>
-          <Box rect={{ x: cx - 2, y: cy - 2, w: 4, h: 4 }} height={22} color="#334155" />
-          <Box rect={r} height={24} y={22} color="#0f172a" emissive="#1d4ed8" />
-          <SmallLabel text="TV MEETING" x={cx} y={cy} height={56} />
-        </group>
-      );
+      chunkyRect(ctx, cx - 2, cy - 2, 4, 4, "#334155", { shadow: false });
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#0f172a", { glow: "#1d4ed8" });
+      outlinedText(ctx, "TV MEETING", cx, r.y - 8, { size: 8 });
+      break;
     case "bed":
-      return (
-        <group>
-          <Box rect={r} height={14} color="#e7e5e4" />
-          <Box rect={{ x: r.x + r.w - 16, y: r.y + 6, w: 12, h: r.h - 12 }} height={4} y={14} color="#f8fafc" />
-          <Box rect={{ x: r.x, y: r.y, w: r.w - 20, h: r.h }} height={3} y={14} color="#b45309" />
-        </group>
-      );
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#e7e5e4");
+      chunkyRect(ctx, r.x + r.w - 16, r.y + 6, 12, r.h - 12, "#f8fafc", { shadow: false, radius: 1.5 });
+      chunkyRect(ctx, r.x, r.y + r.h - 10, r.w - 20, 10, "#b45309", { shadow: false, radius: 1.5 });
+      break;
     case "car":
-      return (
-        <group>
-          <Box rect={r} height={22} y={6} color="#1d4ed8" />
-          <Box rect={{ x: r.x + 40, y: r.y + 8, w: r.w - 80, h: r.h - 16 }} height={18} y={28} color="#93c5fd" opacity={0.85} />
-        </group>
-      );
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#1d4ed8");
+      chunkyRect(ctx, r.x + 40, r.y + 8, r.w - 80, r.h - 16, "#93c5fd", { shadow: false, opacity: 0.85, radius: 3 });
+      break;
     case "crate":
-      return (
-        <group>
-          <Box rect={r} height={34} color="#a16207" />
-          {item.label && <SmallLabel text={item.label} x={cx} y={cy} height={46} />}
-        </group>
-      );
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#a16207");
+      if (item.label) outlinedText(ctx, item.label, cx, r.y - 6, { size: 8 });
+      break;
     case "rack":
-      return (
-        <group>
-          {[0, 16, 32].map((y) => (
-            <Box key={y} rect={r} height={3} y={y + 6} color="#94a3b8" />
-          ))}
-          <Box rect={{ x: r.x + 10, y: r.y + 10, w: 24, h: 20 }} height={10} y={9} color="#a16207" />
-          <Box rect={{ x: r.x + 50, y: r.y + 20, w: 30, h: 24 }} height={10} y={25} color="#475569" />
-        </group>
-      );
+      for (const sy of [0, 16, 32]) chunkyRect(ctx, r.x, r.y + sy + 4, r.w, 3, "#94a3b8", { shadow: false, radius: 1 });
+      chunkyRect(ctx, r.x + 10, r.y + 10, 24, 20, "#a16207", { shadow: false, radius: 2 });
+      chunkyRect(ctx, r.x + 50, r.y + 20, 30, 24, "#475569", { shadow: false, radius: 2 });
+      break;
     case "picnictable":
-      // Meja piknik khas: papan meja di tengah + bangku menempel di kedua
-      // sisi panjang (beda dari "bigtable" yang kursinya lepas-lepas di
-      // sekeliling) -- referensi suasana piknik Halaman Depan.
-      return (
-        <group>
-          <Box rect={r} height={3} y={18} color="#8b5e34" />
-          <Box rect={{ x: r.x + 6, y: r.y + 6, w: r.w - 12, h: r.h - 12 }} height={16} color="#5c3b1e" />
-          <Box rect={{ x: r.x - 12, y: r.y + 3, w: 10, h: r.h - 6 }} height={9} y={2} color="#6b4226" />
-          <Box rect={{ x: r.x + r.w + 2, y: r.y + 3, w: 10, h: r.h - 6 }} height={9} y={2} color="#6b4226" />
-          {item.label && <SmallLabel text={item.label} x={cx} y={cy} height={32} />}
-        </group>
-      );
+      // Beda dari "bigtable": bangku menempel di kedua sisi panjang meja
+      // (bukan kursi lepas-lepas di sekeliling) -- referensi suasana
+      // piknik Halaman Depan.
+      chunkyRect(ctx, r.x - 12, r.y + 3, 10, r.h - 6, "#6b4226", { shadow: false, radius: 2 });
+      chunkyRect(ctx, r.x + r.w + 2, r.y + 3, 10, r.h - 6, "#6b4226", { shadow: false, radius: 2 });
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#8b5e34");
+      chunkyRect(ctx, r.x + 6, r.y + 6, r.w - 12, r.h - 12, "#5c3b1e", { shadow: false, radius: 2 });
+      if (item.label) outlinedText(ctx, item.label, cx, r.y - 6, { size: 8 });
+      break;
     case "bench":
-      return <Box rect={r} height={10} y={2} color="#6b4226" />;
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#6b4226");
+      break;
     case "bonfire": {
-      // Lingkaran batu + kayu bakar silang + nyala api (cone emissive) +
-      // cahaya titik supaya terasa hangat di malam hari -- satu-satunya
-      // perabot yang pakai geometri non-kotak di scene ini, sengaja,
-      // karena bentuknya memang bundar.
-      const [sx, , sz] = toScene(cx, cy);
       const radius = Math.min(r.w, r.h) / 2;
-      return (
-        <group>
-          <group position={[sx, 0, sz]}>
-            {Array.from({ length: 8 }, (_, i) => {
-              const angle = (i / 8) * Math.PI * 2;
-              return (
-                <mesh key={i} position={[Math.cos(angle) * radius, 3, Math.sin(angle) * radius]}>
-                  <sphereGeometry args={[4, 6, 6]} />
-                  <meshStandardMaterial color="#57534e" />
-                </mesh>
-              );
-            })}
-            <mesh position={[0, 5, 0]} rotation={[0, Math.PI / 5, Math.PI / 2.2]}>
-              <cylinderGeometry args={[2.2, 2.2, radius * 1.4, 8]} />
-              <meshStandardMaterial color="#78350f" />
-            </mesh>
-            <mesh position={[0, 5, 0]} rotation={[0, -Math.PI / 4, Math.PI / 2.4]}>
-              <cylinderGeometry args={[2.2, 2.2, radius * 1.4, 8]} />
-              <meshStandardMaterial color="#5c3b1e" />
-            </mesh>
-            <mesh position={[0, 10, 0]}>
-              <coneGeometry args={[radius * 0.55, 18, 8]} />
-              <meshStandardMaterial color="#f97316" emissive="#f97316" emissiveIntensity={1.1} />
-            </mesh>
-            <mesh position={[0, 7, 0]}>
-              <coneGeometry args={[radius * 0.4, 12, 8]} />
-              <meshStandardMaterial color="#fde047" emissive="#facc15" emissiveIntensity={1.3} />
-            </mesh>
-            <pointLight position={[0, 16, 0]} color="#f97316" intensity={5} distance={150} decay={2} />
-          </group>
-          {item.label && <SmallLabel text={item.label} x={cx} y={cy} height={30} />}
-        </group>
-      );
+      for (let i = 0; i < 8; i += 1) {
+        const angle = (i / 8) * Math.PI * 2;
+        chunkyCircle(ctx, cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius, 4, "#57534e", { shadow: false });
+      }
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(Math.PI / 5);
+      chunkyRect(ctx, -radius * 0.7, -2.2, radius * 1.4, 4.4, "#78350f", { shadow: false, radius: 2 });
+      ctx.restore();
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(-Math.PI / 4);
+      chunkyRect(ctx, -radius * 0.7, -2.2, radius * 1.4, 4.4, "#5c3b1e", { shadow: false, radius: 2 });
+      ctx.restore();
+
+      // Nyala api berkedip (Date.now()) -- satu-satunya efek bergerak di
+      // peta selain avatar, sengaja dibuat hidup supaya terasa "game".
+      const flicker = 0.85 + Math.sin(now / 90) * 0.1 + Math.sin(now / 37) * 0.05;
+      ctx.save();
+      ctx.shadowColor = "#f97316";
+      ctx.shadowBlur = 22;
+      const outer = ctx.createRadialGradient(cx, cy - radius * 0.3, 0, cx, cy - radius * 0.1, radius * 0.8 * flicker);
+      outer.addColorStop(0, "#fde047");
+      outer.addColorStop(0.5, "#f97316");
+      outer.addColorStop(1, "rgba(249,115,22,0)");
+      ctx.fillStyle = outer;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy - radius * 0.25, radius * 0.75 * flicker, radius * 1.05 * flicker, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      chunkyCircle(ctx, cx, cy - radius * 0.1, radius * 0.4 * flicker, "#fde047", { shadow: false, glow: "#facc15" });
+      if (item.label) outlinedText(ctx, item.label, cx, r.y - 6, { size: 8 });
+      break;
     }
     default:
-      return null;
+      break;
   }
-}
-
-function Stairs() {
-  const tangga = getRoom("tangga").rect;
-  const steps = 8;
-  const stepDepth = tangga.h / steps;
-  return (
-    <group>
-      {Array.from({ length: steps }, (_, i) => (
-        <Box
-          key={i}
-          rect={{ x: tangga.x + 4, y: tangga.y + tangga.h - (i + 1) * stepDepth, w: tangga.w - 8, h: stepDepth }}
-          height={4 + i * 5}
-          color={i % 2 ? "#a8a29e" : "#d6d3d1"}
-        />
-      ))}
-      <SmallLabel text="TANGGA ↑ GUDANG" x={tangga.x + tangga.w / 2} y={tangga.y + 30} height={70} />
-    </group>
-  );
-}
-
-function Floor2() {
-  const z = STAIRS_DOWN_ZONE;
-  return (
-    <group>
-      <FloorPlane rect={{ x: FLOOR2_BOUNDS.x - 40, y: FLOOR2_BOUNDS.y - 40, w: FLOOR2_BOUNDS.w + 80, h: FLOOR2_BOUNDS.h + 80 }} color="#0b1120" y={-1} />
-      <FloorPlane rect={FLOOR2_BOUNDS} color={getRoom("gudang").floor} />
-      {[
-        { x: FLOOR2_BOUNDS.x, y: FLOOR2_BOUNDS.y - 4, w: FLOOR2_BOUNDS.w, h: 8 },
-        { x: FLOOR2_BOUNDS.x, y: FLOOR2_BOUNDS.y + FLOOR2_BOUNDS.h - 4, w: FLOOR2_BOUNDS.w, h: 8 },
-        { x: FLOOR2_BOUNDS.x - 4, y: FLOOR2_BOUNDS.y, w: 8, h: FLOOR2_BOUNDS.h },
-        { x: FLOOR2_BOUNDS.x + FLOOR2_BOUNDS.w - 4, y: FLOOR2_BOUNDS.y, w: 8, h: FLOOR2_BOUNDS.h },
-      ].map((w, i) => (
-        <Box key={i} rect={w} height={WALL_HEIGHT} color="#d6d3d1" />
-      ))}
-      <Box rect={z} height={3} color="#d6d3d1" />
-      <SmallLabel text="TANGGA ↓ TURUN" x={z.x + z.w / 2} y={z.y + z.h / 2} height={30} />
-      <FloorLabel text="GUDANG ALAT & BARANG · LT. 2" x={FLOOR2_BOUNDS.x + 390} y={FLOOR2_BOUNDS.y + 30} size={16} />
-    </group>
-  );
-}
-
-export function HouseScene({ ownerDoorOpen }: { ownerDoorOpen: boolean }) {
-  const g = GROUND_BOUNDS;
-  return (
-    <group>
-      {/* Tanah & taman di sekitar rumah */}
-      <FloorPlane rect={{ x: g.x - 160, y: g.y - 160, w: g.w + 320, h: g.h + 320 }} color="#14532d" y={-1} />
-      {ROOMS.filter((r) => r.id === "belakang" || r.id === "halamandepan").map((r) => (
-        <FloorPlane key={r.id} rect={r.rect} color={r.floor} y={0} />
-      ))}
-      {/* Jalan setapak gerbang -> pintu utama */}
-      <FloorPlane rect={{ x: 420, y: 880, w: 60, h: 108 }} color="#a8a29e" y={0.4} />
-
-      {ROOMS.filter((r) => r.id !== "belakang" && r.id !== "halamandepan" && r.id !== "gudang").map((r) => (
-        <FloorPlane key={r.id} rect={r.rect} color={r.floor} />
-      ))}
-      {ROOMS.filter((r) => r.showLabel && r.id !== "gudang").map((r) => (
-        <FloorLabel key={r.id} text={r.label.toUpperCase()} x={r.rect.x + r.rect.w / 2} y={r.rect.y + 22} size={r.id === "it" ? 9 : 12} />
-      ))}
-
-      {/* Tembok rumah, bangunan belakang, pagar */}
-      {WALLS.map((w, i) => (
-        <Box key={`w${i}`} rect={w} height={WALL_HEIGHT} color="#e7e5e4" />
-      ))}
-      {OUTBUILDING_WALLS.map((w, i) => (
-        <Box key={`o${i}`} rect={w} height={34} color="#d6d3d1" />
-      ))}
-      {FENCE.map((w, i) => (
-        <Box key={`f${i}`} rect={w} height={16} color="#3f6212" />
-      ))}
-      {/* Tiang gerbang */}
-      <Box rect={{ x: 382, y: 982, w: 10, h: 12 }} height={34} color="#57534e" />
-      <Box rect={{ x: 508, y: 982, w: 10, h: 12 }} height={34} color="#57534e" />
-      <SmallLabel text="GERBANG" x={450} y={988} height={46} />
-
-      {/* Jendela kiri-kanan pintu utama */}
-      {WINDOWS.map((w, i) => (
-        <Box key={`win${i}`} rect={{ x: w.x, y: w.y - 1, w: w.w, h: w.h + 2 }} height={20} y={14} color="#7dd3fc" opacity={0.75} emissive="#0ea5e9" />
-      ))}
-
-      {/* Pintu Kamar Owner: tertutup untuk semua kecuali pemiliknya */}
-      {!ownerDoorOpen && <Box rect={OWNER_DOOR} height={WALL_HEIGHT - 6} color="#92400e" />}
-
-      {FURNITURE.map((item) => (
-        <FurnitureMesh key={item.id} item={item} />
-      ))}
-
-      {/* Pajangan lorong tengah */}
-      {ARTWORKS.map((a) => (
-        <group key={a.id}>
-          <Box rect={{ x: a.x - 2, y: a.y - 16, w: 4, h: 32 }} height={22} y={14} color={a.color} emissive={a.color} />
-          <SmallLabel text={a.label} x={a.wall === "left" ? a.x + 18 : a.x - 22} y={a.y} height={44} />
-        </group>
-      ))}
-      {SIGNS.map((s) => (
-        <SmallLabel key={s.id} text={s.text} x={s.x} y={s.y} height={24} />
-      ))}
-
-      <Stairs />
-      <Floor2 />
-    </group>
-  );
 }

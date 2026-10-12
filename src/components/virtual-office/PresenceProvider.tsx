@@ -19,6 +19,7 @@ import {
   type ActionPayload,
   type AvatarActionKind,
   type EmotePayload,
+  type InteractPayload,
   type PresenceMeta,
   type PresenceStatus,
   type ResolvedPresence,
@@ -44,14 +45,20 @@ type ContextValue = {
   broadcastMove: (x: number, y: number, dir: Dir) => void;
   /** Emote/chat bubble ephemeral orang lain -- key userId, value kadaluarsa
    * sendiri lewat `at` (lihat EMOTE_DURATION_MS), dibaca per-frame oleh
-   * RemoteAvatar sama seperti remoteRef dipakai utk posisi live. */
+   * loop gambar avatar sama seperti remoteRef dipakai utk posisi live. */
   remoteEmoteRef: { current: Map<string, { content: string; at: number }> };
   broadcastEmote: (content: string) => void;
   /** Aksi gestur avatar orang lain (Opsi B, gap Oktober 2026) -- key
    * userId, value kadaluarsa sendiri lewat `at` (lihat ACTION_ANIM_MS),
-   * dibaca per-frame oleh RemoteAvatar sama seperti remoteEmoteRef. */
+   * dibaca per-frame sama seperti remoteEmoteRef. */
   remoteActionRef: { current: Map<string, { action: AvatarActionKind; at: number }> };
   broadcastAction: (action: AvatarActionKind) => void;
+  /** Perabot yang sedang dipakai orang lain (lihat interactions.ts) --
+   * key userId, value furnitureId atau null (tidak memakai apa-apa).
+   * BEDA dari remoteEmoteRef/remoteActionRef: ini status toggle, bukan
+   * animasi sesaat, jadi dibaca langsung tanpa cek kadaluarsa `at`. */
+  remoteInteractRef: { current: Map<string, string | null> };
+  broadcastInteract: (furnitureId: string | null) => void;
   myLook: AvatarLook;
   myStatus: PresenceStatus;
   /** Gabungkan field ke presence milik sendiri lalu track() ulang --
@@ -73,6 +80,7 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
   const remoteRef = useRef<Map<string, RemotePos>>(new Map());
   const remoteEmoteRef = useRef<Map<string, { content: string; at: number }>>(new Map());
   const remoteActionRef = useRef<Map<string, { action: AvatarActionKind; at: number }>>(new Map());
+  const remoteInteractRef = useRef<Map<string, string | null>>(new Map());
   const trackedRef = useRef<PresenceMeta>({ inOffice: false, status: null });
   const [onlineIds, setOnlineIds] = useState<string[]>([]);
   const [presenceMeta, setPresenceMeta] = useState<Map<string, ResolvedPresence>>(new Map());
@@ -104,6 +112,12 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
       remoteActionRef.current.set(p.id, { action: p.action, at: Date.now() });
     });
 
+    channel.on("broadcast", { event: "interact" }, ({ payload }) => {
+      const p = payload as InteractPayload;
+      if (p.id === userId) return;
+      remoteInteractRef.current.set(p.id, p.furnitureId);
+    });
+
     channel.on("presence", { event: "sync" }, () => {
       const state = channel.presenceState<PresenceMeta>();
       const ids = Object.keys(state);
@@ -120,6 +134,9 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
       setPresenceMeta(meta);
       for (const id of Array.from(remoteRef.current.keys())) {
         if (!ids.includes(id)) remoteRef.current.delete(id);
+      }
+      for (const id of Array.from(remoteInteractRef.current.keys())) {
+        if (!ids.includes(id)) remoteInteractRef.current.delete(id);
       }
     });
     channel.subscribe((status) => {
@@ -168,6 +185,13 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
     [userId]
   );
 
+  const broadcastInteract = useCallback(
+    (furnitureId: string | null) => {
+      channelRef.current?.send({ type: "broadcast", event: "interact", payload: { id: userId, furnitureId } });
+    },
+    [userId]
+  );
+
   const updatePresence = useCallback(
     (patch: Partial<Pick<PresenceMeta, "look" | "inOffice" | "status">>) => {
       trackedRef.current = { ...trackedRef.current, ...patch };
@@ -184,6 +208,7 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
       remoteRef,
       remoteEmoteRef,
       remoteActionRef,
+      remoteInteractRef,
       onlineIds,
       presenceMeta,
       myLook,
@@ -191,9 +216,10 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
       broadcastMove,
       broadcastEmote,
       broadcastAction,
+      broadcastInteract,
       updatePresence,
     }),
-    [onlineIds, presenceMeta, myLook, myStatus, broadcastMove, broadcastEmote, broadcastAction, updatePresence]
+    [onlineIds, presenceMeta, myLook, myStatus, broadcastMove, broadcastEmote, broadcastAction, broadcastInteract, updatePresence]
   );
 
   return <VirtualOfficePresenceContext.Provider value={value}>{children}</VirtualOfficePresenceContext.Provider>;

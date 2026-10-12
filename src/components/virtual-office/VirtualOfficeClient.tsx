@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
 import {
+  Armchair,
   BedDouble,
   ChevronDown,
   ChevronLeft,
@@ -17,10 +18,9 @@ import {
   Send,
   Smile,
   Users,
+  X as StopInteractIcon,
   Zap,
 } from "lucide-react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import * as THREE from "three";
 import { cn } from "@/lib/cn";
 import type { ChatRoom } from "@/lib/chat/rooms";
 import { CHAT_ROOM_LABELS } from "@/lib/chat/rooms";
@@ -31,6 +31,7 @@ import {
   AGENT_NPC_POSITIONS,
   FLOOR2_BOUNDS,
   FLOOR2_OFFSET_X,
+  FURNITURE,
   GROUND_BOUNDS,
   OWNER_DOOR_CENTER,
   OWNER_ROOM_USER_IDS,
@@ -48,6 +49,7 @@ import {
   resolveMove,
   sleepSlot,
   stairsTeleport,
+  type Furniture,
   type Pos,
   type RoomId,
 } from "@/lib/virtual-office/house";
@@ -62,30 +64,48 @@ import {
   type AvatarActionKind,
   type PresenceStatus,
 } from "@/lib/virtual-office/presence";
-import { HouseScene, toScene } from "./HouseScene";
+import { applyCameraTransform, drawFurnitureItem, drawGround, DEFAULT_CAMERA_SCALE, type Camera } from "./HouseScene";
+import { drawAgentNPC, drawAvatar, lerpTowards, type AvatarAction, type Dir, type RemotePos } from "./Avatars";
 import {
-  AgentNPC,
-  DeskAvatar,
-  PlayerAvatar,
-  RemoteAvatar,
-  SleeperAvatar,
-  type AvatarAction,
-  type Dir,
-  type RemotePos,
-} from "./Avatars";
+  findNearestInteractable,
+  furnitureById,
+  interactionStandPoint,
+  INTERACTION_BY_KIND,
+  INTERACTION_POSE_LABEL,
+  MOMENTARY_INTERACTION_MS,
+  type InteractableNearby,
+  type InteractionConfig,
+  type InteractionKind,
+} from "@/lib/virtual-office/interactions";
 import { CharacterEditor } from "./CharacterEditor";
 import { useVirtualOfficePresence } from "./PresenceProvider";
 
 /**
- * Kantor Virtual v4 -- "Rumah Magna" (denah & aturan di
- * src/lib/virtual-office/house.ts). Rekan yang sedang membuka aplikasi
- * tampil online dan berjalan di rumah; yang tidak membuka aplikasi tidur di
- * kasurnya di Kamar Staff. Tiap orang bisa mengubah karakternya sendiri.
+ * Kantor Virtual v5 -- "Rumah Magna" (denah & aturan di
+ * src/lib/virtual-office/house.ts). Render 2D Canvas (rewrite Oktober
+ * 2026 dari react-three-fiber, permintaan Owner: "diubah seperti gambar
+ * referensi, dibuat interaktif seperti game"). Rekan yang sedang membuka
+ * aplikasi tampil online dan berjalan di rumah; yang tidak membuka
+ * aplikasi tidur di kasurnya di Kamar Staff. Tiap orang bisa mengubah
+ * karakternya sendiri, dan sekarang juga bisa memakai hampir semua
+ * perabot (duduk/kerja/masak/nonton/menghangatkan diri -- lihat
+ * interactions.ts) yang langsung terlihat di avatar rekan lain juga.
  */
 
 const BROADCAST_INTERVAL_MS = 70;
 const INTERACTION_RADIUS = 55;
-const CAMERA_OFFSET = { x: 0, y: 260, z: 210 };
+
+/** Emoji kecil di atas kepala avatar saat memakai perabot -- lihat
+ * InteractionKind di interactions.ts. */
+const POSE_EMOJI: Record<InteractionKind, string> = {
+  duduk: "\u{1FA91}",
+  tidur: "\u{1F634}",
+  kerja: "\u{1F4BB}",
+  masak: "☕",
+  lihat: "\u{1F440}",
+  nonton: "\u{1F4FA}",
+  hangat: "\u{1F525}",
+};
 
 type CurrentUser = {
   id: string;
@@ -104,6 +124,12 @@ function pickChatTarget(me: Division, other: OfficeRosterEntry): { room: ChatRoo
   const room: ChatRoom =
     me === other.division && (me === "magnarent" || me === "magnative" || me === "production") ? me : "bersama";
   return { room, mention: other.username ?? undefined };
+}
+
+/** Tampilan rekan lain -- utamakan presence live (bisa beda dari data
+ * roster kalau orangnya baru ganti karakter) sama seperti sebelumnya. */
+function resolveLook(entry: OfficeRosterEntry, presenceMeta: Map<string, { look: AvatarLook }>): AvatarLook {
+  return presenceMeta.get(entry.id)?.look ?? entry.look;
 }
 
 export function VirtualOfficeClient({
@@ -127,9 +153,11 @@ export function VirtualOfficeClient({
     remoteRef,
     remoteEmoteRef,
     remoteActionRef,
+    remoteInteractRef,
     broadcastMove,
     broadcastEmote,
     broadcastAction,
+    broadcastInteract,
     myStatus,
     updatePresence,
   } = useVirtualOfficePresence();
@@ -150,7 +178,7 @@ export function VirtualOfficeClient({
   const [emoteDraft, setEmoteDraft] = useState("");
   const myEmoteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Aksi gestur (tonjok/tos/lambai, Opsi B gap Oktober 2026) -- beda dari
-  // emote: ini menggerakkan lengan avatar sungguhan (lihat ChibiAvatar di
+  // emote: ini menggerakkan lengan avatar sungguhan (lihat drawAvatar di
   // Avatars.tsx), bukan cuma bubble di atas kepala. `lastActionAtRef`
   // dipakai buat cooldown (ACTION_COOLDOWN_MS) supaya tombolnya tidak bisa
   // dispam -- disimpan di ref (bukan cuma dicek dari state) supaya klik
@@ -163,6 +191,48 @@ export function VirtualOfficeClient({
   const [toast, setToast] = useState<string | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevNearbyIdRef = useRef<string | null>(null);
+
+  // Interaksi perabot (Opsi B, laporan gap Oktober 2026: "semua perabot
+  // bisa dipakai, bukan cuma dekorasi"). myInteractionRef = sumber
+  // kebenaran yang dibaca loop gambar tiap frame (lihat efek canvas di
+  // bawah); state `myInteraction` cuma utk menggambar tombol UI-nya.
+  const myInteractionRef = useRef<{ furnitureId: string; kind: InteractionKind } | null>(null);
+  const interactionStartRef = useRef(0);
+  const [myInteraction, setMyInteraction] = useState<{ furnitureId: string; kind: InteractionKind } | null>(null);
+  const [nearestInteractable, setNearestInteractable] = useState<InteractableNearby | null>(null);
+
+  const startInteraction = useCallback(
+    (item: Furniture, config: InteractionConfig) => {
+      const next = { furnitureId: item.id, kind: config.kind };
+      myInteractionRef.current = next;
+      interactionStartRef.current = Date.now();
+      setMyInteraction(next);
+      broadcastInteract(item.id);
+    },
+    [broadcastInteract]
+  );
+
+  const stopInteraction = useCallback(() => {
+    myInteractionRef.current = null;
+    setMyInteraction(null);
+    broadcastInteract(null);
+  }, [broadcastInteract]);
+
+  // Canvas 2D (rewrite Oktober 2026 dari react-three-fiber) -- state
+  // kamera & bantuan smoothing utk loop gambar di efek besar di bawah.
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cameraRef = useRef<Camera>({ x: SPAWN.x, y: SPAWN.y, scale: DEFAULT_CAMERA_SCALE });
+  const cameraReadyRef = useRef(false);
+  const cssSizeRef = useRef({ w: 0, h: 0 });
+  const dprRef = useRef(1);
+  const walkPhaseRef = useRef(0);
+  const smoothPosRef = useRef<Map<string, Pos>>(new Map());
+  const lastBroadcastRef = useRef(0);
+  const lastRoomRef = useRef<RoomId | undefined | null>(null);
+  const lastNearbyRef = useRef<string | null>(null);
+  const lastAgentRef = useRef<string | null>(null);
+  const lastDoorRef = useRef(false);
+  const lastInteractableIdRef = useRef<string | null>(null);
 
   // Begitu halaman Kantor Virtual dibuka, tandai presence sendiri
   // "inOffice: true" (avatar ikut berjalan live di peta semua orang) --
@@ -262,7 +332,7 @@ export function VirtualOfficeClient({
   }, []);
 
   // Toast "X mendekat" -- numpang pada deteksi `nearby` yang sudah ada di
-  // GameLoop (jarak terdekat ke rekan di peta), cuma muncul sekali per
+  // loop gambar (jarak terdekat ke rekan di peta), cuma muncul sekali per
   // transisi null->seseorang atau ganti orang, bukan tiap re-render.
   useEffect(() => {
     if (nearby) {
@@ -303,7 +373,323 @@ export function VirtualOfficeClient({
   );
   const othersInOffice = onlineIds.filter((id) => id !== currentUser.id && presenceMeta.get(id)?.inOffice);
   const othersElsewhere = onlineIds.filter((id) => id !== currentUser.id && !presenceMeta.get(id)?.inOffice);
-  const lookFor = (entry: OfficeRosterEntry) => presenceMeta.get(entry.id)?.look ?? entry.look;
+
+  // "Nilai hidup" yang berubah tiap render tapi dibaca dari dalam loop
+  // requestAnimationFrame yang di-mount SEKALI (lihat efek canvas di
+  // bawah) -- ditulis ulang langsung di body render (bukan di dalam
+  // effect) supaya loop selalu baca nilai terbaru tanpa perlu restart
+  // animasinya tiap kali ada state yang berubah (pola "latest ref").
+  const liveRef = useRef({
+    look,
+    myEmote,
+    myStatus,
+    myAction,
+    fullName: currentUser.fullName,
+    rosterById,
+    presenceMeta,
+    blockers,
+    isOwner,
+    othersInOffice,
+    othersElsewhere,
+    sleepers,
+  });
+  liveRef.current = {
+    look,
+    myEmote,
+    myStatus,
+    myAction,
+    fullName: currentUser.fullName,
+    rosterById,
+    presenceMeta,
+    blockers,
+    isOwner,
+    othersInOffice,
+    othersElsewhere,
+    sleepers,
+  };
+
+  // Loop utama: gerak + tabrakan + broadcast posisi + deteksi ruangan/
+  // rekan/NPC/pintu/perabot + kamera + gambar ulang canvas tiap frame.
+  // Di-mount SEKALI (bukan tiap render, beda dari <GameLoop> versi R3F
+  // sebelumnya yang re-render React biasa) -- nilai yang berubah dibaca
+  // lewat refs/liveRef di atas, bukan lewat closure React normal.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    // Alias ber-tipe non-null -- TypeScript tidak mempertahankan hasil
+    // narrowing `if (!x) return` di atas ke dalam closure fungsi bersarang
+    // (resize/draw) di bawah, jadi dialihkan ke const baru yang tipenya
+    // memang sudah non-null dari awal.
+    const canvasEl: HTMLCanvasElement = canvas;
+    const ctx2: CanvasRenderingContext2D = ctx;
+
+    let raf = 0;
+    let lastTime = performance.now();
+    dprRef.current = Math.min(window.devicePixelRatio || 1, 2);
+
+    function resize() {
+      const rect = canvasEl.getBoundingClientRect();
+      const w = Math.max(1, Math.round(rect.width));
+      const h = Math.max(1, Math.round(rect.height));
+      cssSizeRef.current = { w, h };
+      const targetW = Math.round(w * dprRef.current);
+      const targetH = Math.round(h * dprRef.current);
+      if (canvasEl.width !== targetW || canvasEl.height !== targetH) {
+        canvasEl.width = targetW;
+        canvasEl.height = targetH;
+      }
+    }
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(canvasEl);
+
+    function draw(now: number) {
+      const { w, h } = cssSizeRef.current;
+      if (w === 0 || h === 0) return;
+      const live = liveRef.current;
+
+      ctx2.setTransform(1, 0, 0, 1, 0, 0);
+      ctx2.fillStyle = "#05070d";
+      ctx2.fillRect(0, 0, canvasEl.width, canvasEl.height);
+
+      applyCameraTransform(ctx2, cameraRef.current, dprRef.current, w, h);
+      drawGround(ctx2, { ownerDoorOpen: live.isOwner });
+
+      type Sortable = { sortY: number; render: () => void };
+      const items: Sortable[] = [];
+
+      for (const f of FURNITURE) {
+        items.push({ sortY: f.rect.y + f.rect.h, render: () => drawFurnitureItem(ctx2, f, now) });
+      }
+
+      const myInteract = myInteractionRef.current;
+      const myItem = myInteract ? furnitureById(FURNITURE, myInteract.furnitureId) : null;
+      const myDrawPos = myItem ? interactionStandPoint(myItem) : posRef.current;
+      items.push({
+        sortY: myDrawPos.y,
+        render: () =>
+          drawAvatar(ctx2, {
+            x: myDrawPos.x,
+            y: myDrawPos.y,
+            dir: dirRef.current,
+            look: live.look,
+            label: `${firstName(live.fullName)} (Kamu)`,
+            isSelf: true,
+            emote: live.myEmote,
+            status: live.myStatus,
+            action: live.myAction,
+            walkPhase: walkPhaseRef.current,
+            poseEmoji: myInteract ? POSE_EMOJI[myInteract.kind] : null,
+          }),
+      });
+
+      for (const id of live.othersInOffice) {
+        const entry = live.rosterById.get(id);
+        if (!entry) continue;
+        const target = remoteRef.current.get(id);
+        const prevSmoothed = smoothPosRef.current.get(id) ?? { x: target?.x ?? SPAWN.x, y: target?.y ?? SPAWN.y };
+        const smoothed = lerpTowards(prevSmoothed, { x: target?.x ?? prevSmoothed.x, y: target?.y ?? prevSmoothed.y }, 0.22);
+        smoothPosRef.current.set(id, smoothed);
+
+        const interactFurnitureId = remoteInteractRef.current.get(id) ?? null;
+        const interactItem = interactFurnitureId ? furnitureById(FURNITURE, interactFurnitureId) : null;
+        const drawPos = interactItem ? interactionStandPoint(interactItem) : smoothed;
+        const interactKind = interactItem ? INTERACTION_BY_KIND[interactItem.kind]?.kind ?? null : null;
+
+        const e = remoteEmoteRef.current.get(id);
+        const emoteText = e && now - e.at < EMOTE_DURATION_MS ? e.content : null;
+        const a = remoteActionRef.current.get(id);
+        const actionObj = a ? { kind: a.action, at: a.at } : null;
+
+        items.push({
+          sortY: drawPos.y,
+          render: () =>
+            drawAvatar(ctx2, {
+              x: drawPos.x,
+              y: drawPos.y,
+              dir: target?.dir ?? "down",
+              look: resolveLook(entry, live.presenceMeta),
+              label: firstName(entry.fullName),
+              status: live.presenceMeta.get(id)?.status,
+              emote: emoteText,
+              action: actionObj,
+              poseEmoji: interactKind ? POSE_EMOJI[interactKind] : null,
+            }),
+        });
+      }
+
+      for (const id of live.othersElsewhere) {
+        const entry = live.rosterById.get(id);
+        if (!entry) continue;
+        const desk = deskForDivision(entry.division);
+        items.push({
+          sortY: desk.y,
+          render: () =>
+            drawAvatar(ctx2, {
+              x: desk.x,
+              y: desk.y,
+              dir: "down",
+              look: resolveLook(entry, live.presenceMeta),
+              label: firstName(entry.fullName),
+              status: live.presenceMeta.get(id)?.status,
+            }),
+        });
+      }
+
+      live.sleepers.forEach((entry, i) => {
+        const slot = sleepSlot(i);
+        if (!slot) return;
+        items.push({
+          sortY: slot.y,
+          render: () =>
+            drawAvatar(ctx2, {
+              x: slot.x,
+              y: slot.y,
+              dir: "down",
+              look: entry.look,
+              label: firstName(entry.fullName),
+              sleeping: true,
+            }),
+        });
+      });
+
+      for (const npc of AGENT_NPC_POSITIONS) {
+        const agent = getAgentById(npc.agentId);
+        if (!agent) continue;
+        items.push({ sortY: npc.y, render: () => drawAgentNPC(ctx2, agent, npc.x, npc.y, now / 1000) });
+      }
+
+      items.sort((a, b) => a.sortY - b.sortY);
+      for (const it of items) it.render();
+      ctx2.setTransform(1, 0, 0, 1, 0, 0);
+    }
+
+    function step(dt: number, now: number) {
+      const live = liveRef.current;
+      const keys = keysRef.current;
+      let vx = 0;
+      let vy = 0;
+      if (keys.has("arrowup") || keys.has("w")) vy -= 1;
+      if (keys.has("arrowdown") || keys.has("s")) vy += 1;
+      if (keys.has("arrowleft") || keys.has("a")) vx -= 1;
+      if (keys.has("arrowright") || keys.has("d")) vx += 1;
+      const trying = vx !== 0 || vy !== 0;
+
+      // Jalan = otomatis berhenti dari interaksi (toggle) -- pemain tidak
+      // perlu klik tombol "Berhenti" dulu, sama seperti kebanyakan game.
+      if (trying && myInteractionRef.current) stopInteraction();
+
+      let teleported = false;
+      let moving = false;
+      if (trying && !myInteractionRef.current) {
+        const len = Math.hypot(vx, vy) || 1;
+        const speed = keys.has("shift") ? PLAYER_SPEED * SPRINT_MULTIPLIER : PLAYER_SPEED;
+        const next = resolveMove(posRef.current, (vx / len) * speed * dt, (vy / len) * speed * dt, live.blockers);
+        moving = next.x !== posRef.current.x || next.y !== posRef.current.y;
+        posRef.current = next;
+        dirRef.current = Math.abs(vx) > Math.abs(vy) ? (vx > 0 ? "right" : "left") : vy > 0 ? "down" : "up";
+        const tp = stairsTeleport(posRef.current);
+        if (tp) {
+          posRef.current = tp;
+          teleported = true;
+        }
+      }
+      walkPhaseRef.current = moving ? walkPhaseRef.current + dt * 12 : 0;
+
+      if (teleported || now - lastBroadcastRef.current > BROADCAST_INTERVAL_MS) {
+        lastBroadcastRef.current = now;
+        broadcastMove(posRef.current.x, posRef.current.y, dirRef.current);
+      }
+
+      const { x, y } = posRef.current;
+      const rid = getRoomAt(x, y)?.id;
+      if (rid !== lastRoomRef.current) {
+        lastRoomRef.current = rid;
+        setRoomId(rid);
+      }
+
+      let closestId: string | null = null;
+      let closestDist = INTERACTION_RADIUS;
+      for (const [id, rp] of remoteRef.current.entries()) {
+        const d = Math.hypot(rp.x - x, rp.y - y);
+        if (d < closestDist) {
+          closestDist = d;
+          closestId = id;
+        }
+      }
+      if (closestId !== lastNearbyRef.current) {
+        lastNearbyRef.current = closestId;
+        setNearby(closestId ? live.rosterById.get(closestId) ?? null : null);
+      }
+
+      let agentId: string | null = null;
+      let agentDist = INTERACTION_RADIUS;
+      for (const npc of AGENT_NPC_POSITIONS) {
+        const d = Math.hypot(npc.x - x, npc.y - y);
+        if (d < agentDist) {
+          agentDist = d;
+          agentId = npc.agentId;
+        }
+      }
+      if (agentId !== lastAgentRef.current) {
+        lastAgentRef.current = agentId;
+        setNearbyAgent(agentId ? getAgentById(agentId) ?? null : null);
+      }
+
+      const nearDoor = Math.hypot(OWNER_DOOR_CENTER.x - x, OWNER_DOOR_CENTER.y - y) < 50;
+      if (nearDoor !== lastDoorRef.current) {
+        lastDoorRef.current = nearDoor;
+        setNearOwnerDoor(nearDoor);
+      }
+
+      if (myInteractionRef.current) {
+        const item = furnitureById(FURNITURE, myInteractionRef.current.furnitureId);
+        const config = item ? INTERACTION_BY_KIND[item.kind] : undefined;
+        if (config?.momentary && now - interactionStartRef.current > MOMENTARY_INTERACTION_MS) {
+          stopInteraction();
+        }
+        if (lastInteractableIdRef.current !== null) {
+          lastInteractableIdRef.current = null;
+          setNearestInteractable(null);
+        }
+      } else {
+        const near = findNearestInteractable(posRef.current, FURNITURE);
+        const nearId = near?.furniture.id ?? null;
+        if (nearId !== lastInteractableIdRef.current) {
+          lastInteractableIdRef.current = nearId;
+          setNearestInteractable(near);
+        }
+      }
+
+      const cam = cameraRef.current;
+      if (!cameraReadyRef.current || teleported) {
+        cam.x = x;
+        cam.y = y;
+        cameraReadyRef.current = true;
+      } else {
+        cam.x += (x - cam.x) * 0.12;
+        cam.y += (y - cam.y) * 0.12;
+      }
+
+      draw(now);
+    }
+
+    function frame(now: number) {
+      const dt = Math.min((now - lastTime) / 1000, 0.05);
+      lastTime = now;
+      step(dt, now);
+      raf = requestAnimationFrame(frame);
+    }
+    raf = requestAnimationFrame(frame);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const room = roomId ? getRoom(roomId) : null;
   const roomChat = chatRoomFor(roomId, currentUser.division);
@@ -383,83 +769,7 @@ export function VirtualOfficeClient({
       )}
 
       <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl" style={{ aspectRatio: "16 / 10" }}>
-        <Canvas style={{ width: "100%", height: "100%", display: "block" }} dpr={[1, 2]} gl={{ antialias: true }} camera={{ fov: 45, near: 1, far: 4000 }}>
-          <color attach="background" args={["#0b1120"]} />
-          <ambientLight intensity={0.55} />
-          <directionalLight position={[300, 500, 300]} intensity={0.9} color="#fff7e6" />
-          <directionalLight position={[-300, 300, -200]} intensity={0.3} color="#bfdbfe" />
-          <hemisphereLight args={["#cbd5e1", "#14532d", 0.35]} />
-
-          <HouseScene ownerDoorOpen={isOwner} />
-
-          <PlayerAvatar
-            posRef={posRef}
-            dirRef={dirRef}
-            look={look}
-            label={`${firstName(currentUser.fullName)} (Kamu)`}
-            emote={myEmote}
-            status={myStatus}
-            action={myAction}
-          />
-
-          {othersInOffice.map((id) => {
-            const entry = rosterById.get(id);
-            if (!entry) return null;
-            return (
-              <RemoteAvatar
-                key={id}
-                id={id}
-                remoteRef={remoteRef}
-                remoteEmoteRef={remoteEmoteRef}
-                remoteActionRef={remoteActionRef}
-                look={lookFor(entry)}
-                label={firstName(entry.fullName)}
-                status={presenceMeta.get(id)?.status}
-              />
-            );
-          })}
-
-          {othersElsewhere.map((id) => {
-            const entry = rosterById.get(id);
-            if (!entry) return null;
-            const desk = deskForDivision(entry.division);
-            return (
-              <DeskAvatar
-                key={id}
-                x={desk.x}
-                y={desk.y}
-                look={lookFor(entry)}
-                label={firstName(entry.fullName)}
-                status={presenceMeta.get(id)?.status}
-              />
-            );
-          })}
-
-          {sleepers.map((entry, i) => {
-            const slot = sleepSlot(i);
-            if (!slot) return null;
-            return <SleeperAvatar key={entry.id} x={slot.x} y={slot.y} level={slot.level} look={entry.look} label={firstName(entry.fullName)} />;
-          })}
-
-          {AGENT_NPC_POSITIONS.map((npc) => {
-            const agent = getAgentById(npc.agentId);
-            return agent ? <AgentNPC key={npc.agentId} agent={agent} x={npc.x} y={npc.y} /> : null;
-          })}
-
-          <GameLoop
-            keysRef={keysRef}
-            posRef={posRef}
-            dirRef={dirRef}
-            broadcastMove={broadcastMove}
-            remoteRef={remoteRef}
-            blockers={blockers}
-            rosterById={rosterById}
-            setRoomId={setRoomId}
-            setNearby={setNearby}
-            setNearbyAgent={setNearbyAgent}
-            setNearOwnerDoor={setNearOwnerDoor}
-          />
-        </Canvas>
+        <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
 
         <div className="absolute left-3 bottom-3 flex flex-col items-start gap-2">
           {emotePickerOpen && (
@@ -532,6 +842,27 @@ export function VirtualOfficeClient({
               Chat dengan {firstName(nearby.fullName)}
             </Link>
           )}
+          {myInteraction ? (
+            <button
+              type="button"
+              onClick={stopInteraction}
+              className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-amber-400 px-5 py-2.5 text-sm font-bold text-slate-900 shadow-lg"
+            >
+              <StopInteractIcon className="h-4 w-4" />
+              Berhenti {INTERACTION_POSE_LABEL[myInteraction.kind]}
+            </button>
+          ) : (
+            nearestInteractable && (
+              <button
+                type="button"
+                onClick={() => startInteraction(nearestInteractable.furniture, nearestInteractable.config)}
+                className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-bold text-slate-900 shadow-lg"
+              >
+                <Armchair className="h-4 w-4" />
+                {nearestInteractable.config.verb(nearestInteractable.furniture.label ?? "")}
+              </button>
+            )
+          )}
           {nearby && (
             <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-black/60 p-1.5 shadow-lg backdrop-blur">
               {QUICK_ACTIONS.map((a) => (
@@ -564,7 +895,7 @@ export function VirtualOfficeClient({
         </div>
 
         <div className="absolute right-3 top-3 hidden rounded-lg bg-black/50 px-3 py-1.5 text-[11px] text-white/70 sm:block">
-          WASD / panah untuk berjalan (tahan Shift untuk lari) · dekati rekan atau NPC untuk interaksi
+          WASD / panah untuk berjalan (tahan Shift untuk lari) · dekati rekan, NPC, atau perabot untuk berinteraksi
         </div>
 
         <Minimap posRef={posRef} remoteRef={remoteRef} othersInOffice={othersInOffice} />
@@ -589,10 +920,10 @@ export function VirtualOfficeClient({
   );
 }
 
-/** Minimap ringan: cuma kotak ruangan dari ROOMS (data, bukan render 3D)
- * + titik posisi sendiri & rekan yang sedang di Kantor Virtual. Update
- * posisi lewat interval singkat (bukan re-render React tiap frame) --
- * cukup utk kebutuhan "jangan nyasar", tidak perlu presisi 60fps. */
+/** Minimap ringan: cuma kotak ruangan dari ROOMS (data, bukan render
+ * canvas) + titik posisi sendiri & rekan yang sedang di Kantor Virtual.
+ * Update posisi lewat interval singkat (bukan re-render React tiap frame)
+ * -- cukup utk kebutuhan "jangan nyasar", tidak perlu presisi 60fps. */
 const MINIMAP_W = 92;
 const MINIMAP_H = 108;
 
@@ -681,121 +1012,4 @@ function DpadButton({ icon: Icon, label, onPress }: { icon: typeof ChevronUp; la
       <Icon className="h-6 w-6" />
     </button>
   );
-}
-
-function GameLoop({
-  keysRef,
-  posRef,
-  dirRef,
-  broadcastMove,
-  remoteRef,
-  blockers,
-  rosterById,
-  setRoomId,
-  setNearby,
-  setNearbyAgent,
-  setNearOwnerDoor,
-}: {
-  keysRef: { current: Set<string> };
-  posRef: { current: Pos };
-  dirRef: { current: Dir };
-  broadcastMove: (x: number, y: number, dir: Dir) => void;
-  remoteRef: { current: Map<string, RemotePos> };
-  blockers: ReturnType<typeof blockersFor>;
-  rosterById: Map<string, OfficeRosterEntry>;
-  setRoomId: (id: RoomId | undefined) => void;
-  setNearby: (entry: OfficeRosterEntry | null) => void;
-  setNearbyAgent: (agent: AIAgent | null) => void;
-  setNearOwnerDoor: (near: boolean) => void;
-}) {
-  const cameraReadyRef = useRef(false);
-  const lastBroadcastRef = useRef(0);
-  const lastRoomRef = useRef<RoomId | undefined | null>(null);
-  const lastNearbyRef = useRef<string | null>(null);
-  const lastAgentRef = useRef<string | null>(null);
-  const lastDoorRef = useRef(false);
-  const camTargetRef = useRef(new THREE.Vector3());
-
-  useFrame((state, delta) => {
-    const dt = Math.min(delta, 0.05);
-    const keys = keysRef.current;
-    let vx = 0;
-    let vy = 0;
-    if (keys.has("arrowup") || keys.has("w")) vy -= 1;
-    if (keys.has("arrowdown") || keys.has("s")) vy += 1;
-    if (keys.has("arrowleft") || keys.has("a")) vx -= 1;
-    if (keys.has("arrowright") || keys.has("d")) vx += 1;
-
-    let teleported = false;
-    if (vx !== 0 || vy !== 0) {
-      const len = Math.hypot(vx, vy) || 1;
-      const speed = keys.has("shift") ? PLAYER_SPEED * SPRINT_MULTIPLIER : PLAYER_SPEED;
-      posRef.current = resolveMove(posRef.current, (vx / len) * speed * dt, (vy / len) * speed * dt, blockers);
-      dirRef.current = Math.abs(vx) > Math.abs(vy) ? (vx > 0 ? "right" : "left") : vy > 0 ? "down" : "up";
-      const next = stairsTeleport(posRef.current);
-      if (next) {
-        posRef.current = next;
-        teleported = true;
-      }
-    }
-
-    const now = performance.now();
-    if (teleported || now - lastBroadcastRef.current > BROADCAST_INTERVAL_MS) {
-      lastBroadcastRef.current = now;
-      broadcastMove(posRef.current.x, posRef.current.y, dirRef.current);
-    }
-
-    const { x, y } = posRef.current;
-    const roomId = getRoomAt(x, y)?.id;
-    if (roomId !== lastRoomRef.current) {
-      lastRoomRef.current = roomId;
-      setRoomId(roomId);
-    }
-
-    let closestId: string | null = null;
-    let closestDist = INTERACTION_RADIUS;
-    for (const [id, rp] of remoteRef.current.entries()) {
-      const d = Math.hypot(rp.x - x, rp.y - y);
-      if (d < closestDist) {
-        closestDist = d;
-        closestId = id;
-      }
-    }
-    if (closestId !== lastNearbyRef.current) {
-      lastNearbyRef.current = closestId;
-      setNearby(closestId ? rosterById.get(closestId) ?? null : null);
-    }
-
-    let agentId: string | null = null;
-    let agentDist = INTERACTION_RADIUS;
-    for (const npc of AGENT_NPC_POSITIONS) {
-      const d = Math.hypot(npc.x - x, npc.y - y);
-      if (d < agentDist) {
-        agentDist = d;
-        agentId = npc.agentId;
-      }
-    }
-    if (agentId !== lastAgentRef.current) {
-      lastAgentRef.current = agentId;
-      setNearbyAgent(agentId ? getAgentById(agentId) ?? null : null);
-    }
-
-    const nearDoor = Math.hypot(OWNER_DOOR_CENTER.x - x, OWNER_DOOR_CENTER.y - y) < 50;
-    if (nearDoor !== lastDoorRef.current) {
-      lastDoorRef.current = nearDoor;
-      setNearOwnerDoor(nearDoor);
-    }
-
-    const [sx, sy, sz] = toScene(x, y);
-    camTargetRef.current.set(sx + CAMERA_OFFSET.x, sy + CAMERA_OFFSET.y, sz + CAMERA_OFFSET.z);
-    if (!cameraReadyRef.current || teleported) {
-      state.camera.position.copy(camTargetRef.current);
-      cameraReadyRef.current = true;
-    } else {
-      state.camera.position.lerp(camTargetRef.current, 0.08);
-    }
-    state.camera.lookAt(sx, sy + 20, sz);
-  });
-
-  return null;
 }

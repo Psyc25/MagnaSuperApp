@@ -1,428 +1,254 @@
 "use client";
 
-import { Suspense, forwardRef, useRef, useState } from "react";
-import { useFrame } from "@react-three/fiber";
-import { Billboard, Text } from "@react-three/drei";
-import * as THREE from "three";
 import type { AIAgent } from "@/lib/ai/agents";
 import type { AvatarLook } from "@/lib/virtual-office/avatar-look";
-import { SPAWN, type Dir, type Pos, type RemotePos } from "@/lib/virtual-office/house";
-import {
-  ACTION_ANIM_MS,
-  EMOTE_DURATION_MS,
-  STATUS_COLORS,
-  type AvatarActionKind,
-  type PresenceStatus,
-} from "@/lib/virtual-office/presence";
-import { toScene } from "./HouseScene";
+import type { Dir, Pos, RemotePos } from "@/lib/virtual-office/house";
+import { ACTION_ANIM_MS, STATUS_COLORS, type AvatarActionKind, type PresenceStatus } from "@/lib/virtual-office/presence";
+import { chunkyCircle, chunkyRect, outlinedText, roundRectPath } from "./draw2d";
 
 // Re-export supaya kode lama yang mengimpor Dir/RemotePos dari "./Avatars"
 // (bukan langsung dari house.ts) tidak perlu diubah.
 export type { Dir, RemotePos };
 
-const DIR_VECTORS: Record<Dir, { x: number; z: number }> = {
-  up: { x: 0, z: -1 },
-  down: { x: 0, z: 1 },
-  left: { x: -1, z: 0 },
-  right: { x: 1, z: 0 },
-};
-
-export function dirToRadians(dir: Dir): number {
-  const v = DIR_VECTORS[dir];
-  return Math.atan2(v.x, v.z);
-}
-
-function Hair({ look }: { look: AvatarLook }) {
-  switch (look.hairStyle) {
-    case "botak":
-      return null;
-    case "pendek":
-      return (
-        <mesh position={[0, 41, -1]}>
-          <sphereGeometry args={[12.6, 18, 18, 0, Math.PI * 2, 0, Math.PI / 2]} />
-          <meshStandardMaterial color={look.hair} />
-        </mesh>
-      );
-    case "panjang":
-      return (
-        <group>
-          <mesh position={[0, 41, -1]}>
-            <sphereGeometry args={[12.8, 18, 18, 0, Math.PI * 2, 0, Math.PI / 2]} />
-            <meshStandardMaterial color={look.hair} />
-          </mesh>
-          <mesh position={[0, 30, -7]}>
-            <boxGeometry args={[22, 22, 6]} />
-            <meshStandardMaterial color={look.hair} />
-          </mesh>
-        </group>
-      );
-    case "topi":
-      return (
-        <group>
-          <mesh position={[0, 46, 0]}>
-            <cylinderGeometry args={[12, 12.5, 8, 18]} />
-            <meshStandardMaterial color={look.hair} />
-          </mesh>
-          <mesh position={[0, 42.5, 9]}>
-            <boxGeometry args={[18, 1.5, 10]} />
-            <meshStandardMaterial color={look.hair} />
-          </mesh>
-        </group>
-      );
-    case "hijab":
-      // Bola terbuka di bagian depan supaya wajah tetap terlihat, ditambah
-      // kain yang jatuh ke bahu.
-      return (
-        <group>
-          <mesh position={[0, 38, 0]}>
-            <sphereGeometry args={[13.6, 20, 20, Math.PI / 2 + 0.85, Math.PI * 2 - 1.7]} />
-            <meshStandardMaterial color={look.hair} side={THREE.DoubleSide} />
-          </mesh>
-          <mesh position={[0, 25, 0]}>
-            <cylinderGeometry args={[11, 15, 8, 18]} />
-            <meshStandardMaterial color={look.hair} />
-          </mesh>
-        </group>
-      );
-    default:
-      return null;
-  }
-}
-
-function Accessory({ look }: { look: AvatarLook }) {
-  if (look.accessory === "kacamata") {
-    return (
-      <group>
-        {[-5, 5].map((x) => (
-          <mesh key={x} position={[x, 36, 12.6]}>
-            <torusGeometry args={[3.2, 0.7, 6, 16]} />
-            <meshStandardMaterial color="#111827" />
-          </mesh>
-        ))}
-        <mesh position={[0, 36, 12.6]}>
-          <boxGeometry args={[3, 0.8, 0.8]} />
-          <meshStandardMaterial color="#111827" />
-        </mesh>
-      </group>
-    );
-  }
-  if (look.accessory === "headphone") {
-    return (
-      <group>
-        <mesh position={[0, 38, 0]} rotation={[0, 0, 0]}>
-          <torusGeometry args={[13.5, 1.4, 6, 20, Math.PI]} />
-          <meshStandardMaterial color="#111827" />
-        </mesh>
-        {[-13, 13].map((x) => (
-          <mesh key={x} position={[x, 36, 0]}>
-            <boxGeometry args={[4, 8, 7]} />
-            <meshStandardMaterial color="#374151" />
-          </mesh>
-        ))}
-      </group>
-    );
-  }
-  return null;
-}
-
 /** Satu aksi gestur yang sedang/baru dipicu -- `at` dibandingkan ke
- * `Date.now()` tiap frame, jadi animasinya berhenti sendiri setelah
- * ACTION_ANIM_MS tanpa perlu effect/timeout terpisah untuk membersihkan
- * rotasi lengan. */
+ * `Date.now()` tiap frame di drawAvatar, jadi animasinya berhenti sendiri
+ * setelah ACTION_ANIM_MS tanpa perlu effect/timeout terpisah. */
 export type AvatarAction = { kind: AvatarActionKind; at: number };
 
-/** Karakter chibi. `sleeping`: rebah telentang (dipakai di Kamar Staff).
- * `emote`: teks/emoji ephemeral yang numpang tampil di atas kepala (lihat
- * presence.ts EMOTE_DURATION_MS) -- null/undefined = tidak ada bubble.
- * `status`: dot warna available/meeting/fokus di bahu kanan -- tidak
- * tampil kalau sleeping (offline tidak punya status). `action`: gestur
- * tonjok/tos/lambai (Opsi B gap Oktober 2026) -- menggerakkan lengan
- * sungguhan selama ACTION_ANIM_MS lewat useFrame di bawah, bukan cuma
- * ikon di atas kepala. */
-export const ChibiAvatar = forwardRef<
-  THREE.Group,
-  {
-    look: AvatarLook;
-    label: string;
-    isSelf?: boolean;
-    sleeping?: boolean;
-    emote?: string | null;
-    status?: PresenceStatus | null;
-    action?: AvatarAction | null;
-  }
->(function ChibiAvatar({ look, label, isSelf = false, sleeping = false, emote = null, status = null, action = null }, ref) {
-  // Lengan dibungkus group tersendiri dengan pivot di bahu (position y=23,
-  // mesh-nya digeser -6 supaya posisi visual diam identik dengan sebelum
-  // ada animasi) -- rotasi lengan jadi berputar dari bahu, bukan dari
-  // tengah kapsul, supaya gestur kelihatan natural.
-  const leftArmRef = useRef<THREE.Group>(null);
-  const rightArmRef = useRef<THREE.Group>(null);
+const DIR_VECTOR: Record<Dir, { x: number; y: number }> = {
+  up: { x: 0, y: -1 },
+  down: { x: 0, y: 1 },
+  left: { x: -1, y: 0 },
+  right: { x: 1, y: 0 },
+};
 
-  useFrame(() => {
-    if (sleeping) return;
-    const left = leftArmRef.current;
-    const right = rightArmRef.current;
-    if (!left || !right) return;
+/** Posisi mata & hidung per arah hadap -- top-down, jadi wajah cuma
+ * digeser ke sisi yang dituju (bukan rotasi sprite penuh). */
+const FACE_OFFSETS: Record<Dir, { eyeL: [number, number]; eyeR: [number, number]; nose: [number, number] }> = {
+  up: { eyeL: [-3, -3], eyeR: [3, -3], nose: [0, -5] },
+  down: { eyeL: [-3, 2], eyeR: [3, 2], nose: [0, 5] },
+  left: { eyeL: [-4, -1], eyeR: [-4, 3], nose: [-6, 1] },
+  right: { eyeL: [4, -1], eyeR: [4, 3], nose: [6, 1] },
+};
 
-    const elapsed = action ? Date.now() - action.at : Infinity;
-    if (!action || elapsed < 0 || elapsed >= ACTION_ANIM_MS) {
-      left.rotation.set(0, 0, 0);
-      right.rotation.set(0, 0, 0);
+/** Posisi berpindah per frame (lerp) dari avatar rekan lain -- langsung
+ * loncat kalau jaraknya jauh (pindah lantai lewat tangga = teleport,
+ * bukan meluncur melintasi peta). Pengganti THREE.Vector3.lerp. */
+export function lerpTowards(current: Pos, target: Pos, t: number, teleportDistance = 300): Pos {
+  const dx = target.x - current.x;
+  const dy = target.y - current.y;
+  if (Math.hypot(dx, dy) > teleportDistance) return { ...target };
+  return { x: current.x + dx * t, y: current.y + dy * t };
+}
+
+function drawHair(ctx: CanvasRenderingContext2D, x: number, y: number, look: AvatarLook): void {
+  switch (look.hairStyle) {
+    case "botak":
       return;
-    }
+    case "pendek":
+      chunkyRect(ctx, x - 9, y - 9, 18, 7, look.hair, { shadow: false, radius: 5 });
+      return;
+    case "panjang":
+      chunkyRect(ctx, x - 9, y - 9, 18, 7, look.hair, { shadow: false, radius: 5 });
+      chunkyRect(ctx, x - 10, y - 2, 20, 10, look.hair, { shadow: false, radius: 3 });
+      return;
+    case "topi":
+      chunkyRect(ctx, x - 10, y - 11, 20, 8, look.hair, { shadow: false, radius: 4 });
+      chunkyRect(ctx, x - 6, y - 5, 18, 3, look.hair, { shadow: false, radius: 1.5 });
+      return;
+    case "hijab":
+      // Kain penuh menutup kepala+bahu -- cukup utk gaya chibi top-down,
+      // tidak perlu bukaan depan presisi seperti versi 3D.
+      chunkyCircle(ctx, x, y - 3, 12, look.hair, { shadow: false });
+      chunkyRect(ctx, x - 11, y + 2, 22, 10, look.hair, { shadow: false, radius: 4 });
+      return;
+    default:
+      return;
+  }
+}
 
-    const t = elapsed / ACTION_ANIM_MS;
-    const envelope = Math.sin(t * Math.PI); // 0 -> 1 -> 0 selama satu aksi
+function drawAccessory(ctx: CanvasRenderingContext2D, x: number, y: number, look: AvatarLook): void {
+  if (look.accessory === "kacamata") {
+    ctx.save();
+    ctx.strokeStyle = "#111827";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(x - 3, y + 1, 2.6, 0, Math.PI * 2);
+    ctx.arc(x + 3, y + 1, 2.6, 0, Math.PI * 2);
+    ctx.moveTo(x - 0.6, y + 1);
+    ctx.lineTo(x + 0.6, y + 1);
+    ctx.stroke();
+    ctx.restore();
+  } else if (look.accessory === "headphone") {
+    chunkyRect(ctx, x - 11, y - 10, 3, 7, "#374151", { shadow: false, radius: 1.5 });
+    chunkyRect(ctx, x + 8, y - 10, 3, 7, "#374151", { shadow: false, radius: 1.5 });
+    ctx.save();
+    ctx.strokeStyle = "#111827";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y - 9, 10, Math.PI * 1.1, Math.PI * 1.9);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawSleepingBody(ctx: CanvasRenderingContext2D, x: number, y: number, look: AvatarLook): void {
+  // Kepala di sisi kiri (bantal), badan+selimut memanjang ke kanan.
+  chunkyRect(ctx, x - 16, y - 4, 32, 14, look.pants, { shadow: false, radius: 6, opacity: 0.92 });
+  chunkyCircle(ctx, x - 18, y + 2, 8, look.skin, { shadow: false });
+  drawHair(ctx, x - 18, y + 2, look);
+  ctx.save();
+  ctx.strokeStyle = "#1f2937";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x - 21, y + 2);
+  ctx.lineTo(x - 17, y + 2);
+  ctx.moveTo(x - 15, y + 2);
+  ctx.lineTo(x - 11, y + 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawStandingBody(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  dir: Dir,
+  look: AvatarLook,
+  action: AvatarAction | null | undefined,
+  walkPhase: number,
+  status: PresenceStatus | null | undefined
+): void {
+  const face = DIR_VECTOR[dir];
+  const legLift = Math.sin(walkPhase) * 3;
+
+  // Kaki -- bergantian naik-turun saat jalan (pengganti walk-bob 3D).
+  chunkyRect(ctx, x - 7, y + 2 - Math.max(0, legLift), 5, 9, look.pants, { shadow: false, radius: 2 });
+  chunkyRect(ctx, x + 2, y + 2 + Math.max(0, -legLift), 5, 9, look.pants, { shadow: false, radius: 2 });
+
+  // Gestur lengan (tonjok/tos/lambai) -- envelope 0->1->0 selama
+  // ACTION_ANIM_MS, sama konsepnya dengan versi R3F sebelumnya, cuma
+  // sekarang menggeser posisi lingkaran lengan, bukan rotasi mesh.
+  const elapsed = action ? Date.now() - action.at : Infinity;
+  const active = Boolean(action) && elapsed >= 0 && elapsed < ACTION_ANIM_MS;
+  const t = active ? elapsed / ACTION_ANIM_MS : 0;
+  const envelope = active ? Math.sin(t * Math.PI) : 0;
+
+  let leftArm = { x: 0, y: 0 };
+  let rightArm = { x: 0, y: 0 };
+  if (active && action) {
     switch (action.kind) {
       case "tonjok":
-        // Lengan kanan menonjok ke depan lalu balik.
-        right.rotation.x = -envelope * 1.9;
-        left.rotation.set(0, 0, 0);
+        rightArm = { x: face.x * envelope * 10, y: face.y * envelope * 10 };
         break;
       case "tos":
-        // Kedua lengan terangkat ke atas-samping.
-        right.rotation.z = envelope * 1.5;
-        left.rotation.z = -envelope * 1.5;
+        rightArm = { x: 3 * envelope, y: -6 * envelope };
+        leftArm = { x: -3 * envelope, y: -6 * envelope };
         break;
       case "lambai":
-        // Lengan kanan terangkat lalu melambai cepat ke kiri-kanan.
-        right.rotation.z = envelope * 1.7 + Math.sin(t * Math.PI * 5) * 0.3;
-        left.rotation.set(0, 0, 0);
+        rightArm = { x: Math.sin(t * Math.PI * 5) * 4, y: -7 * envelope };
+        break;
+      default:
         break;
     }
-  });
+  }
 
-  return (
-    <group ref={ref}>
-      <group rotation={sleeping ? [-Math.PI / 2, 0, 0] : [0, 0, 0]} position={sleeping ? [0, 6, 20] : [0, 0, 0]}>
-        {!sleeping && (
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.6, 0]}>
-            <circleGeometry args={[11, 16]} />
-            <meshStandardMaterial color="#000000" transparent opacity={0.3} />
-          </mesh>
-        )}
-        {/* Kaki */}
-        {[-4.5, 4.5].map((x) => (
-          <mesh key={x} position={[x, 5, 0]}>
-            <capsuleGeometry args={[3.2, 5, 4, 8]} />
-            <meshStandardMaterial color={look.pants} />
-          </mesh>
-        ))}
-        {/* Badan & lengan */}
-        <mesh position={[0, 16, 0]}>
-          <capsuleGeometry args={[7.5, 9, 8, 12]} />
-          <meshStandardMaterial color={look.shirt} />
-        </mesh>
-        {[-11, 11].map((x) => (
-          <group key={x} ref={x < 0 ? leftArmRef : rightArmRef} position={[x, 23, 0]}>
-            <mesh position={[0, -6, 0]}>
-              <capsuleGeometry args={[3.3, 7, 4, 8]} />
-              <meshStandardMaterial color={look.shirt} />
-            </mesh>
-          </group>
-        ))}
-        {/* Kepala */}
-        <mesh position={[0, 36, 0]}>
-          <sphereGeometry args={[12.5, 20, 20]} />
-          <meshStandardMaterial color={look.skin} />
-        </mesh>
-        {/* Mata: tertutup kalau tidur */}
-        {[-5, 5].map((x) =>
-          sleeping ? (
-            <mesh key={x} position={[x, 36, 12]}>
-              <boxGeometry args={[4, 0.8, 0.8]} />
-              <meshStandardMaterial color="#1f2937" />
-            </mesh>
-          ) : (
-            <mesh key={x} position={[x, 36, 11.6]}>
-              <sphereGeometry args={[2.2, 8, 8]} />
-              <meshStandardMaterial color="#1f2937" />
-            </mesh>
-          )
-        )}
-        <mesh position={[0, 30.5, 11.8]}>
-          <boxGeometry args={[4, 1.5, 1]} />
-          <meshStandardMaterial color="#b91c1c" />
-        </mesh>
-        <Hair look={look} />
-        <Accessory look={look} />
-        {status && !sleeping && (
-          <mesh position={[9, 42, 9]}>
-            <sphereGeometry args={[2.4, 10, 10]} />
-            <meshStandardMaterial color={STATUS_COLORS[status]} emissive={STATUS_COLORS[status]} emissiveIntensity={0.5} />
-          </mesh>
-        )}
-      </group>
+  chunkyCircle(ctx, x - 10 + leftArm.x, y - 2 + leftArm.y, 4, look.shirt, { shadow: false });
+  chunkyCircle(ctx, x + 10 + rightArm.x, y - 2 + rightArm.y, 4, look.shirt, { shadow: false });
 
-      {isSelf && !sleeping && (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1, 0]}>
-          <ringGeometry args={[13, 16, 24]} />
-          <meshStandardMaterial color="#a78bfa" emissive="#8b5cf6" emissiveIntensity={0.6} />
-        </mesh>
-      )}
+  chunkyRect(ctx, x - 9, y - 12, 18, 16, look.shirt, { radius: 5, shadow: false });
+  chunkyCircle(ctx, x, y - 20, 9, look.skin, { shadow: false });
+  drawHair(ctx, x, y - 20, look);
 
-      <Billboard position={[0, sleeping ? 30 : 62, sleeping ? 10 : 0]}>
-        <Suspense fallback={null}>
-        <Text
-          fontSize={sleeping ? 7 : 9}
-          color={sleeping ? "#cbd5e1" : "#ffffff"}
-          outlineWidth={0.5}
-          outlineColor={isSelf ? "#7c3aed" : "#000000"}
-          anchorX="center"
-          anchorY="middle"
-        >
-          {sleeping ? `${label} · zZ` : label}
-        </Text>
-        </Suspense>
-      </Billboard>
+  const fo = FACE_OFFSETS[dir];
+  ctx.save();
+  ctx.fillStyle = "#1f2937";
+  ctx.beginPath();
+  ctx.arc(x + fo.eyeL[0], y - 20 + fo.eyeL[1], 1.1, 0, Math.PI * 2);
+  ctx.arc(x + fo.eyeR[0], y - 20 + fo.eyeR[1], 1.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#b91c1c";
+  ctx.beginPath();
+  ctx.arc(x + fo.nose[0], y - 20 + fo.nose[1], 1.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 
-      {emote && !sleeping && (
-        <Billboard position={[0, 80, 0]}>
-          <Suspense fallback={null}>
-            <mesh>
-              <planeGeometry args={[Math.min(emote.length * 6 + 10, 90), 16]} />
-              <meshBasicMaterial color="#1e293b" transparent opacity={0.85} />
-            </mesh>
-            <Text fontSize={10} color="#ffffff" anchorX="center" anchorY="middle" maxWidth={80}>
-              {emote}
-            </Text>
-          </Suspense>
-        </Billboard>
-      )}
-    </group>
-  );
-});
+  drawAccessory(ctx, x, y - 20, look);
 
-export function PlayerAvatar({
-  posRef,
-  dirRef,
-  look,
-  label,
-  emote,
-  status,
-  action,
-}: {
-  posRef: { current: Pos };
-  dirRef: { current: Dir };
+  if (status) {
+    chunkyCircle(ctx, x + 8, y - 27, 2.6, STATUS_COLORS[status], { shadow: false, glow: STATUS_COLORS[status] });
+  }
+}
+
+export type AvatarDrawInput = {
+  x: number;
+  y: number;
+  dir: Dir;
   look: AvatarLook;
   label: string;
+  isSelf?: boolean;
+  sleeping?: boolean;
   emote?: string | null;
   status?: PresenceStatus | null;
   action?: AvatarAction | null;
-}) {
-  const groupRef = useRef<THREE.Group | null>(null);
-  const lastRef = useRef<Pos | null>(null);
-  const walkRef = useRef(0);
+  /** Fase jalan (radian, naik terus selama bergerak) -- dihitung
+   * pemanggil (loop di VirtualOfficeClient), bukan di sini, supaya fungsi
+   * gambar ini tetap murni/stateless (tidak nyimpen state sendiri). */
+  walkPhase?: number;
+  /** Emoji kecil menandai pose interaksi perabot (duduk/kerja/dll) --
+   * beda dari `emote` (chat bubble teks bebas, lihat presence.ts). */
+  poseEmoji?: string | null;
+};
 
-  useFrame((_, delta) => {
-    const g = groupRef.current;
-    if (!g) return;
-    const last = lastRef.current;
-    const moving = last !== null && (last.x !== posRef.current.x || last.y !== posRef.current.y);
-    lastRef.current = { ...posRef.current };
-    walkRef.current = moving ? walkRef.current + delta * 12 : 0;
-    const [x, , z] = toScene(posRef.current.x, posRef.current.y);
-    g.position.set(x, moving ? Math.abs(Math.sin(walkRef.current)) * 2.5 : 0, z);
-    g.rotation.y = dirToRadians(dirRef.current);
+/** Gambar satu avatar chibi top-down -- dipanggil tiap frame dari loop di
+ * VirtualOfficeClient utk avatar sendiri, rekan lain, orang yang "online
+ * di tempat lain" (diam di meja), dan yang tidur di Kamar Staff. */
+export function drawAvatar(ctx: CanvasRenderingContext2D, input: AvatarDrawInput): void {
+  const { x, y, dir, look, label, isSelf, sleeping, emote, status, action, walkPhase = 0, poseEmoji } = input;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(2,6,23,0.35)";
+  ctx.beginPath();
+  ctx.ellipse(x, y + (sleeping ? 14 : 11), sleeping ? 20 : 11, sleeping ? 9 : 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  if (isSelf && !sleeping) {
+    ctx.save();
+    ctx.strokeStyle = "#a78bfa";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.ellipse(x, y + 11, 15, 7, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if (sleeping) drawSleepingBody(ctx, x, y, look);
+  else drawStandingBody(ctx, x, y, dir, look, action, walkPhase, status);
+
+  if (poseEmoji && !sleeping) {
+    outlinedText(ctx, poseEmoji, x, y - 36, { size: 13, stroke: false });
+  }
+
+  outlinedText(ctx, sleeping ? `${label} · zZ` : label, x, y - (sleeping ? 20 : 30), {
+    size: sleeping ? 8 : 9,
+    outline: isSelf ? "#7c3aed" : "rgba(0,0,0,0.75)",
+    color: sleeping ? "#cbd5e1" : "#ffffff",
   });
 
-  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} status={status} action={action} isSelf />;
-}
-
-export function RemoteAvatar({
-  id,
-  remoteRef,
-  remoteEmoteRef,
-  remoteActionRef,
-  look,
-  label,
-  status,
-}: {
-  id: string;
-  remoteRef: { current: Map<string, RemotePos> };
-  remoteEmoteRef?: { current: Map<string, { content: string; at: number }> };
-  remoteActionRef?: { current: Map<string, { action: AvatarActionKind; at: number }> };
-  look: AvatarLook;
-  label: string;
-  status?: PresenceStatus | null;
-}) {
-  const groupRef = useRef<THREE.Group | null>(null);
-  const targetRef = useRef(new THREE.Vector3());
-  const lastEmoteAtRef = useRef(0);
-  const [emote, setEmote] = useState<string | null>(null);
-  // Aksi gestur rekan lain -- tidak perlu dibersihkan balik ke null lewat
-  // timeout: ChibiAvatar sendiri yang menganggap aksi "kadaluarsa" setelah
-  // ACTION_ANIM_MS lewat (lihat useFrame di sana), objek `action` di sini
-  // boleh tetap sama selama menunggu broadcast aksi baru.
-  const lastActionAtRef = useRef(0);
-  const [action, setAction] = useState<AvatarAction | null>(null);
-
-  useFrame(() => {
-    const g = groupRef.current;
-    if (!g) return;
-    const rp = remoteRef.current.get(id);
-    const [x, y, z] = toScene(rp?.x ?? SPAWN.x, rp?.y ?? SPAWN.y);
-    // Pindah lantai (tangga) = lompat langsung, bukan meluncur melintasi peta.
-    if (g.position.distanceTo(targetRef.current.set(x, y, z)) > 300) g.position.copy(targetRef.current);
-    else g.position.lerp(targetRef.current, 0.15);
-    if (rp) g.rotation.y = dirToRadians(rp.dir);
-
-    // Bubble emote cuma update state (re-render) saat berubah/kadaluarsa --
-    // bukan tiap frame -- sama seperti pola lastXRef di GameLoop.
-    const e = remoteEmoteRef?.current.get(id);
-    if (e && e.at !== lastEmoteAtRef.current && Date.now() - e.at < EMOTE_DURATION_MS) {
-      lastEmoteAtRef.current = e.at;
-      setEmote(e.content);
-    } else if (emote && (!e || Date.now() - e.at >= EMOTE_DURATION_MS)) {
-      setEmote(null);
-    }
-
-    // Aksi gestur masuk -- sama pola dengan emote di atas, cuma update
-    // state saat broadcast baru masuk (dideteksi lewat `at` berubah).
-    const a = remoteActionRef?.current.get(id);
-    if (a && a.at !== lastActionAtRef.current) {
-      lastActionAtRef.current = a.at;
-      setAction({ kind: a.action, at: a.at });
-    }
-  });
-
-  return <ChibiAvatar ref={groupRef} look={look} label={label} emote={emote} status={status} action={action} />;
-}
-
-/** Orang yang sedang "online" (membuka MagnaSuperApp) tapi TIDAK sedang di
- * halaman Kantor Virtual -- berdiri diam di meja divisinya (lihat
- * deskForDivision di house.ts), bukan ikut berjalan karena tidak ada
- * posisi live untuknya. Beda dari SleeperAvatar (itu utk yang app-nya
- * benar-benar tertutup/offline). */
-export function DeskAvatar({
-  x,
-  y,
-  look,
-  label,
-  status,
-}: {
-  x: number;
-  y: number;
-  look: AvatarLook;
-  label: string;
-  status?: PresenceStatus | null;
-}) {
-  const [sx, , sz] = toScene(x, y);
-  return (
-    <group position={[sx, 0, sz]}>
-      <ChibiAvatar look={look} label={label} status={status} />
-    </group>
-  );
-}
-
-export function SleeperAvatar({ x, y, level, look, label }: { x: number; y: number; level: 0 | 1; look: AvatarLook; label: string }) {
-  const [sx, , sz] = toScene(x, y);
-  // Kepala di sisi bantal (kiri kasur), badan memanjang ke kanan.
-  return (
-    <group position={[sx + 3, level === 0 ? 12 : 40, sz]} rotation={[0, Math.PI / 2, 0]} scale={0.62}>
-      <ChibiAvatar look={look} label={label} sleeping />
-    </group>
-  );
+  if (emote && !sleeping) {
+    const w = Math.min(emote.length * 6.2 + 16, 110);
+    const h = 18;
+    const bx = x - w / 2;
+    const by = y - 58;
+    ctx.save();
+    ctx.fillStyle = "rgba(15,23,42,0.88)";
+    roundRectPath(ctx, bx, by, w, h, 8);
+    ctx.fill();
+    ctx.restore();
+    outlinedText(ctx, emote, x, by + h / 2, { size: 10, stroke: false });
+  }
 }
 
 const AGENT_COLORS: Record<string, string> = {
@@ -433,49 +259,28 @@ const AGENT_COLORS: Record<string, string> = {
   finn: "#0ea5e9",
 };
 
-export function AgentNPC({ agent, x, y }: { agent: AIAgent; x: number; y: number }) {
-  const bodyRef = useRef<THREE.Group | null>(null);
-  const [sx, , sz] = toScene(x, y);
+/** Gambar satu NPC AI (robot melayang) -- `elapsedSeconds` dipakai utk
+ * animasi melayang/berputar, pengganti useFrame(state.clock) versi R3F. */
+export function drawAgentNPC(ctx: CanvasRenderingContext2D, agent: AIAgent, x: number, y: number, elapsedSeconds: number): void {
   const color = AGENT_COLORS[agent.id] ?? "#8b5cf6";
+  const bob = Math.sin(elapsedSeconds * 2) * 2.5;
 
-  useFrame((state) => {
-    if (bodyRef.current) {
-      bodyRef.current.position.y = Math.sin(state.clock.elapsedTime * 2) * 2.5;
-      bodyRef.current.rotation.y = Math.sin(state.clock.elapsedTime * 0.6) * 0.6;
-    }
-  });
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.6;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.ellipse(x, y + 12, 17, 8, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
 
-  return (
-    <group position={[sx, 0, sz]}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 1, 0]}>
-        <ringGeometry args={[14, 19, 32]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} transparent opacity={0.6} />
-      </mesh>
-      <group ref={bodyRef}>
-        <mesh position={[0, 15, 0]}>
-          <capsuleGeometry args={[9, 9, 8, 12]} />
-          <meshStandardMaterial color={color} metalness={0.4} roughness={0.3} />
-        </mesh>
-        <mesh position={[0, 35, 0]}>
-          <boxGeometry args={[18, 14, 13]} />
-          <meshStandardMaterial color="#374151" metalness={0.5} roughness={0.3} />
-        </mesh>
-        <mesh position={[0, 35, 6.8]}>
-          <boxGeometry args={[14, 9, 1]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} />
-        </mesh>
-        <mesh position={[0, 50, 0]}>
-          <sphereGeometry args={[3.5, 12, 12]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.8} />
-        </mesh>
-      </group>
-      <Billboard position={[0, 64, 0]}>
-        <Suspense fallback={null}>
-        <Text fontSize={9} color="#ffffff" outlineWidth={0.6} outlineColor={color} anchorX="center" anchorY="middle">
-          {`${agent.icon} ${agent.name}`}
-        </Text>
-        </Suspense>
-      </Billboard>
-    </group>
-  );
+  const by = y - 10 + bob;
+  chunkyRect(ctx, x - 9, by - 2, 18, 13, "#374151", { shadow: false, radius: 3, glow: color });
+  chunkyRect(ctx, x - 7, by, 14, 9, color, { shadow: false, radius: 2, opacity: 0.55, glow: color });
+  chunkyCircle(ctx, x, by - 15, 9, color, { shadow: false, glow: color });
+  chunkyCircle(ctx, x, by - 15, 3.5, color, { shadow: false, glow: color, opacity: 0.9 });
+
+  outlinedText(ctx, `${agent.icon} ${agent.name}`, x, by - 28, { size: 9, outline: color });
 }
