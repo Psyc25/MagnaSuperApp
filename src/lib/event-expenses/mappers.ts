@@ -4,6 +4,8 @@ import type {
   ExpenseDivision,
   ExpenseProof,
   ExpenseSourceType,
+  PaymentStage,
+  ProofStatus,
   ReimbursementStatus,
 } from "./types";
 
@@ -19,6 +21,10 @@ export type EventExpenseRow = {
   payment_method: string;
   reimbursement_status: string;
   notes: string | null;
+  payment_stage: string;
+  linked_expense_id: string | null;
+  source_invoice_ref: string | null;
+  proof_status: string;
   created_by: string | null;
   created_at: string;
 };
@@ -56,6 +62,10 @@ export function rowToEventExpense(row: EventExpenseRow, proofs: ExpenseProof[]):
     paymentMethod: row.payment_method,
     reimbursementStatus: row.reimbursement_status as ReimbursementStatus,
     notes: row.notes ?? undefined,
+    paymentStage: (row.payment_stage as PaymentStage) ?? "full",
+    linkedExpenseId: row.linked_expense_id,
+    sourceInvoiceRef: row.source_invoice_ref ?? undefined,
+    proofStatus: (row.proof_status as ProofStatus) ?? "pending",
     createdBy: row.created_by,
     createdAt: row.created_at,
     proofs,

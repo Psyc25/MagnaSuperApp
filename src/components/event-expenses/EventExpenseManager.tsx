@@ -10,7 +10,14 @@ import { ExportButton, type ExportSheet } from "@/components/ui/ExportButton";
 import { useToast } from "@/components/ui/ToastProvider";
 import { formatDateID, formatRupiah } from "@/lib/shared/utils";
 import { deleteEventExpense, loadMoreEventExpenses } from "@/lib/event-expenses/actions";
-import { EXPENSE_CATEGORIES, EXPENSE_DIVISION_LABELS, type EventExpense, type ExpenseDivision, type ExpenseSourceOption } from "@/lib/event-expenses/types";
+import {
+  EXPENSE_CATEGORIES,
+  EXPENSE_DIVISION_LABELS,
+  PAYMENT_STAGE_LABELS,
+  type EventExpense,
+  type ExpenseDivision,
+  type ExpenseSourceOption,
+} from "@/lib/event-expenses/types";
 import { cn } from "@/lib/cn";
 import { GLASS_BORDER, GLASS_INPUT, GLASS_SURFACE } from "@/lib/glass";
 
@@ -117,6 +124,11 @@ export function EventExpenseManager({
 
   const total = useMemo(() => filtered.reduce((sum, e) => sum + e.amount, 0), [filtered]);
 
+  // Kandidat "DP yang dilunasi" untuk form -- dari SELURUH data (bukan cuma
+  // `filtered`, supaya tetap muncul walau filter pencarian/divisi/kategori
+  // sedang aktif), difilter lagi per event/proyek di dalam modalnya sendiri.
+  const dpCandidates = useMemo(() => expenses.filter((e) => e.paymentStage === "dp"), [expenses]);
+
   /**
    * Data ekspor Excel (Tahap D) — dibangun dari `filtered` (mengikuti
    * pencarian/filter divisi/kategori yang sedang aktif, pola sama seperti
@@ -148,6 +160,8 @@ export function EventExpenseManager({
         "Total Berjalan": running,
         "Metode Pembayaran": e.paymentMethod,
         "Status Penggantian Dana": e.reimbursementStatus,
+        "Tahap Pembayaran": PAYMENT_STAGE_LABELS[e.paymentStage],
+        "No. Invoice/Vendor": e.sourceInvoiceRef ?? "",
         "Bukti Transaksi": e.proofs.length > 0 ? e.proofs.map((p) => p.fileName).join("; ") : "Belum diunggah",
         Keterangan: e.notes ?? "",
       };
@@ -285,7 +299,21 @@ export function EventExpenseManager({
                       {formatDateID(e.expenseDate)}
                     </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{EXPENSE_DIVISION_LABELS[e.division]}</td>
-                    <td className="max-w-[180px] px-4 py-3 text-zinc-800 dark:text-zinc-100">{labelFor(e)}</td>
+                    <td className="max-w-[180px] px-4 py-3 text-zinc-800 dark:text-zinc-100">
+                      {labelFor(e)}
+                      {e.paymentStage !== "full" && (
+                        <span
+                          className={cn(
+                            "ml-1.5 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                            e.paymentStage === "dp"
+                              ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
+                              : "bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
+                          )}
+                        >
+                          {e.paymentStage === "dp" ? "DP" : "Pelunasan"}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{e.category}</td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-300">{e.picName}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-right font-semibold tabular-nums text-zinc-900 dark:text-white">
@@ -384,6 +412,7 @@ export function EventExpenseManager({
         }}
         sourceOptions={sourceOptions}
         editing={editTarget}
+        dpCandidates={dpCandidates}
         onSaved={(expense) => {
           setExpenses((prev) => {
             const exists = prev.some((item) => item.id === expense.id);

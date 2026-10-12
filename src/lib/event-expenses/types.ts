@@ -78,6 +78,32 @@ export const REIMBURSEMENT_STATUS_HINTS: Record<ReimbursementStatus, string> = {
  * metode/rekening lain sendiri (lihat komentar migrasi 0049). */
 export const PAYMENT_METHOD_SUGGESTIONS = ["Transfer BCA", "Qris", "Cash", "Kantong Jago", "Transfer Jago"];
 
+/**
+ * Tahap pembayaran (migrasi tambahan pasca-analisis PDF rekap "Grab x
+ * Komdigi") — banyak pengeluaran nyata di lapangan dibayar dua tahap (DP
+ * dulu, pelunasan belakangan) dari SATU invoice/vendor yang sama, dicatat
+ * sebagai dua baris terpisah. Tanpa field ini, auto-extract/pembacaan
+ * nominal dari foto nota gampang salah kaprah: baca total invoice padahal
+ * yang dicatat cuma porsi DP atau pelunasannya saja. "full" = default,
+ * sekali bayar lunas (perilaku lama sebelum field ini ada).
+ */
+export type PaymentStage = "full" | "dp" | "pelunasan";
+
+export const PAYMENT_STAGES: PaymentStage[] = ["full", "dp", "pelunasan"];
+
+export const PAYMENT_STAGE_LABELS: Record<PaymentStage, string> = {
+  full: "Lunas (sekali bayar)",
+  dp: "DP (baru sebagian)",
+  pelunasan: "Pelunasan (sisa dari DP)",
+};
+
+/** Dihitung otomatis dari ada/tidaknya `proofs` (bukan di-set manual lewat
+ * form) — disimpan di kolom tersendiri supaya nanti bisa di-query langsung
+ * (mis. untuk digest "pengeluaran yang bukti belum masuk") tanpa join ke
+ * `event_expense_proofs` tiap kali. Lihat `addExpenseProof`/
+ * `deleteExpenseProof` di actions.ts yang menjaga kolom ini tetap sinkron. */
+export type ProofStatus = "uploaded" | "pending";
+
 export type ExpenseProof = {
   id: string;
   expenseId: string;
@@ -99,6 +125,20 @@ export type EventExpense = {
   paymentMethod: string;
   reimbursementStatus: ReimbursementStatus;
   notes?: string;
+  /** Lihat komentar `PaymentStage` di atas. */
+  paymentStage: PaymentStage;
+  /** Kalau `paymentStage` = "pelunasan", ini id baris DP yang dilunasi —
+   * dipakai untuk menampilkan pasangannya & supaya satu baris DP tidak
+   * dipakai lebih dari sekali sebagai pasangan pelunasan. */
+  linkedExpenseId: string | null;
+  /** Catatan bebas no. invoice/nama vendor — paling berguna waktu
+   * `paymentStage` bukan "full", supaya DP & pelunasan dari invoice yang
+   * sama gampang dikenali walau baris pasangannya tidak dipilih lewat
+   * `linkedExpenseId` (mis. karena baris DP-nya dicatat sebelum field ini
+   * ada). */
+  sourceInvoiceRef?: string;
+  /** Lihat komentar `ProofStatus` di atas. */
+  proofStatus: ProofStatus;
   createdBy: string | null;
   createdAt: string;
   proofs: ExpenseProof[];

@@ -10,11 +10,14 @@ import {
   EXPENSE_CATEGORIES,
   EXPENSE_DIVISION_LABELS,
   PAYMENT_METHOD_SUGGESTIONS,
+  PAYMENT_STAGES,
+  PAYMENT_STAGE_LABELS,
   REIMBURSEMENT_STATUSES,
   REIMBURSEMENT_STATUS_HINTS,
   type EventExpense,
   type ExpenseProof,
   type ExpenseSourceOption,
+  type PaymentStage,
 } from "@/lib/event-expenses/types";
 import { useResetOnChange } from "@/lib/shared/use-synced-state";
 
@@ -34,6 +37,9 @@ function emptyForm() {
     paymentMethod: "",
     reimbursementStatus: REIMBURSEMENT_STATUSES[0],
     notes: "",
+    paymentStage: "full" as PaymentStage,
+    linkedExpenseId: "",
+    sourceInvoiceRef: "",
   };
 }
 
@@ -47,6 +53,9 @@ function formFromExpense(expense: EventExpense) {
     paymentMethod: expense.paymentMethod,
     reimbursementStatus: expense.reimbursementStatus,
     notes: expense.notes ?? "",
+    paymentStage: expense.paymentStage,
+    linkedExpenseId: expense.linkedExpenseId ?? "",
+    sourceInvoiceRef: expense.sourceInvoiceRef ?? "",
   };
 }
 
@@ -73,6 +82,7 @@ export function EventExpenseFormModal({
   editing,
   onSaved,
   onProofsChanged,
+  dpCandidates = [],
 }: {
   open: boolean;
   onClose: () => void;
@@ -84,6 +94,11 @@ export function EventExpenseFormModal({
    * supaya tabel/export tidak menampilkan bukti yang sudah tidak ada
    * walau form akhirnya dibatalkan. */
   onProofsChanged?: (expenseId: string, proofs: ExpenseProof[]) => void;
+  /** Baris-baris dengan paymentStage "dp" dari seluruh data -- dipakai
+   * sebagai pilihan "DP yang dilunasi" waktu tahap pembayaran = "pelunasan".
+   * Difilter lagi di bawah supaya cuma menampilkan DP dari event/proyek
+   * yang sama dengan yang sedang dipilih di form. */
+  dpCandidates?: EventExpense[];
 }) {
   const [form, setForm] = useState(emptyForm);
   const [files, setFiles] = useState<File[]>([]);
@@ -126,6 +141,17 @@ export function EventExpenseFormModal({
   }, [sourceOptions, editing]);
 
   const umumOption = sourceOptions.find((o) => o.sourceType === "umum");
+
+  // Pilihan "DP yang dilunasi" -- hanya baris DP dari event/proyek yang
+  // sama dengan yang sedang dipilih di form (satu nota DP+pelunasan harus
+  // berasal dari event/proyek yang sama), dan tidak termasuk baris yang
+  // sedang diedit sendiri (tidak masuk akal melunasi dirinya sendiri).
+  const dpOptions = useMemo(() => {
+    if (!form.sourceKey) return [];
+    return dpCandidates.filter(
+      (c) => c.id !== editing?.id && `${c.sourceType}::${c.sourceId ?? "umum"}` === form.sourceKey
+    );
+  }, [dpCandidates, form.sourceKey, editing]);
 
   function handleClose() {
     setForm(emptyForm());
@@ -173,6 +199,10 @@ export function EventExpenseFormModal({
       setError("Nominal harus lebih dari 0.");
       return;
     }
+    if (form.paymentStage === "pelunasan" && !form.linkedExpenseId) {
+      setError("Pilih baris DP yang dilunasi, atau ubah tahap pembayaran kalau belum ada DP-nya.");
+      return;
+    }
 
     setSubmitting(true);
     const payload = {
@@ -186,6 +216,9 @@ export function EventExpenseFormModal({
       paymentMethod: form.paymentMethod,
       reimbursementStatus: form.reimbursementStatus,
       notes: form.notes,
+      paymentStage: form.paymentStage,
+      linkedExpenseId: form.paymentStage === "pelunasan" ? form.linkedExpenseId : null,
+      sourceInvoiceRef: form.sourceInvoiceRef,
     };
     const result = editing ? await updateEventExpense(editing.id, payload) : await addEventExpense(payload);
 
@@ -266,6 +299,68 @@ export function EventExpenseFormModal({
             ))}
           </select>
         </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="ee-stage" className="mb-1.5 block text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+              Tahap Pembayaran
+            </label>
+            <select
+              id="ee-stage"
+              value={form.paymentStage}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, paymentStage: e.target.value as PaymentStage, linkedExpenseId: "" }))
+              }
+              className="w-full rounded-xl border border-black/10 bg-transparent px-3.5 py-2.5 text-sm text-zinc-900 outline-none ring-violet-500/40 focus:ring-2 dark:border-white/10 dark:text-white"
+            >
+              {PAYMENT_STAGES.map((s) => (
+                <option key={s} value={s}>
+                  {PAYMENT_STAGE_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="ee-invoice-ref" className="mb-1.5 block text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+              No. Invoice/Vendor (opsional)
+            </label>
+            <input
+              id="ee-invoice-ref"
+              value={form.sourceInvoiceRef}
+              onChange={(e) => setForm((f) => ({ ...f, sourceInvoiceRef: e.target.value }))}
+              placeholder="mis. INV-0231 / CV Anugrah Sound System"
+              className="w-full rounded-xl border border-black/10 bg-transparent px-3.5 py-2.5 text-sm text-zinc-900 outline-none ring-violet-500/40 placeholder:text-zinc-400 focus:ring-2 dark:border-white/10 dark:text-white"
+            />
+          </div>
+        </div>
+
+        {form.paymentStage === "pelunasan" && (
+          <div>
+            <label htmlFor="ee-linked-dp" className="mb-1.5 block text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+              DP yang Dilunasi
+            </label>
+            <select
+              id="ee-linked-dp"
+              required
+              value={form.linkedExpenseId}
+              onChange={(e) => setForm((f) => ({ ...f, linkedExpenseId: e.target.value }))}
+              className="w-full rounded-xl border border-black/10 bg-transparent px-3.5 py-2.5 text-sm text-zinc-900 outline-none ring-violet-500/40 focus:ring-2 dark:border-white/10 dark:text-white"
+            >
+              <option value="" disabled>
+                {dpOptions.length === 0 ? "Tidak ada baris DP untuk event/proyek ini" : "Pilih baris DP…"}
+              </option>
+              {dpOptions.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.expenseDate} — Rp{c.amount.toLocaleString("id-ID")} ({c.picName})
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+              Pilih baris DP sebelumnya dari event/proyek yang sama. Kalau belum pernah dicatat DP-nya, catat dulu
+              sebagai tahap &quot;DP&quot;.
+            </p>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <div>

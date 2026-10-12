@@ -11,6 +11,7 @@ import type {
   ExpenseDivision,
   ExpenseProof,
   ExpenseSourceType,
+  PaymentStage,
   ReimbursementStatus,
 } from "./types";
 import { exceedsDbAmount, MAX_DB_AMOUNT_MESSAGE } from "@/lib/shared/utils";
@@ -46,6 +47,13 @@ export type AddEventExpenseInput = {
   paymentMethod: string;
   reimbursementStatus: ReimbursementStatus;
   notes?: string;
+  /** Default "full" di DB kalau tidak dikirim (baris lama/pengeluaran
+   * sekali-lunas) — lihat komentar `PaymentStage` di types.ts. */
+  paymentStage?: PaymentStage;
+  /** Hanya relevan waktu `paymentStage` = "pelunasan": id baris DP yang
+   * dilunasi. */
+  linkedExpenseId?: string | null;
+  sourceInvoiceRef?: string;
 };
 
 /** Divalidasi ulang di server — form UI sudah punya `required`, tapi Server
@@ -58,6 +66,9 @@ function validateExpenseInput(input: AddEventExpenseInput): string | null {
   if (exceedsDbAmount(input.amount)) return MAX_DB_AMOUNT_MESSAGE;
   if (input.sourceType !== "umum" && !input.sourceId) {
     return 'Pilih event/proyek terkait, atau pilih "Finance/Umum" kalau tidak terikat event.';
+  }
+  if (input.paymentStage === "pelunasan" && !input.linkedExpenseId) {
+    return "Pilih baris DP yang dilunasi, atau ubah tahap pembayaran jadi Lunas/DP kalau belum ada DP-nya.";
   }
   return null;
 }
@@ -88,6 +99,14 @@ export async function addEventExpense(
       payment_method: input.paymentMethod.trim(),
       reimbursement_status: input.reimbursementStatus,
       notes: input.notes?.trim() || null,
+      payment_stage: input.paymentStage ?? "full",
+      linked_expense_id: input.paymentStage === "pelunasan" ? (input.linkedExpenseId ?? null) : null,
+      source_invoice_ref: input.sourceInvoiceRef?.trim() || null,
+      // Baris baru belum ada buktinya sampai `addExpenseProof` dipanggil
+      // (lihat langkah kedua di EventExpenseFormModal) -- disimpan eksplisit
+      // di sini (bukan dibiarkan default kolom) supaya tetap benar walau
+      // defaultnya di DB berubah nanti.
+      proof_status: "pending",
     })
     .select("*")
     .single<EventExpenseRow>();
@@ -153,6 +172,12 @@ export async function updateEventExpense(
       payment_method: input.paymentMethod.trim(),
       reimbursement_status: input.reimbursementStatus,
       notes: input.notes?.trim() || null,
+      payment_stage: input.paymentStage ?? "full",
+      linked_expense_id: input.paymentStage === "pelunasan" ? (input.linkedExpenseId ?? null) : null,
+      source_invoice_ref: input.sourceInvoiceRef?.trim() || null,
+      // proof_status SENGAJA tidak disentuh di sini -- bukti dikelola
+      // terpisah lewat addExpenseProof/deleteExpenseProof, yang menjaga
+      // kolom ini sendiri (lihat komentar di situ).
     })
     .eq("id", id)
     .select("*")
@@ -294,6 +319,16 @@ export async function addExpenseProof(
     return { ok: false, error: GENERIC_ERROR };
   }
 
+  // Tandai pengeluaran ini sudah ada buktinya -- best-effort (tidak
+  // membatalkan upload yang sudah berhasil kalau gagal), dipakai untuk
+  // filter/laporan "belum ada bukti" (lihat komentar proof_status di
+  // migrasi penambahan kolomnya).
+  const { error: statusError } = await supabase
+    .from("event_expenses")
+    .update({ proof_status: "uploaded" })
+    .eq("id", expenseId);
+  if (statusError) console.error("[event-expenses] update proof_status (upload) gagal:", statusError.message);
+
   revalidatePath(MODULE_PATH);
   return { ok: true, proof: rowToExpenseProof(data) };
 }
@@ -302,9 +337,9 @@ export async function deleteExpenseProof(id: string): Promise<MutationResult> {
   const supabase = await createClient();
   const { data: row } = await supabase
     .from("event_expense_proofs")
-    .select("storage_path")
+    .select("storage_path, expense_id")
     .eq("id", id)
-    .maybeSingle<{ storage_path: string }>();
+    .maybeSingle<{ storage_path: string; expense_id: string }>();
 
   const { error } = await supabase.from("event_expense_proofs").delete().eq("id", id);
   if (error) {
@@ -314,6 +349,23 @@ export async function deleteExpenseProof(id: string): Promise<MutationResult> {
 
   if (row?.storage_path) {
     await supabase.storage.from(BUCKET).remove([row.storage_path]);
+  }
+
+  // Kalau ini bukti terakhir untuk pengeluaran tersebut, balikkan
+  // proof_status ke "pending" -- kebalikan dari penandaan "uploaded" di
+  // addExpenseProof di atas. Best-effort, sama seperti di sana.
+  if (row?.expense_id) {
+    const { count } = await supabase
+      .from("event_expense_proofs")
+      .select("id", { count: "exact", head: true })
+      .eq("expense_id", row.expense_id);
+    if (!count) {
+      const { error: statusError } = await supabase
+        .from("event_expenses")
+        .update({ proof_status: "pending" })
+        .eq("id", row.expense_id);
+      if (statusError) console.error("[event-expenses] update proof_status (delete) gagal:", statusError.message);
+    }
   }
 
   revalidatePath(MODULE_PATH);
