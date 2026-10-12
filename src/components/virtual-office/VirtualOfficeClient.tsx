@@ -18,6 +18,8 @@ import {
   Send,
   Smile,
   Users,
+  Volume2,
+  VolumeX,
   X as StopInteractIcon,
   Zap,
 } from "lucide-react";
@@ -64,8 +66,9 @@ import {
   type AvatarActionKind,
   type PresenceStatus,
 } from "@/lib/virtual-office/presence";
-import { applyCameraTransform, drawFurnitureItem, drawGround, DEFAULT_CAMERA_SCALE, type Camera } from "./HouseScene";
+import { applyCameraTransform, drawFurnitureItem, drawGround, drawInteractHint, DEFAULT_CAMERA_SCALE, type Camera } from "./HouseScene";
 import { drawAgentNPC, drawAvatar, lerpTowards, type AvatarAction, type Dir, type RemotePos } from "./Avatars";
+import { isAudioMuted, playAction, playEmote, playFootstep, playInteractToggle, playNotify, setAudioMuted } from "@/lib/virtual-office/sfx";
 import {
   findNearestInteractable,
   furnitureById,
@@ -200,6 +203,10 @@ export function VirtualOfficeClient({
   const interactionStartRef = useRef(0);
   const [myInteraction, setMyInteraction] = useState<{ furnitureId: string; kind: InteractionKind } | null>(null);
   const [nearestInteractable, setNearestInteractable] = useState<InteractableNearby | null>(null);
+  // Dibaca tiap frame oleh draw() buat gambar highlight in-world (lihat
+  // drawInteractHint di HouseScene) -- terpisah dari state React di atas
+  // yang cuma dipakai utk tombol UI, biar tidak perlu nunggu re-render.
+  const nearestInteractableRef = useRef<InteractableNearby | null>(null);
 
   const startInteraction = useCallback(
     (item: Furniture, config: InteractionConfig) => {
@@ -208,6 +215,7 @@ export function VirtualOfficeClient({
       interactionStartRef.current = Date.now();
       setMyInteraction(next);
       broadcastInteract(item.id);
+      playInteractToggle(true);
     },
     [broadcastInteract]
   );
@@ -216,6 +224,7 @@ export function VirtualOfficeClient({
     myInteractionRef.current = null;
     setMyInteraction(null);
     broadcastInteract(null);
+    playInteractToggle(false);
   }, [broadcastInteract]);
 
   // Canvas 2D (rewrite Oktober 2026 dari react-three-fiber) -- state
@@ -241,6 +250,16 @@ export function VirtualOfficeClient({
   const lastAgentRef = useRef<string | null>(null);
   const lastDoorRef = useRef(false);
   const lastInteractableIdRef = useRef<string | null>(null);
+  const lastFootstepAtRef = useRef(0);
+
+  // Toggle mute SFX -- dibaca dari localStorage (lihat sfx.ts), bukan
+  // default true/false hardcode, biar preferensi sebelumnya kepakai lagi.
+  // useEffect (bukan langsung di useState initial) supaya tidak beda
+  // antara server/client render pertama (localStorage cuma ada di browser).
+  const [audioMuted, setAudioMutedState] = useState(false);
+  useEffect(() => {
+    setAudioMutedState(isAudioMuted());
+  }, []);
 
   // Begitu halaman Kantor Virtual dibuka, tandai presence sendiri
   // "inOffice: true" (avatar ikut berjalan live di peta semua orang) --
@@ -301,6 +320,7 @@ export function VirtualOfficeClient({
       if (myEmoteTimeoutRef.current) clearTimeout(myEmoteTimeoutRef.current);
       setMyEmote(trimmed);
       broadcastEmote(trimmed);
+      playEmote();
       myEmoteTimeoutRef.current = setTimeout(() => setMyEmote(null), EMOTE_DURATION_MS);
       setEmotePickerOpen(false);
       setEmoteDraft("");
@@ -326,6 +346,7 @@ export function VirtualOfficeClient({
       lastActionAtRef.current = now;
       setMyAction({ kind, at: now });
       broadcastAction(kind);
+      playAction(kind);
       setActionOnCooldown(true);
       if (actionCooldownTimeoutRef.current) clearTimeout(actionCooldownTimeoutRef.current);
       actionCooldownTimeoutRef.current = setTimeout(() => setActionOnCooldown(false), ACTION_COOLDOWN_MS);
@@ -347,6 +368,7 @@ export function VirtualOfficeClient({
       if (nearby.id !== prevNearbyIdRef.current) {
         prevNearbyIdRef.current = nearby.id;
         setToast(`${firstName(nearby.fullName)} mendekat`);
+        playNotify();
         if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
         toastTimeoutRef.current = setTimeout(() => setToast(null), 3000);
       }
@@ -589,6 +611,15 @@ export function VirtualOfficeClient({
 
       items.sort((a, b) => a.sortY - b.sortY);
       for (const it of items) it.render();
+
+      // Highlight in-world perabot terdekat yang bisa dipakai -- digambar
+      // TERAKHIR (di atas avatar/perabot lain), cuma pas tidak sedang
+      // interaksi apa pun (lihat nearestInteractableRef di step()).
+      if (nearestInteractableRef.current) {
+        const near = nearestInteractableRef.current;
+        drawInteractHint(ctx2, near.furniture, POSE_EMOJI[near.config.kind], now);
+      }
+
       ctx2.setTransform(1, 0, 0, 1, 0, 0);
     }
 
@@ -624,6 +655,16 @@ export function VirtualOfficeClient({
       }
       walkPhaseRef.current = moving ? walkPhaseRef.current + dt * 12 : 0;
       movingSelfRef.current = moving;
+
+      // Langkah kaki -- cuma avatar sendiri (lihat komentar playFootstep),
+      // interval dipercepat saat sprint biar tempo kedengaran sesuai.
+      if (moving) {
+        const footstepInterval = keys.has("shift") ? 190 : 300;
+        if (now - lastFootstepAtRef.current > footstepInterval) {
+          lastFootstepAtRef.current = now;
+          playFootstep();
+        }
+      }
 
       if (teleported || now - lastBroadcastRef.current > BROADCAST_INTERVAL_MS) {
         lastBroadcastRef.current = now;
@@ -681,6 +722,7 @@ export function VirtualOfficeClient({
           lastInteractableIdRef.current = null;
           setNearestInteractable(null);
         }
+        nearestInteractableRef.current = null;
       } else {
         const near = findNearestInteractable(posRef.current, FURNITURE);
         const nearId = near?.furniture.id ?? null;
@@ -688,6 +730,10 @@ export function VirtualOfficeClient({
           lastInteractableIdRef.current = nearId;
           setNearestInteractable(near);
         }
+        // Ref diupdate tiap frame tanpa syarat (beda dari state di atas
+        // yang cuma berubah pas id-nya ganti) -- dibaca draw() buat
+        // highlight in-world, murah banget jadi tidak perlu dihemat.
+        nearestInteractableRef.current = near;
       }
 
       const cam = cameraRef.current;
@@ -837,14 +883,29 @@ export function VirtualOfficeClient({
               </form>
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => setEmotePickerOpen((v) => !v)}
-            aria-label="Emote"
-            className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-slate-800/90 text-white/80 shadow-lg transition-colors hover:bg-slate-700"
-          >
-            <Smile className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setEmotePickerOpen((v) => !v)}
+              aria-label="Emote"
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-slate-800/90 text-white/80 shadow-lg transition-colors hover:bg-slate-700"
+            >
+              <Smile className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const next = !audioMuted;
+                setAudioMuted(next);
+                setAudioMutedState(next);
+              }}
+              aria-label={audioMuted ? "Nyalakan suara" : "Matikan suara"}
+              title={audioMuted ? "Nyalakan suara" : "Matikan suara"}
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-slate-800/90 text-white/80 shadow-lg transition-colors hover:bg-slate-700"
+            >
+              {audioMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+            </button>
+          </div>
         </div>
 
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex flex-wrap justify-center gap-2 px-3">

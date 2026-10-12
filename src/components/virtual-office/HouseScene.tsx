@@ -14,7 +14,7 @@ import {
   getRoom,
   type Furniture,
 } from "@/lib/virtual-office/house";
-import { chunkyCircle, chunkyRect, outlinedText } from "./draw2d";
+import { chunkyCircle, chunkyRect, outlinedText, roundRectPath } from "./draw2d";
 
 /**
  * Render 2D top-down Kantor Virtual (rewrite Oktober 2026 dari
@@ -487,4 +487,29 @@ export function drawFurnitureItem(ctx: CanvasRenderingContext2D, item: Furniture
     default:
       break;
   }
+}
+
+/**
+ * Highlight perabot yang bisa diinteraksi saat avatar sendiri mendekat --
+ * outline kuning berdenyut + ikon pose (POSE_EMOJI dari VirtualOfficeClient,
+ * dikirim via parameter `emoji` biar HouseScene tidak perlu tahu soal
+ * InteractionKind) yang mengambang pelan di atasnya. Dipanggil terakhir
+ * dari loop gambar (setelah semua Sortable), supaya selalu tampil di atas
+ * avatar/perabot lain -- permintaan Owner: perabot interaktif harus
+ * kelihatan jelas sebelum diklik, bukan cuma tombol di bawah layar. */
+export function drawInteractHint(ctx: CanvasRenderingContext2D, item: Furniture, emoji: string, now: number): void {
+  const { x, y, w, h } = item.rect;
+  const pulse = 0.55 + Math.sin(now / 260) * 0.35;
+  ctx.save();
+  ctx.globalAlpha = Math.max(0.15, pulse);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#fbbf24";
+  ctx.shadowColor = "#fbbf24";
+  ctx.shadowBlur = 10;
+  roundRectPath(ctx, x - 4, y - 4, w + 8, h + 8, 8);
+  ctx.stroke();
+  ctx.restore();
+
+  const bob = Math.sin(now / 320) * 3;
+  outlinedText(ctx, emoji, x + w / 2, y - 14 + bob, { size: 15, stroke: false });
 }
