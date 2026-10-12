@@ -40,6 +40,14 @@ export type PresenceMeta = {
    * (jalan live); false/absen = cuma "online" di halaman lain. */
   inOffice?: boolean;
   status?: PresenceStatus | null;
+  /** true kalau orang ini punya notifikasi PENTING yang belum dibaca
+   * (lihat listUnreadImportantNotifications di lib/notifications/actions.ts
+   * -- data ASLI, bukan dekorasi, dipoll ringan dari PresenceProvider).
+   * Dipakai badge "!" di atas avatar, permintaan Owner terinspirasi video
+   * referensi virtual office lain: "biar lebih nyata". Visibilitasnya SAMA
+   * seperti `status` di atas -- kelihatan oleh semua rekan, bukan cuma
+   * diri sendiri. */
+  hasUrgentNotification?: boolean;
 };
 
 export type ResolvedPresence = {
@@ -48,6 +56,7 @@ export type ResolvedPresence = {
   /** Belum pernah pilih status eksplisit = dianggap "available" (default
    * umum), bukan null -- biar dot status selalu konsisten tampil. */
   status: PresenceStatus;
+  hasUrgentNotification: boolean;
 };
 
 /** Emote/chat bubble ephemeral di atas avatar -- broadcast "emote" terpisah
@@ -58,6 +67,22 @@ export const EMOTE_DURATION_MS = 4000;
 export type EmotePayload = { id: string; content: string };
 
 export const QUICK_EMOTES = ["👍", "😂", "❤️", "😮", "👋", "✅"] as const;
+
+/** Batas panjang teks emote/chat bubble bebas (permintaan Owner: "lebih
+ * nyata", terinspirasi video referensi -- bubble sekarang bisa nampung
+ * obrolan pendek, bukan cuma reaksi 1-2 kata). */
+export const EMOTE_MAX_LENGTH = 140;
+
+/**
+ * Lama tampil bubble, FUNGSI dari panjang teksnya -- pesan panjang perlu
+ * waktu baca lebih lama daripada reaksi singkat seperti "👍". Nilainya
+ * murni dihitung dari `content` (tidak pernah di-broadcast terpisah),
+ * jadi pengirim & penerima (lihat remoteEmoteRef di PresenceProvider)
+ * selalu dapat angka yang SAMA tanpa perlu kirim field tambahan.
+ */
+export function emoteDurationFor(content: string): number {
+  return Math.min(11000, Math.max(EMOTE_DURATION_MS, 2200 + content.length * 65));
+}
 
 /**
  * Aksi gestur avatar (Opsi B, laporan gap Oktober 2026) -- beda dari emote

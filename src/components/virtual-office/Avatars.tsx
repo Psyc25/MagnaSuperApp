@@ -55,6 +55,79 @@ function seedFromLabel(label: string): number {
   return (h >>> 0) % 10000;
 }
 
+const BUBBLE_FONT = `700 10px ui-sans-serif, system-ui, sans-serif`;
+const BUBBLE_MAX_WIDTH = 150;
+const BUBBLE_MAX_LINES = 4;
+
+/**
+ * Word-wrap chat bubble (permintaan Owner: "lebih nyata", terinspirasi
+ * video referensi -- bubble sekarang bisa nampung obrolan pendek, bukan
+ * cuma reaksi 1-2 kata seperti sebelumnya). Beda dari helper teks biasa
+ * (outlinedText) yang cuma gambar satu baris -- ini juga UKUR lebar tiap
+ * baris (pakai font yang SAMA persis dengan yang dipakai gambar) supaya
+ * bubble-nya pas, bukan kelebaran/kesempitan. Kata tunggal yang sendirian
+ * lebih lebar dari maxWidth dipaksa dipecah per-karakter (jarang terjadi
+ * utk Bahasa Indonesia yang biasa ada spasi, tapi dijaga biar tidak
+ * meluber keluar bubble). Baris yang kepotong karena nabrak BUBBLE_MAX_LINES
+ * diberi "…" di akhir.
+ */
+function layoutBubble(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines: number
+): { lines: string[]; width: number } {
+  ctx.save();
+  ctx.font = BUBBLE_FONT;
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (ctx.measureText(word).width > maxWidth) {
+      if (current) {
+        lines.push(current);
+        current = "";
+      }
+      let chunk = "";
+      for (const ch of word) {
+        if (chunk && ctx.measureText(chunk + ch).width > maxWidth) {
+          lines.push(chunk);
+          chunk = ch;
+        } else {
+          chunk += ch;
+        }
+      }
+      current = chunk;
+      continue;
+    }
+    const attempt = current ? `${current} ${word}` : word;
+    if (current && ctx.measureText(attempt).width > maxWidth) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = attempt;
+    }
+  }
+  if (current) lines.push(current);
+
+  let truncated = false;
+  if (lines.length > maxLines) {
+    lines.length = maxLines;
+    truncated = true;
+  }
+  if (truncated) {
+    let last = lines[maxLines - 1];
+    while (last.length > 1 && ctx.measureText(`${last}…`).width > maxWidth) {
+      last = last.slice(0, -1);
+    }
+    lines[maxLines - 1] = `${last}…`;
+  }
+
+  const width = lines.reduce((w, l) => Math.max(w, ctx.measureText(l).width), 0);
+  ctx.restore();
+  return { lines, width };
+}
+
 function drawHair(ctx: CanvasRenderingContext2D, x: number, y: number, look: AvatarLook): void {
   switch (look.hairStyle) {
     case "botak":
@@ -137,7 +210,8 @@ function drawStandingBody(
   status: PresenceStatus | null | undefined,
   now: number,
   moving: boolean,
-  seed: number
+  seed: number,
+  urgent: boolean | undefined
 ): void {
   // Idle bob (napas halus) -- cuma aktif saat BERDIRI DIAM (termasuk pas
   // lagi duduk/kerja/dll, karena interaksi juga bikin `moving` false),
@@ -221,6 +295,14 @@ function drawStandingBody(
   if (status) {
     chunkyCircle(ctx, x + 8, y - 27, 2.6, STATUS_COLORS[status], { shadow: false, glow: STATUS_COLORS[status] });
   }
+
+  if (urgent) {
+    // Berdenyut pelan biar kerasa "hidup"/butuh perhatian, bukan ikon
+    // statis -- sisi KIRI kepala, berlawanan dari dot status di kanan.
+    const pulse = 1 + Math.sin(now / 340) * 0.22;
+    chunkyCircle(ctx, x - 8, y - 27, 3.4 * pulse, "#ef4444", { shadow: false, glow: "#ef4444" });
+    outlinedText(ctx, "!", x - 8, y - 27, { size: 6.5, color: "#ffffff", stroke: false });
+  }
 }
 
 export type AvatarDrawInput = {
@@ -248,13 +330,19 @@ export type AvatarDrawInput = {
   /** true kalau avatar sedang benar-benar berjalan -- idle bob/napas
    * dimatikan selama ini supaya nggak numpuk sama walk-bob kaki. */
   moving?: boolean;
+  /** Badge "!" -- orang ini punya notifikasi PENTING yang belum dibaca
+   * (lihat hasUrgentNotification di presence.ts, data ASLI dari
+   * lib/notifications). Digambar di sisi kiri kepala, berdenyut pelan
+   * (beda posisi dari dot status di sisi kanan supaya tidak tumpang
+   * tindih kalau dua-duanya aktif bersamaan). */
+  urgent?: boolean;
 };
 
 /** Gambar satu avatar chibi top-down -- dipanggil tiap frame dari loop di
  * VirtualOfficeClient utk avatar sendiri, rekan lain, orang yang "online
  * di tempat lain" (diam di meja), dan yang tidur di Kamar Staff. */
 export function drawAvatar(ctx: CanvasRenderingContext2D, input: AvatarDrawInput): void {
-  const { x, y, dir, look, label, isSelf, sleeping, emote, status, action, walkPhase = 0, poseEmoji, now, moving = false } = input;
+  const { x, y, dir, look, label, isSelf, sleeping, emote, status, action, walkPhase = 0, poseEmoji, now, moving = false, urgent } = input;
   const seed = seedFromLabel(label);
 
   ctx.save();
@@ -280,7 +368,7 @@ export function drawAvatar(ctx: CanvasRenderingContext2D, input: AvatarDrawInput
   }
 
   if (sleeping) drawSleepingBody(ctx, x, y, look, now, seed);
-  else drawStandingBody(ctx, x, y, dir, look, action, walkPhase, status, now, moving, seed);
+  else drawStandingBody(ctx, x, y, dir, look, action, walkPhase, status, now, moving, seed, urgent);
 
   if (poseEmoji && !sleeping) {
     outlinedText(ctx, poseEmoji, x, y - 36, { size: 13, stroke: false });
@@ -293,16 +381,22 @@ export function drawAvatar(ctx: CanvasRenderingContext2D, input: AvatarDrawInput
   });
 
   if (emote && !sleeping) {
-    const w = Math.min(emote.length * 6.2 + 16, 110);
-    const h = 18;
+    const { lines, width } = layoutBubble(ctx, emote, BUBBLE_MAX_WIDTH, BUBBLE_MAX_LINES);
+    const w = width + 16;
+    const lineH = 13;
+    const h = lines.length * lineH + 8;
     const bx = x - w / 2;
-    const by = y - 58;
+    // Tumbuh ke ATAS kalau makin banyak baris (bukan ke bawah), jadi
+    // ujung bawah bubble tetap nempel dekat kepala walau isinya panjang.
+    const by = y - 50 - (lines.length - 1) * lineH;
     ctx.save();
     ctx.fillStyle = "rgba(15,23,42,0.88)";
     roundRectPath(ctx, bx, by, w, h, 8);
     ctx.fill();
     ctx.restore();
-    outlinedText(ctx, emote, x, by + h / 2, { size: 10, stroke: false });
+    lines.forEach((line, i) => {
+      outlinedText(ctx, line, x, by + lineH / 2 + 4 + i * lineH, { size: 10, stroke: false });
+    });
   }
 }
 

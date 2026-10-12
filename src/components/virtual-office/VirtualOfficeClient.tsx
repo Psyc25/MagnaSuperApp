@@ -58,7 +58,8 @@ import {
 import { getAgentById, type AIAgent } from "@/lib/ai/agents";
 import {
   ACTION_COOLDOWN_MS,
-  EMOTE_DURATION_MS,
+  EMOTE_MAX_LENGTH,
+  emoteDurationFor,
   QUICK_ACTIONS,
   QUICK_EMOTES,
   STATUS_COLORS,
@@ -162,6 +163,7 @@ export function VirtualOfficeClient({
     broadcastAction,
     broadcastInteract,
     myStatus,
+    myUrgent,
     updatePresence,
   } = useVirtualOfficePresence();
 
@@ -312,7 +314,8 @@ export function VirtualOfficeClient({
   // Emote/chat bubble ephemeral: tampil di avatar sendiri secara instan
   // (tidak nunggu round-trip broadcast) + dikirim ke semua orang lain lewat
   // channel presence yang sama supaya muncul di avatarnya juga. Bukan chat
-  // history -- hilang sendiri setelah EMOTE_DURATION_MS.
+  // history -- hilang sendiri setelah durasi dari emoteDurationFor() (makin
+  // panjang teksnya, makin lama bubble-nya nongol, maks ~11s).
   const sendEmote = useCallback(
     (content: string) => {
       const trimmed = content.trim();
@@ -321,7 +324,7 @@ export function VirtualOfficeClient({
       setMyEmote(trimmed);
       broadcastEmote(trimmed);
       playEmote();
-      myEmoteTimeoutRef.current = setTimeout(() => setMyEmote(null), EMOTE_DURATION_MS);
+      myEmoteTimeoutRef.current = setTimeout(() => setMyEmote(null), emoteDurationFor(trimmed));
       setEmotePickerOpen(false);
       setEmoteDraft("");
     },
@@ -414,6 +417,7 @@ export function VirtualOfficeClient({
     myEmote,
     myStatus,
     myAction,
+    myUrgent,
     fullName: currentUser.fullName,
     rosterById,
     presenceMeta,
@@ -428,6 +432,7 @@ export function VirtualOfficeClient({
     myEmote,
     myStatus,
     myAction,
+    myUrgent,
     fullName: currentUser.fullName,
     rosterById,
     presenceMeta,
@@ -516,6 +521,7 @@ export function VirtualOfficeClient({
             emote: live.myEmote,
             status: live.myStatus,
             action: live.myAction,
+            urgent: live.myUrgent,
             walkPhase: walkPhaseRef.current,
             poseEmoji: myInteract ? POSE_EMOJI[myInteract.kind] : null,
             now,
@@ -543,7 +549,7 @@ export function VirtualOfficeClient({
         const interactKind = interactItem ? INTERACTION_BY_KIND[interactItem.kind]?.kind ?? null : null;
 
         const e = remoteEmoteRef.current.get(id);
-        const emoteText = e && now - e.at < EMOTE_DURATION_MS ? e.content : null;
+        const emoteText = e && now - e.at < emoteDurationFor(e.content) ? e.content : null;
         const a = remoteActionRef.current.get(id);
         const actionObj = a ? { kind: a.action, at: a.at } : null;
 
@@ -559,6 +565,7 @@ export function VirtualOfficeClient({
               status: live.presenceMeta.get(id)?.status,
               emote: emoteText,
               action: actionObj,
+              urgent: live.presenceMeta.get(id)?.hasUrgentNotification,
               poseEmoji: interactKind ? POSE_EMOJI[interactKind] : null,
               now,
               moving: movingRemote,
@@ -868,9 +875,9 @@ export function VirtualOfficeClient({
               >
                 <input
                   value={emoteDraft}
-                  onChange={(ev) => setEmoteDraft(ev.target.value.slice(0, 40))}
+                  onChange={(ev) => setEmoteDraft(ev.target.value.slice(0, EMOTE_MAX_LENGTH))}
                   placeholder="Tulis sesuatu..."
-                  maxLength={40}
+                  maxLength={EMOTE_MAX_LENGTH}
                   className="w-36 rounded-lg border border-white/10 bg-slate-800 px-2.5 py-1.5 text-xs text-white placeholder:text-white/40 focus:outline-none focus:ring-1 focus:ring-violet-500"
                 />
                 <button

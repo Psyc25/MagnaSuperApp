@@ -12,6 +12,7 @@ import {
 } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import { listUnreadImportantNotifications } from "@/lib/notifications/actions";
 import { sanitizeLook, defaultLook, type AvatarLook } from "@/lib/virtual-office/avatar-look";
 import type { Dir, RemotePos } from "@/lib/virtual-office/house";
 import {
@@ -61,6 +62,10 @@ type ContextValue = {
   broadcastInteract: (furnitureId: string | null) => void;
   myLook: AvatarLook;
   myStatus: PresenceStatus;
+  /** Badge notifikasi "!" milik sendiri -- lihat hasUrgentNotification di
+   * presence.ts, dipoll otomatis (efek terpisah di bawah), BUKAN sesuatu
+   * yang dipanggil manual lewat updatePresence seperti look/status. */
+  myUrgent: boolean;
   /** Gabungkan field ke presence milik sendiri lalu track() ulang --
    * dipakai utk pindah inOffice, ganti status, simpan karakter baru. */
   updatePresence: (patch: Partial<Pick<PresenceMeta, "look" | "inOffice" | "status">>) => void;
@@ -86,6 +91,7 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
   const [presenceMeta, setPresenceMeta] = useState<Map<string, ResolvedPresence>>(new Map());
   const [myLook, setMyLook] = useState<AvatarLook>(() => defaultLook(userId));
   const [myStatus, setMyStatus] = useState<PresenceStatus>("available");
+  const [myUrgent, setMyUrgent] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,6 +134,7 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
           look: sanitizeLook(m?.look, id),
           inOffice: m?.inOffice === true,
           status: m?.status ?? "available",
+          hasUrgentNotification: m?.hasUrgentNotification === true,
         });
       }
       setOnlineIds(ids);
@@ -164,6 +171,36 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
       channelRef.current = null;
     };
   }, [userId]);
+
+  // Badge notifikasi "!" (permintaan Owner, terinspirasi video referensi
+  // virtual office lain: "biar lebih nyata") -- poll RINGAN (server action
+  // yang sudah ada, RLS sudah membatasi ke notifikasi milik user ini
+  // sendiri, limit 10 baris), bukan realtime subscription baru. Sekali
+  // segera saat mount + ulang tiap 2 menit, cukup untuk badge pasif (bukan
+  // alert mendesak) tanpa membebani server. Hasilnya di-broadcast lewat
+  // presence.track() yang sama persis dengan status/look di atas, jadi
+  // rekan lain ikut lihat badge-nya juga (visibilitas sama dengan status).
+  useEffect(() => {
+    let cancelled = false;
+    async function poll() {
+      const items = await listUnreadImportantNotifications();
+      if (cancelled) return;
+      const urgent = items.length > 0;
+      setMyUrgent((prev) => {
+        if (prev === urgent) return prev;
+        trackedRef.current = { ...trackedRef.current, hasUrgentNotification: urgent };
+        channelRef.current?.track({ onlineAt: new Date().toISOString(), ...trackedRef.current });
+        return urgent;
+      });
+    }
+    void poll();
+    const id = setInterval(poll, 120000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [userId]);
+
   const broadcastMove = useCallback(
     (x: number, y: number, dir: Dir) => {
       channelRef.current?.send({ type: "broadcast", event: "move", payload: { id: userId, x, y, dir } });
@@ -213,13 +250,25 @@ export function VirtualOfficePresenceProvider({ userId, children }: { userId: st
       presenceMeta,
       myLook,
       myStatus,
+      myUrgent,
       broadcastMove,
       broadcastEmote,
       broadcastAction,
       broadcastInteract,
       updatePresence,
     }),
-    [onlineIds, presenceMeta, myLook, myStatus, broadcastMove, broadcastEmote, broadcastAction, broadcastInteract, updatePresence]
+    [
+      onlineIds,
+      presenceMeta,
+      myLook,
+      myStatus,
+      myUrgent,
+      broadcastMove,
+      broadcastEmote,
+      broadcastAction,
+      broadcastInteract,
+      updatePresence,
+    ]
   );
 
   return <VirtualOfficePresenceContext.Provider value={value}>{children}</VirtualOfficePresenceContext.Provider>;

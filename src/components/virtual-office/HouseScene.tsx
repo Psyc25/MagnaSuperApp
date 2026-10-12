@@ -448,6 +448,34 @@ export function drawFurnitureItem(ctx: CanvasRenderingContext2D, item: Furniture
       if (item.label) outlinedText(ctx, item.label, cx, r.y - 6, { size: 8 });
       break;
     }
+    case "ringlight": {
+      // Ring light sudut studio konten (Ruang Creative) -- bukan niru
+      // alat asli, cuma siluet umum sebuah ring light di atas tripod
+      // kecil: ide dari video referensi Owner (5 Okt 2026), digambar
+      // 100% prosedural ala chunky pixel-art, bukan ditiru/jiplak visualnya.
+      const standW = Math.max(2, r.w * 0.18);
+      chunkyRect(ctx, cx - standW / 2, cy + r.h * 0.1, standW, r.h * 0.42, "#44403c", { shadow: false, radius: 1 });
+      chunkyCircle(ctx, cx, r.y + r.h * 0.32, r.w * 0.46, "#fef3c7", { glow: "#fde68a" });
+      chunkyCircle(ctx, cx, r.y + r.h * 0.32, r.w * 0.22, "#78350f", { shadow: false });
+      break;
+    }
+    case "camtripod": {
+      // Kamera di atas tripod kaki tiga -- pelengkap sudut studio konten
+      // di samping ring light & meja kecil "KONTEN".
+      for (const dx of [-1, 0, 1]) {
+        ctx.save();
+        ctx.strokeStyle = "#44403c";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy + r.h * 0.1);
+        ctx.lineTo(cx + dx * r.w * 0.38, r.y + r.h);
+        ctx.stroke();
+        ctx.restore();
+      }
+      chunkyRect(ctx, r.x + r.w * 0.18, r.y, r.w * 0.64, r.h * 0.5, "#1f2937", { radius: 1.5 });
+      chunkyCircle(ctx, cx, r.y + r.h * 0.25, r.w * 0.18, "#0f172a", { shadow: false, glow: "#38bdf8" });
+      break;
+    }
     case "bonfire": {
       const radius = Math.min(r.w, r.h) / 2;
       for (let i = 0; i < 8; i += 1) {

@@ -220,7 +220,9 @@ export type FurnitureKind =
   | "bench"
   | "sofa"
   | "plant"
-  | "wardrobe";
+  | "wardrobe"
+  | "ringlight"
+  | "camtripod";
 
 export type Furniture = { id: string; kind: FurnitureKind; rect: Rect; label?: string };
 
@@ -238,6 +240,14 @@ export const FURNITURE: Furniture[] = [
   // pojok kiri-atas (jauh dari meja & pintu ke lorong di dinding kanan).
   { id: "creative-table", kind: "bigtable", rect: { x: 105, y: 652, w: 170, h: 52 }, label: "MEJA BESAR" },
   { id: "creative-plant", kind: "plant", rect: { x: 75, y: 590, w: 16, h: 16 } },
+  // Sudut studio konten di Ruang Creative (ide dari video referensi Owner,
+  // 5 Okt 2026 -- bukan ditiru gaya visualnya, cuma konsepnya: pojok kerja
+  // bikin konten yang kelihatan nyata) -- ditaruh di area kosong atas-kanan
+  // ruangan, di atas meja besar & di luar jalur pintu ke lorong (y 640-700)
+  // supaya tidak menghalangi lalu-lalang.
+  { id: "content-desk", kind: "desk", rect: { x: 220, y: 608, w: 60, h: 18 }, label: "KONTEN" },
+  { id: "content-ringlight", kind: "ringlight", rect: { x: 202, y: 604, w: 16, h: 24 } },
+  { id: "content-camera", kind: "camtripod", rect: { x: 284, y: 606, w: 18, h: 22 } },
   // Dapur: kulkas, freezer, mesin kopi di dinding; meja melengkung dari
   // tembok kanan ke tengah (didekati dengan 3 potong).
   { id: "fridge", kind: "fridge", rect: { x: 470, y: 366, w: 30, h: 22 }, label: "KULKAS" },
