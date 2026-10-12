@@ -41,6 +41,20 @@ export function lerpTowards(current: Pos, target: Pos, t: number, teleportDistan
   return { x: current.x + dx * t, y: current.y + dy * t };
 }
 
+/** Hash string sederhana (FNV-1a) -- dipakai bikin "seed" idle bob & kedip
+ * per avatar dari label namanya, supaya tiap orang punya fase gerak beda
+ * (nggak bernapas/kedip bareng-bareng persis) tanpa perlu nyimpen state
+ * tambahan apa pun -- drawAvatar tetap murni/stateless, cuma fungsi dari
+ * (now, label). Dipakai juga di drawSleepingBody utk fase napas selimut. */
+function seedFromLabel(label: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < label.length; i += 1) {
+    h ^= label.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % 10000;
+}
+
 function drawHair(ctx: CanvasRenderingContext2D, x: number, y: number, look: AvatarLook): void {
   switch (look.hairStyle) {
     case "botak":
@@ -92,9 +106,12 @@ function drawAccessory(ctx: CanvasRenderingContext2D, x: number, y: number, look
   }
 }
 
-function drawSleepingBody(ctx: CanvasRenderingContext2D, x: number, y: number, look: AvatarLook): void {
+function drawSleepingBody(ctx: CanvasRenderingContext2D, x: number, y: number, look: AvatarLook, now: number, seed: number): void {
   // Kepala di sisi kiri (bantal), badan+selimut memanjang ke kanan.
-  chunkyRect(ctx, x - 16, y - 4, 32, 14, look.pants, { shadow: false, radius: 6, opacity: 0.92 });
+  // Selimut "naik-turun" pelan (napas tidur) -- amplitudo kecil, fase
+  // beda tiap orang (seed dari nama) sama seperti idle bob avatar bangun.
+  const breathe = Math.sin(now / 1100 + seed) * 1;
+  chunkyRect(ctx, x - 16, y - 4 - breathe, 32, 14 + breathe, look.pants, { shadow: false, radius: 6, opacity: 0.92 });
   chunkyCircle(ctx, x - 18, y + 2, 8, look.skin, { shadow: false });
   drawHair(ctx, x - 18, y + 2, look);
   ctx.save();
@@ -117,8 +134,19 @@ function drawStandingBody(
   look: AvatarLook,
   action: AvatarAction | null | undefined,
   walkPhase: number,
-  status: PresenceStatus | null | undefined
+  status: PresenceStatus | null | undefined,
+  now: number,
+  moving: boolean,
+  seed: number
 ): void {
+  // Idle bob (napas halus) -- cuma aktif saat BERDIRI DIAM (termasuk pas
+  // lagi duduk/kerja/dll, karena interaksi juga bikin `moving` false),
+  // amplitudo kecil supaya nggak numpuk sama walk-bob kaki yang sudah ada.
+  // `y` parameter digeser di sini (bukan rename variabel) supaya semua
+  // gambar badan di bawah otomatis ikut terangkat tanpa perlu diubah satu-
+  // satu -- parameter function boleh ditulis ulang di JS/TS.
+  if (!moving) y -= Math.sin(now / 650 + seed) * 1.3;
+
   const face = DIR_VECTOR[dir];
   const legLift = Math.sin(walkPhase) * 3;
 
@@ -161,12 +189,27 @@ function drawStandingBody(
   drawHair(ctx, x, y - 20, look);
 
   const fo = FACE_OFFSETS[dir];
+  // Kedip sesekali -- durasi tiap siklus & titik mulainya beda per avatar
+  // (seed dari nama) biar nggak semua orang kedip bersamaan persis.
+  const blinkPeriod = 3200 + (seed % 1800);
+  const blinking = (now + seed * 37) % blinkPeriod < 110;
   ctx.save();
   ctx.fillStyle = "#1f2937";
-  ctx.beginPath();
-  ctx.arc(x + fo.eyeL[0], y - 20 + fo.eyeL[1], 1.1, 0, Math.PI * 2);
-  ctx.arc(x + fo.eyeR[0], y - 20 + fo.eyeR[1], 1.1, 0, Math.PI * 2);
-  ctx.fill();
+  if (blinking) {
+    ctx.strokeStyle = "#1f2937";
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(x + fo.eyeL[0] - 1.2, y - 20 + fo.eyeL[1]);
+    ctx.lineTo(x + fo.eyeL[0] + 1.2, y - 20 + fo.eyeL[1]);
+    ctx.moveTo(x + fo.eyeR[0] - 1.2, y - 20 + fo.eyeR[1]);
+    ctx.lineTo(x + fo.eyeR[0] + 1.2, y - 20 + fo.eyeR[1]);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.arc(x + fo.eyeL[0], y - 20 + fo.eyeL[1], 1.1, 0, Math.PI * 2);
+    ctx.arc(x + fo.eyeR[0], y - 20 + fo.eyeR[1], 1.1, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.fillStyle = "#b91c1c";
   ctx.beginPath();
   ctx.arc(x + fo.nose[0], y - 20 + fo.nose[1], 1.4, 0, Math.PI * 2);
@@ -198,13 +241,21 @@ export type AvatarDrawInput = {
   /** Emoji kecil menandai pose interaksi perabot (duduk/kerja/dll) --
    * beda dari `emote` (chat bubble teks bebas, lihat presence.ts). */
   poseEmoji?: string | null;
+  /** Jam loop gambar (`now` dari requestAnimationFrame/Date.now()) --
+   * dipakai utk idle bob & kedip supaya avatar nggak beku total pas diam
+   * (permintaan Owner: Kantor Virtual terasa kaku). */
+  now: number;
+  /** true kalau avatar sedang benar-benar berjalan -- idle bob/napas
+   * dimatikan selama ini supaya nggak numpuk sama walk-bob kaki. */
+  moving?: boolean;
 };
 
 /** Gambar satu avatar chibi top-down -- dipanggil tiap frame dari loop di
  * VirtualOfficeClient utk avatar sendiri, rekan lain, orang yang "online
  * di tempat lain" (diam di meja), dan yang tidur di Kamar Staff. */
 export function drawAvatar(ctx: CanvasRenderingContext2D, input: AvatarDrawInput): void {
-  const { x, y, dir, look, label, isSelf, sleeping, emote, status, action, walkPhase = 0, poseEmoji } = input;
+  const { x, y, dir, look, label, isSelf, sleeping, emote, status, action, walkPhase = 0, poseEmoji, now, moving = false } = input;
+  const seed = seedFromLabel(label);
 
   ctx.save();
   ctx.fillStyle = "rgba(2,6,23,0.35)";
@@ -214,9 +265,13 @@ export function drawAvatar(ctx: CanvasRenderingContext2D, input: AvatarDrawInput
   ctx.restore();
 
   if (isSelf && !sleeping) {
+    // Ring penanda diri sendiri "berdenyut" pelan -- bukan cuma dekorasi
+    // statis, selaras sama idle bob badan di bawahnya.
+    const pulse = 1 + Math.sin(now / 480) * 0.18;
     ctx.save();
     ctx.strokeStyle = "#a78bfa";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2 * pulse;
+    ctx.globalAlpha = 0.85 + Math.sin(now / 480) * 0.15;
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
     ctx.ellipse(x, y + 11, 15, 7, 0, 0, Math.PI * 2);
@@ -224,8 +279,8 @@ export function drawAvatar(ctx: CanvasRenderingContext2D, input: AvatarDrawInput
     ctx.restore();
   }
 
-  if (sleeping) drawSleepingBody(ctx, x, y, look);
-  else drawStandingBody(ctx, x, y, dir, look, action, walkPhase, status);
+  if (sleeping) drawSleepingBody(ctx, x, y, look, now, seed);
+  else drawStandingBody(ctx, x, y, dir, look, action, walkPhase, status, now, moving, seed);
 
   if (poseEmoji && !sleeping) {
     outlinedText(ctx, poseEmoji, x, y - 36, { size: 13, stroke: false });

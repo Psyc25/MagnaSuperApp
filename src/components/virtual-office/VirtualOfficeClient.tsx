@@ -227,6 +227,14 @@ export function VirtualOfficeClient({
   const dprRef = useRef(1);
   const walkPhaseRef = useRef(0);
   const smoothPosRef = useRef<Map<string, Pos>>(new Map());
+  // Posisi avatar sendiri yang DIGAMBAR (beda dari posRef.current yang
+  // dipakai fisik/tabrakan/kamera) -- di-ease tiap frame ke arah target
+  // (posisi jalan biasa, atau titik berdiri perabot pas interaksi) supaya
+  // transisi masuk/keluar pose nggak "snap" instan (permintaan Owner:
+  // Kantor Virtual terasa kaku). movingSelfRef dipakai drawAvatar utk
+  // nentuin kapan idle bob/napas aktif.
+  const selfRenderPosRef = useRef<Pos>({ x: SPAWN.x, y: SPAWN.y });
+  const movingSelfRef = useRef(false);
   const lastBroadcastRef = useRef(0);
   const lastRoomRef = useRef<RoomId | undefined | null>(null);
   const lastNearbyRef = useRef<string | null>(null);
@@ -455,7 +463,7 @@ export function VirtualOfficeClient({
       ctx2.fillRect(0, 0, canvasEl.width, canvasEl.height);
 
       applyCameraTransform(ctx2, cameraRef.current, dprRef.current, w, h);
-      drawGround(ctx2, { ownerDoorOpen: live.isOwner });
+      drawGround(ctx2, now, { ownerDoorOpen: live.isOwner });
 
       type Sortable = { sortY: number; render: () => void };
       const items: Sortable[] = [];
@@ -466,7 +474,13 @@ export function VirtualOfficeClient({
 
       const myInteract = myInteractionRef.current;
       const myItem = myInteract ? furnitureById(FURNITURE, myInteract.furnitureId) : null;
-      const myDrawPos = myItem ? interactionStandPoint(myItem) : posRef.current;
+      const myTargetPos = myItem ? interactionStandPoint(myItem) : posRef.current;
+      // Ease posisi GAMBAR ke arah target (bukan snap langsung) -- lihat
+      // komentar selfRenderPosRef di atas. t lebih cepat dari smoothing
+      // rekan lain (0.28 vs 0.22) karena ini avatar sendiri, harus terasa
+      // responsif, cuma nggak instan-snap pas mulai/berhenti interaksi.
+      const myDrawPos = lerpTowards(selfRenderPosRef.current, myTargetPos, 0.28);
+      selfRenderPosRef.current = myDrawPos;
       items.push({
         sortY: myDrawPos.y,
         render: () =>
@@ -482,6 +496,8 @@ export function VirtualOfficeClient({
             action: live.myAction,
             walkPhase: walkPhaseRef.current,
             poseEmoji: myInteract ? POSE_EMOJI[myInteract.kind] : null,
+            now,
+            moving: movingSelfRef.current,
           }),
       });
 
@@ -489,13 +505,19 @@ export function VirtualOfficeClient({
         const entry = live.rosterById.get(id);
         if (!entry) continue;
         const target = remoteRef.current.get(id);
-        const prevSmoothed = smoothPosRef.current.get(id) ?? { x: target?.x ?? SPAWN.x, y: target?.y ?? SPAWN.y };
-        const smoothed = lerpTowards(prevSmoothed, { x: target?.x ?? prevSmoothed.x, y: target?.y ?? prevSmoothed.y }, 0.22);
-        smoothPosRef.current.set(id, smoothed);
-
         const interactFurnitureId = remoteInteractRef.current.get(id) ?? null;
         const interactItem = interactFurnitureId ? furnitureById(FURNITURE, interactFurnitureId) : null;
-        const drawPos = interactItem ? interactionStandPoint(interactItem) : smoothed;
+        const prevSmoothed = smoothPosRef.current.get(id) ?? { x: target?.x ?? SPAWN.x, y: target?.y ?? SPAWN.y };
+        // Target posisi gambar: titik berdiri perabot kalau sedang
+        // interaksi, kalau nggak posisi broadcast terakhir -- dua-duanya
+        // lewat lerpTowards yang sama (bukan snap keras lagi) supaya
+        // masuk/keluar pose rekan lain juga keliatan meluncur halus, sama
+        // seperti punya sendiri.
+        const rawTarget = interactItem ? interactionStandPoint(interactItem) : { x: target?.x ?? prevSmoothed.x, y: target?.y ?? prevSmoothed.y };
+        const smoothed = lerpTowards(prevSmoothed, rawTarget, 0.22);
+        smoothPosRef.current.set(id, smoothed);
+        const movingRemote = !interactItem && Math.hypot(smoothed.x - prevSmoothed.x, smoothed.y - prevSmoothed.y) > 0.4;
+        const drawPos = smoothed;
         const interactKind = interactItem ? INTERACTION_BY_KIND[interactItem.kind]?.kind ?? null : null;
 
         const e = remoteEmoteRef.current.get(id);
@@ -516,6 +538,8 @@ export function VirtualOfficeClient({
               emote: emoteText,
               action: actionObj,
               poseEmoji: interactKind ? POSE_EMOJI[interactKind] : null,
+              now,
+              moving: movingRemote,
             }),
         });
       }
@@ -534,6 +558,7 @@ export function VirtualOfficeClient({
               look: resolveLook(entry, live.presenceMeta),
               label: firstName(entry.fullName),
               status: live.presenceMeta.get(id)?.status,
+              now,
             }),
         });
       }
@@ -551,6 +576,7 @@ export function VirtualOfficeClient({
               look: entry.look,
               label: firstName(entry.fullName),
               sleeping: true,
+              now,
             }),
         });
       });
@@ -597,6 +623,7 @@ export function VirtualOfficeClient({
         }
       }
       walkPhaseRef.current = moving ? walkPhaseRef.current + dt * 12 : 0;
+      movingSelfRef.current = moving;
 
       if (teleported || now - lastBroadcastRef.current > BROADCAST_INTERVAL_MS) {
         lastBroadcastRef.current = now;
