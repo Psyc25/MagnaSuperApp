@@ -226,6 +226,62 @@ function FurnitureMesh({ item }: { item: Furniture }) {
           <Box rect={{ x: r.x + 50, y: r.y + 20, w: 30, h: 24 }} height={10} y={25} color="#475569" />
         </group>
       );
+    case "picnictable":
+      // Meja piknik khas: papan meja di tengah + bangku menempel di kedua
+      // sisi panjang (beda dari "bigtable" yang kursinya lepas-lepas di
+      // sekeliling) -- referensi suasana piknik Halaman Depan.
+      return (
+        <group>
+          <Box rect={r} height={3} y={18} color="#8b5e34" />
+          <Box rect={{ x: r.x + 6, y: r.y + 6, w: r.w - 12, h: r.h - 12 }} height={16} color="#5c3b1e" />
+          <Box rect={{ x: r.x - 12, y: r.y + 3, w: 10, h: r.h - 6 }} height={9} y={2} color="#6b4226" />
+          <Box rect={{ x: r.x + r.w + 2, y: r.y + 3, w: 10, h: r.h - 6 }} height={9} y={2} color="#6b4226" />
+          {item.label && <SmallLabel text={item.label} x={cx} y={cy} height={32} />}
+        </group>
+      );
+    case "bench":
+      return <Box rect={r} height={10} y={2} color="#6b4226" />;
+    case "bonfire": {
+      // Lingkaran batu + kayu bakar silang + nyala api (cone emissive) +
+      // cahaya titik supaya terasa hangat di malam hari -- satu-satunya
+      // perabot yang pakai geometri non-kotak di scene ini, sengaja,
+      // karena bentuknya memang bundar.
+      const [sx, , sz] = toScene(cx, cy);
+      const radius = Math.min(r.w, r.h) / 2;
+      return (
+        <group>
+          <group position={[sx, 0, sz]}>
+            {Array.from({ length: 8 }, (_, i) => {
+              const angle = (i / 8) * Math.PI * 2;
+              return (
+                <mesh key={i} position={[Math.cos(angle) * radius, 3, Math.sin(angle) * radius]}>
+                  <sphereGeometry args={[4, 6, 6]} />
+                  <meshStandardMaterial color="#57534e" />
+                </mesh>
+              );
+            })}
+            <mesh position={[0, 5, 0]} rotation={[0, Math.PI / 5, Math.PI / 2.2]}>
+              <cylinderGeometry args={[2.2, 2.2, radius * 1.4, 8]} />
+              <meshStandardMaterial color="#78350f" />
+            </mesh>
+            <mesh position={[0, 5, 0]} rotation={[0, -Math.PI / 4, Math.PI / 2.4]}>
+              <cylinderGeometry args={[2.2, 2.2, radius * 1.4, 8]} />
+              <meshStandardMaterial color="#5c3b1e" />
+            </mesh>
+            <mesh position={[0, 10, 0]}>
+              <coneGeometry args={[radius * 0.55, 18, 8]} />
+              <meshStandardMaterial color="#f97316" emissive="#f97316" emissiveIntensity={1.1} />
+            </mesh>
+            <mesh position={[0, 7, 0]}>
+              <coneGeometry args={[radius * 0.4, 12, 8]} />
+              <meshStandardMaterial color="#fde047" emissive="#facc15" emissiveIntensity={1.3} />
+            </mesh>
+            <pointLight position={[0, 16, 0]} color="#f97316" intensity={5} distance={150} decay={2} />
+          </group>
+          {item.label && <SmallLabel text={item.label} x={cx} y={cy} height={30} />}
+        </group>
+      );
+    }
     default:
       return null;
   }

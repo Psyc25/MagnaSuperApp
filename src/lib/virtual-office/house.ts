@@ -214,7 +214,10 @@ export type FurnitureKind =
   | "bed"
   | "car"
   | "crate"
-  | "rack";
+  | "rack"
+  | "picnictable"
+  | "bonfire"
+  | "bench";
 
 export type Furniture = { id: string; kind: FurnitureKind; rect: Rect; label?: string };
 
@@ -257,6 +260,14 @@ export const FURNITURE: Furniture[] = [
   { id: "rack-1", kind: "rack", rect: { x: 1460, y: 440, w: 90, h: 56 } },
   { id: "rack-2", kind: "rack", rect: { x: 1570, y: 440, w: 90, h: 56 } },
   { id: "rack-3", kind: "rack", rect: { x: 1680, y: 440, w: 90, h: 56 } },
+  // Spot santai di Halaman Depan (referensi: suasana piknik musim gugur) --
+  // ditaruh di dua sisi gerbang, di luar jalur jalan tes "gerbang -> pintu
+  // utama" (kolom x≈450) dan jauh dari lebar gerbang itu sendiri (x 390-510,
+  // lihat FENCE) supaya tidak menghalangi lalu lintas utama.
+  { id: "picnic-table", kind: "picnictable", rect: { x: 110, y: 905, w: 70, h: 34 }, label: "MEJA SANTAI" },
+  { id: "bonfire", kind: "bonfire", rect: { x: 640, y: 905, w: 36, h: 36 }, label: "API UNGGUN" },
+  { id: "bench-1", kind: "bench", rect: { x: 600, y: 946, w: 50, h: 12 } },
+  { id: "bench-2", kind: "bench", rect: { x: 600, y: 886, w: 50, h: 12 } },
 ];
 
 /** Pajangan lorong tengah (visual, tidak menghalangi). */
