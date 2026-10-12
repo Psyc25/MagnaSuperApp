@@ -28,6 +28,7 @@ export const INTERACTION_BY_KIND: Partial<Record<FurnitureKind, InteractionConfi
   bigtable: { kind: "duduk", verb: (l) => `Duduk di ${l || "Meja"}` },
   picnictable: { kind: "duduk", verb: (l) => `Duduk di ${l || "Meja Piknik"}` },
   bench: { kind: "duduk", verb: () => "Duduk di Bangku" },
+  sofa: { kind: "duduk", verb: (l) => `Duduk di ${l || "Sofa"}` },
   bunkbed: { kind: "tidur", verb: () => "Rebahan Sebentar", momentary: true },
   bed: { kind: "tidur", verb: () => "Rebahan" },
   desk: { kind: "kerja", verb: (l) => `Kerja di Meja ${l}`.trim() },

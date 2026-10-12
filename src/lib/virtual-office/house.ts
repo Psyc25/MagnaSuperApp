@@ -217,7 +217,10 @@ export type FurnitureKind =
   | "rack"
   | "picnictable"
   | "bonfire"
-  | "bench";
+  | "bench"
+  | "sofa"
+  | "plant"
+  | "wardrobe";
 
 export type Furniture = { id: string; kind: FurnitureKind; rect: Rect; label?: string };
 
@@ -231,8 +234,10 @@ export const SLEEP_SLOTS = BUNK_BEDS.length * BEDS_PER_BUNK;
 
 export const FURNITURE: Furniture[] = [
   ...BUNK_BEDS.map((rect, i) => ({ id: `bunk-${i}`, kind: "bunkbed" as const, rect })),
-  // Ruang Creative: satu meja besar lebar di tengah.
+  // Ruang Creative: satu meja besar lebar di tengah + tanaman hias di
+  // pojok kiri-atas (jauh dari meja & pintu ke lorong di dinding kanan).
   { id: "creative-table", kind: "bigtable", rect: { x: 105, y: 652, w: 170, h: 52 }, label: "MEJA BESAR" },
+  { id: "creative-plant", kind: "plant", rect: { x: 75, y: 590, w: 16, h: 16 } },
   // Dapur: kulkas, freezer, mesin kopi di dinding; meja melengkung dari
   // tembok kanan ke tengah (didekati dengan 3 potong).
   { id: "fridge", kind: "fridge", rect: { x: 470, y: 366, w: 30, h: 22 }, label: "KULKAS" },
@@ -249,8 +254,12 @@ export const FURNITURE: Furniture[] = [
   { id: "tv", kind: "tv", rect: { x: 640, y: 456, w: 8, h: 44 }, label: "TV" },
   // Ruang IT.
   { id: "desk-it", kind: "desk", rect: { x: 770, y: 552, w: 60, h: 16 }, label: "IT" },
-  // Kamar Owner.
+  // Kamar Owner: kasur + lemari kayu & tanaman hias di pojok kanan
+  // (jauh dari kasur dan dari pintu di dinding kiri, referensi suasana
+  // "cozy" dari paket referensi tambahan yang dikirim Owner).
   { id: "owner-bed", kind: "bed", rect: { x: 680, y: 660, w: 90, h: 60 } },
+  { id: "owner-wardrobe", kind: "wardrobe", rect: { x: 790, y: 590, w: 40, h: 28 }, label: "LEMARI" },
+  { id: "owner-plant", kind: "plant", rect: { x: 800, y: 710, w: 16, h: 16 } },
   // Garasi & tempat barang besar.
   { id: "car", kind: "car", rect: { x: 110, y: 120, w: 170, h: 80 } },
   { id: "big-1", kind: "crate", rect: { x: 540, y: 120, w: 90, h: 60 }, label: "BOOTH" },
@@ -268,6 +277,13 @@ export const FURNITURE: Furniture[] = [
   { id: "bonfire", kind: "bonfire", rect: { x: 640, y: 905, w: 36, h: 36 }, label: "API UNGGUN" },
   { id: "bench-1", kind: "bench", rect: { x: 600, y: 946, w: 50, h: 12 } },
   { id: "bench-2", kind: "bench", rect: { x: 600, y: 886, w: 50, h: 12 } },
+  // Ruang Depan: pojok sofa santai di sisi kiri (ruangan ini tadinya
+  // kosong total) -- jauh dari jalur pintu utama (kolom x 420-480) dan
+  // dari dinding jendela, terinspirasi referensi sofa isometrik yang
+  // dikirim Owner (tetap digambar lewat kode, lihat draw2d.ts).
+  { id: "depan-sofa", kind: "sofa", rect: { x: 318, y: 800, w: 56, h: 26 }, label: "SOFA" },
+  { id: "depan-plant-1", kind: "plant", rect: { x: 318, y: 770, w: 16, h: 16 } },
+  { id: "depan-plant-2", kind: "plant", rect: { x: 560, y: 790, w: 16, h: 16 } },
 ];
 
 /** Pajangan lorong tengah (visual, tidak menghalangi). */

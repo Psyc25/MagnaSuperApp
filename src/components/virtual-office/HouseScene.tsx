@@ -256,6 +256,45 @@ export function drawFurnitureItem(ctx: CanvasRenderingContext2D, item: Furniture
     case "bench":
       chunkyRect(ctx, r.x, r.y, r.w, r.h, "#6b4226");
       break;
+    case "sofa": {
+      // Sofa krem empuk -- terinspirasi palet referensi sofa isometrik
+      // yang dikirim Owner (warna/suasana saja, digambar ulang 100% lewat
+      // kode gaya "chunky pixel-art" top-down, bukan jiplak gambarnya).
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#e8ddc7", { radius: 3 });
+      chunkyRect(ctx, r.x + 4, r.y + 4, r.w - 8, 7, "#cbb896", { shadow: false, radius: 2 });
+      const seatGap = (r.w - 8) / 2;
+      chunkyRect(ctx, r.x + 4 + seatGap - 1, r.y + 4, 2, r.h - 8, "#cbb896", { shadow: false, radius: 1 });
+      for (const [lx, ly] of [
+        [r.x + 2, r.y + r.h - 3],
+        [r.x + r.w - 5, r.y + r.h - 3],
+      ] as Array<[number, number]>) {
+        chunkyRect(ctx, lx, ly, 3, 4, "#7c5a3a", { shadow: false, radius: 0.5 });
+      }
+      if (item.label) outlinedText(ctx, item.label, cx, r.y - 6, { size: 8 });
+      break;
+    }
+    case "plant": {
+      // Tanaman hias pot -- dekorasi murni (tidak ada di INTERACTION_BY_KIND,
+      // sama seperti rack/crate/car), terinspirasi referensi komposisi
+      // tanaman & pohon pixel-art.
+      chunkyRect(ctx, r.x, r.y + r.h * 0.55, r.w, r.h * 0.45, "#b45309", { radius: 2, shadow: false });
+      chunkyCircle(ctx, cx, r.y + r.h * 0.32, r.w * 0.48, "#3f6212", { shadow: false });
+      chunkyCircle(ctx, cx - r.w * 0.16, r.y + r.h * 0.2, r.w * 0.3, "#65a30d", { shadow: false });
+      break;
+    }
+    case "wardrobe": {
+      // Lemari kayu dua pintu -- dekorasi murni, terinspirasi referensi
+      // lemari kayu gaya retro 8-bit yang dikirim Owner.
+      chunkyRect(ctx, r.x, r.y, r.w, r.h, "#7c5a3a", { radius: 2 });
+      const doorGap = 2;
+      const doorW = (r.w - 8 - doorGap) / 2;
+      chunkyRect(ctx, r.x + 4, r.y + 4, doorW, r.h - 8, "#5c3b1e", { shadow: false, radius: 1.5 });
+      chunkyRect(ctx, r.x + 4 + doorW + doorGap, r.y + 4, doorW, r.h - 8, "#5c3b1e", { shadow: false, radius: 1.5 });
+      chunkyCircle(ctx, r.x + 4 + doorW - 3, cy, 1.4, "#d4a24c", { shadow: false });
+      chunkyCircle(ctx, r.x + 4 + doorW + doorGap + 3, cy, 1.4, "#d4a24c", { shadow: false });
+      if (item.label) outlinedText(ctx, item.label, cx, r.y - 6, { size: 8 });
+      break;
+    }
     case "bonfire": {
       const radius = Math.min(r.w, r.h) / 2;
       for (let i = 0; i < 8; i += 1) {
