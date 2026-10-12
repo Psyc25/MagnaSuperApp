@@ -201,9 +201,14 @@ export function VirtualOfficeClient({
   // bisa dipakai, bukan cuma dekorasi"). myInteractionRef = sumber
   // kebenaran yang dibaca loop gambar tiap frame (lihat efek canvas di
   // bawah); state `myInteraction` cuma utk menggambar tombol UI-nya.
-  const myInteractionRef = useRef<{ furnitureId: string; kind: InteractionKind } | null>(null);
+  // approachPos = posisi avatar PAS mulai interaksi (snapshot sekali,
+  // bukan dihitung ulang tiap frame) -- dipakai interactionStandPoint
+  // buat milih tepi perabot mana yang paling masuk akal (dekat avatar
+  // berdiri sekarang), bukan selalu tepi bawah. Lihat komentar
+  // interactionStandPoint di interactions.ts.
+  const myInteractionRef = useRef<{ furnitureId: string; kind: InteractionKind; approachPos: Pos } | null>(null);
   const interactionStartRef = useRef(0);
-  const [myInteraction, setMyInteraction] = useState<{ furnitureId: string; kind: InteractionKind } | null>(null);
+  const [myInteraction, setMyInteraction] = useState<{ furnitureId: string; kind: InteractionKind; approachPos: Pos } | null>(null);
   const [nearestInteractable, setNearestInteractable] = useState<InteractableNearby | null>(null);
   // Dibaca tiap frame oleh draw() buat gambar highlight in-world (lihat
   // drawInteractHint di HouseScene) -- terpisah dari state React di atas
@@ -212,7 +217,7 @@ export function VirtualOfficeClient({
 
   const startInteraction = useCallback(
     (item: Furniture, config: InteractionConfig) => {
-      const next = { furnitureId: item.id, kind: config.kind };
+      const next = { furnitureId: item.id, kind: config.kind, approachPos: { ...posRef.current } };
       myInteractionRef.current = next;
       interactionStartRef.current = Date.now();
       setMyInteraction(next);
@@ -238,6 +243,11 @@ export function VirtualOfficeClient({
   const dprRef = useRef(1);
   const walkPhaseRef = useRef(0);
   const smoothPosRef = useRef<Map<string, Pos>>(new Map());
+  // Posisi rekan lain PAS mereka mulai interaksi -- snapshot sekali per
+  // sesi interaksi (bukan dihitung ulang tiap frame), sama kayak
+  // myInteractionRef.approachPos tapi versi rekan kerja. Dihapus lagi
+  // begitu mereka berhenti interaksi (lihat loop render di bawah).
+  const remoteApproachPosRef = useRef<Map<string, Pos>>(new Map());
   // Posisi avatar sendiri yang DIGAMBAR (beda dari posRef.current yang
   // dipakai fisik/tabrakan/kamera) -- di-ease tiap frame ke arah target
   // (posisi jalan biasa, atau titik berdiri perabot pas interaksi) supaya
@@ -501,7 +511,7 @@ export function VirtualOfficeClient({
 
       const myInteract = myInteractionRef.current;
       const myItem = myInteract ? furnitureById(FURNITURE, myInteract.furnitureId) : null;
-      const myTargetPos = myItem ? interactionStandPoint(myItem) : posRef.current;
+      const myTargetPos = myItem ? interactionStandPoint(myItem, myInteract?.approachPos) : posRef.current;
       // Pose badan ikut jenis interaksi -- bukan cuma dipindah posisi
       // sambil tetap berdiri (keluhan Owner: interaksi perabot kerasa
       // aneh). "tidur" pakai pose rebahan yang sudah ada (sama kayak
@@ -549,7 +559,17 @@ export function VirtualOfficeClient({
         // lewat lerpTowards yang sama (bukan snap keras lagi) supaya
         // masuk/keluar pose rekan lain juga keliatan meluncur halus, sama
         // seperti punya sendiri.
-        const rawTarget = interactItem ? interactionStandPoint(interactItem) : { x: target?.x ?? prevSmoothed.x, y: target?.y ?? prevSmoothed.y };
+        let approachPos: Pos | undefined;
+        if (interactItem) {
+          approachPos = remoteApproachPosRef.current.get(id);
+          if (!approachPos) {
+            approachPos = { ...prevSmoothed };
+            remoteApproachPosRef.current.set(id, approachPos);
+          }
+        } else {
+          remoteApproachPosRef.current.delete(id);
+        }
+        const rawTarget = interactItem ? interactionStandPoint(interactItem, approachPos) : { x: target?.x ?? prevSmoothed.x, y: target?.y ?? prevSmoothed.y };
         const smoothed = lerpTowards(prevSmoothed, rawTarget, 0.22);
         smoothPosRef.current.set(id, smoothed);
         const movingRemote = !interactItem && Math.hypot(smoothed.x - prevSmoothed.x, smoothed.y - prevSmoothed.y) > 0.4;

@@ -93,21 +93,46 @@ const STAND_OFFSET = 12;
  * menghangatkan diri (hangat/api unggun) tetap di TENGAH rect -- "tidur"
  * sama seperti slot tidur pasif di Kamar Staff (kasur memang didesain
  * avatar di tengahnya), dan "hangat" karena api unggun kecil & dikepung
- * bangku dari dua sisi (bench-1/bench-2 di house.ts) -- tepi bawah +
- * offset keluar malah bikin titik berdirinya lebih dekat ke bangku
- * tetangga daripada ke api unggun sendiri (ketemu pas nulis tes ini).
- * Interaksi lain (duduk/kerja/masak/lihat/nonton) ditaruh di TEPI BAWAH
- * perabot + sedikit offset ke luar, bukan di tengah kotaknya -- supaya
- * avatar kelihatan "memakai" perabotnya dari depan (nggak nancep/berdiri
- * di tengah-tengah meja atau sofa), dan sekalian bikin urutan gambar
- * depan-belakang benar (avatar selalu di atas/depan perabot, bukan
- * ketutup separuh badan). */
-export function interactionStandPoint(item: Furniture): Pos {
+ * bangku dari dua sisi (bench-1/bench-2 di house.ts) -- tepi mana pun
+ * yang dipilih bisa salah gara-gara perabot lain di dekatnya, jadi lebih
+ * aman di tengah.
+ *
+ * Interaksi lain (duduk/kerja/masak/lihat/nonton) ditaruh di TEPI
+ * perabot yang PALING DEKAT dengan `approachPos` (posisi avatar pas
+ * mulai interaksi) + sedikit offset ke luar -- BUKAN selalu tepi bawah.
+ * Alasannya: banyak perabot orientasinya beda-beda (meja tim mepet
+ * tembok atas vs sofa di pojok kiri vs bangku yang ngadep ke api unggun
+ * dari sisi berlawanan), jadi "selalu bawah" bikin avatar yang
+ * sebenarnya sudah mepet di sisi kiri/atas malah "meluncur" muter ke
+ * bawah perabotnya pas tombol interaksi diklik -- itu sumber komplain
+ * Owner "interaksi perabot kerasa aneh" yang masih muncul walau titik
+ * berdirinya sudah dipindah dari tengah ke tepi. Milih tepi berdasarkan
+ * dari mana avatar sebenarnya mendekat jauh lebih natural: dia nggak
+ * akan pernah geser jauh dari tempatnya berdiri sekarang. `approachPos`
+ * opsional -- kalau tidak ada (mis. dipanggil tanpa konteks avatar,
+ * kayak di tes), fallback ke tepi bawah seperti sebelumnya. */
+export function interactionStandPoint(item: Furniture, approachPos?: Pos): Pos {
+  const { x, y, w, h } = item.rect;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
   const config = INTERACTION_BY_KIND[item.kind];
   if (config?.kind === "tidur" || config?.kind === "hangat") {
-    return { x: item.rect.x + item.rect.w / 2, y: item.rect.y + item.rect.h / 2 };
+    return { x: cx, y: cy };
   }
-  return { x: item.rect.x + item.rect.w / 2, y: item.rect.y + item.rect.h + STAND_OFFSET };
+  if (approachPos) {
+    const overTop = y - approachPos.y;
+    const overBottom = approachPos.y - (y + h);
+    const overLeft = x - approachPos.x;
+    const overRight = approachPos.x - (x + w);
+    const most = Math.max(overTop, overBottom, overLeft, overRight);
+    if (most > 0) {
+      if (most === overBottom) return { x: cx, y: y + h + STAND_OFFSET };
+      if (most === overTop) return { x: cx, y: y - STAND_OFFSET };
+      if (most === overLeft) return { x: x - STAND_OFFSET, y: cy };
+      return { x: x + w + STAND_OFFSET, y: cy };
+    }
+  }
+  return { x: cx, y: y + h + STAND_OFFSET };
 }
 
 /** Cari satu objek Furniture dari id-nya -- dipakai buat merender avatar

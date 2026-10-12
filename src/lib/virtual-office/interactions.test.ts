@@ -30,6 +30,30 @@ describe("Interaksi perabot", () => {
     expect(near?.furniture.id).not.toBe(crate.id);
   });
 
+  it("titik berdiri ikut sisi mana avatar mendekat, bukan selalu tepi bawah", () => {
+    // Keluhan Owner (Okt 2026, round 2): avatar yang udah mepet di sisi
+    // kiri/atas perabot malah "meluncur" muter ke tepi bawah pas tombol
+    // interaksi diklik. Meja besar Ruang Creative dites dari 3 sisi.
+    const table = FURNITURE.find((f) => f.id === "creative-table")!;
+    const { x, y, w, h } = table.rect;
+
+    const fromAbove = interactionStandPoint(table, { x: x + w / 2, y: y - 30 });
+    expect(fromAbove.y).toBeLessThan(y); // nempel tepi ATAS, bukan bawah
+    expect(fromAbove.x).toBeCloseTo(x + w / 2);
+
+    const fromRight = interactionStandPoint(table, { x: x + w + 30, y: y + h / 2 });
+    expect(fromRight.x).toBeGreaterThan(x + w); // nempel tepi KANAN
+
+    const fromBelow = interactionStandPoint(table, { x: x + w / 2, y: y + h + 30 });
+    expect(fromBelow.y).toBeGreaterThan(y + h); // nempel tepi BAWAH (sama kayak sebelumnya)
+  });
+
+  it("tanpa approachPos (mis. dipanggil tanpa konteks avatar) tetap fallback ke tepi bawah", () => {
+    const table = FURNITURE.find((f) => f.id === "creative-table")!;
+    const noPos = interactionStandPoint(table);
+    expect(noPos.y).toBeGreaterThan(table.rect.y + table.rect.h);
+  });
+
   it("radius interaksi konsisten dengan konstanta yang diekspor", () => {
     // Dites dari sisi BAWAH bench-1 (bukan atas) -- bench-2 cuma 48px di
     // atas bench-1, lebih sempit dari INTERACT_RADIUS, jadi titik uji di
