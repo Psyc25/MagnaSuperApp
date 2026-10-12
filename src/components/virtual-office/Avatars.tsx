@@ -211,7 +211,8 @@ function drawStandingBody(
   now: number,
   moving: boolean,
   seed: number,
-  urgent: boolean | undefined
+  urgent: boolean | undefined,
+  seated: boolean | undefined
 ): void {
   // Idle bob (napas halus) -- cuma aktif saat BERDIRI DIAM (termasuk pas
   // lagi duduk/kerja/dll, karena interaksi juga bikin `moving` false),
@@ -224,9 +225,19 @@ function drawStandingBody(
   const face = DIR_VECTOR[dir];
   const legLift = Math.sin(walkPhase) * 3;
 
-  // Kaki -- bergantian naik-turun saat jalan (pengganti walk-bob 3D).
-  chunkyRect(ctx, x - 7, y + 2 - Math.max(0, legLift), 5, 9, look.pants, { shadow: false, radius: 2 });
-  chunkyRect(ctx, x + 2, y + 2 + Math.max(0, -legLift), 5, 9, look.pants, { shadow: false, radius: 2 });
+  if (seated) {
+    // Kaki ditekuk/duduk -- dua kotak PENDEK & lebih lebar (lutut
+    // menekuk ke depan), beda jelas dari kaki berdiri yang ramping
+    // vertikal, supaya "duduk di meja/sofa" kelihatan beneran duduk,
+    // bukan cuma berdiri dipindah ke perabotnya (keluhan Owner: interaksi
+    // perabot kerasa aneh -- lihat gap report Oktober 2026).
+    chunkyRect(ctx, x - 8, y + 5, 7, 6, look.pants, { shadow: false, radius: 2 });
+    chunkyRect(ctx, x + 1, y + 5, 7, 6, look.pants, { shadow: false, radius: 2 });
+  } else {
+    // Kaki -- bergantian naik-turun saat jalan (pengganti walk-bob 3D).
+    chunkyRect(ctx, x - 7, y + 2 - Math.max(0, legLift), 5, 9, look.pants, { shadow: false, radius: 2 });
+    chunkyRect(ctx, x + 2, y + 2 + Math.max(0, -legLift), 5, 9, look.pants, { shadow: false, radius: 2 });
+  }
 
   // Gestur lengan (tonjok/tos/lambai) -- envelope 0->1->0 selama
   // ACTION_ANIM_MS, sama konsepnya dengan versi R3F sebelumnya, cuma
@@ -336,13 +347,20 @@ export type AvatarDrawInput = {
    * (beda posisi dari dot status di sisi kanan supaya tidak tumpang
    * tindih kalau dua-duanya aktif bersamaan). */
   urgent?: boolean;
+  /** true kalau sedang memakai perabot yang posenya "duduk" (meja/sofa/
+   * bangku) atau "kerja" (meja kerja) -- lihat INTERACTION_BY_KIND di
+   * interactions.ts. Menggambar kaki ditekuk, bukan kaki berdiri biasa,
+   * supaya "duduk"/"kerja" di perabot kelihatan beneran duduk, bukan
+   * cuma berdiri dipindah ke titik perabotnya. Beda dari `sleeping`
+   * (rebahan di kasur, pose terbaring penuh, bukan cuma kaki). */
+  seated?: boolean;
 };
 
 /** Gambar satu avatar chibi top-down -- dipanggil tiap frame dari loop di
  * VirtualOfficeClient utk avatar sendiri, rekan lain, orang yang "online
  * di tempat lain" (diam di meja), dan yang tidur di Kamar Staff. */
 export function drawAvatar(ctx: CanvasRenderingContext2D, input: AvatarDrawInput): void {
-  const { x, y, dir, look, label, isSelf, sleeping, emote, status, action, walkPhase = 0, poseEmoji, now, moving = false, urgent } = input;
+  const { x, y, dir, look, label, isSelf, sleeping, emote, status, action, walkPhase = 0, poseEmoji, now, moving = false, urgent, seated } = input;
   const seed = seedFromLabel(label);
 
   ctx.save();
@@ -368,7 +386,7 @@ export function drawAvatar(ctx: CanvasRenderingContext2D, input: AvatarDrawInput
   }
 
   if (sleeping) drawSleepingBody(ctx, x, y, look, now, seed);
-  else drawStandingBody(ctx, x, y, dir, look, action, walkPhase, status, now, moving, seed, urgent);
+  else drawStandingBody(ctx, x, y, dir, look, action, walkPhase, status, now, moving, seed, urgent, seated);
 
   if (poseEmoji && !sleeping) {
     outlinedText(ctx, poseEmoji, x, y - 36, { size: 13, stroke: false });

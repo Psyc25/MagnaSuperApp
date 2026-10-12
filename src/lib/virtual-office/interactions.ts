@@ -83,10 +83,31 @@ export function findNearestInteractable(pos: Pos, furniture: readonly Furniture[
   return best;
 }
 
-/** Titik berdiri/duduk avatar saat memakai perabot -- tengah rect-nya
- * (cukup presisi utk tampilan chibi top-down 2D, tidak perlu per-kursi). */
+/** Jarak avatar dari tepi perabot saat berdiri/duduk memakainya -- sama
+ * dengan PLAYER_RADIUS (house.ts) biar konsisten sama ukuran tabrakan
+ * avatar, dihardcode di sini supaya interactions.ts tetap berdiri sendiri
+ * tanpa import dari house.ts selain tipe. */
+const STAND_OFFSET = 12;
+
+/** Titik berdiri/duduk avatar saat memakai perabot. Rebahan (tidur) DAN
+ * menghangatkan diri (hangat/api unggun) tetap di TENGAH rect -- "tidur"
+ * sama seperti slot tidur pasif di Kamar Staff (kasur memang didesain
+ * avatar di tengahnya), dan "hangat" karena api unggun kecil & dikepung
+ * bangku dari dua sisi (bench-1/bench-2 di house.ts) -- tepi bawah +
+ * offset keluar malah bikin titik berdirinya lebih dekat ke bangku
+ * tetangga daripada ke api unggun sendiri (ketemu pas nulis tes ini).
+ * Interaksi lain (duduk/kerja/masak/lihat/nonton) ditaruh di TEPI BAWAH
+ * perabot + sedikit offset ke luar, bukan di tengah kotaknya -- supaya
+ * avatar kelihatan "memakai" perabotnya dari depan (nggak nancep/berdiri
+ * di tengah-tengah meja atau sofa), dan sekalian bikin urutan gambar
+ * depan-belakang benar (avatar selalu di atas/depan perabot, bukan
+ * ketutup separuh badan). */
 export function interactionStandPoint(item: Furniture): Pos {
-  return { x: item.rect.x + item.rect.w / 2, y: item.rect.y + item.rect.h / 2 };
+  const config = INTERACTION_BY_KIND[item.kind];
+  if (config?.kind === "tidur" || config?.kind === "hangat") {
+    return { x: item.rect.x + item.rect.w / 2, y: item.rect.y + item.rect.h / 2 };
+  }
+  return { x: item.rect.x + item.rect.w / 2, y: item.rect.y + item.rect.h + STAND_OFFSET };
 }
 
 /** Cari satu objek Furniture dari id-nya -- dipakai buat merender avatar

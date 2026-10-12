@@ -502,6 +502,12 @@ export function VirtualOfficeClient({
       const myInteract = myInteractionRef.current;
       const myItem = myInteract ? furnitureById(FURNITURE, myInteract.furnitureId) : null;
       const myTargetPos = myItem ? interactionStandPoint(myItem) : posRef.current;
+      // Pose badan ikut jenis interaksi -- bukan cuma dipindah posisi
+      // sambil tetap berdiri (keluhan Owner: interaksi perabot kerasa
+      // aneh). "tidur" pakai pose rebahan yang sudah ada (sama kayak
+      // tidur pasif di Kamar Staff), "duduk"/"kerja" pakai kaki ditekuk.
+      const mySleeping = myInteract?.kind === "tidur";
+      const mySeated = myInteract?.kind === "duduk" || myInteract?.kind === "kerja";
       // Ease posisi GAMBAR ke arah target (bukan snap langsung) -- lihat
       // komentar selfRenderPosRef di atas. t lebih cepat dari smoothing
       // rekan lain (0.28 vs 0.22) karena ini avatar sendiri, harus terasa
@@ -522,6 +528,8 @@ export function VirtualOfficeClient({
             status: live.myStatus,
             action: live.myAction,
             urgent: live.myUrgent,
+            sleeping: mySleeping,
+            seated: mySeated,
             walkPhase: walkPhaseRef.current,
             poseEmoji: myInteract ? POSE_EMOJI[myInteract.kind] : null,
             now,
@@ -566,6 +574,8 @@ export function VirtualOfficeClient({
               emote: emoteText,
               action: actionObj,
               urgent: live.presenceMeta.get(id)?.hasUrgentNotification,
+              sleeping: interactKind === "tidur",
+              seated: interactKind === "duduk" || interactKind === "kerja",
               poseEmoji: interactKind ? POSE_EMOJI[interactKind] : null,
               now,
               moving: movingRemote,
