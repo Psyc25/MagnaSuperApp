@@ -69,6 +69,7 @@ import {
 } from "@/lib/virtual-office/presence";
 import { applyCameraTransform, drawFurnitureItem, drawGround, drawInteractHint, DEFAULT_CAMERA_SCALE, type Camera } from "./HouseScene";
 import { drawAgentNPC, drawAvatar, lerpTowards, type AvatarAction, type Dir, type RemotePos } from "./Avatars";
+import { ActivityFeed } from "./ActivityFeed";
 import { isAudioMuted, playAction, playEmote, playFootstep, playInteractToggle, playNotify, setAudioMuted } from "@/lib/virtual-office/sfx";
 import {
   findNearestInteractable,
@@ -878,7 +879,8 @@ export function VirtualOfficeClient({
         <CharacterEditor initial={savedLook} onPreview={setLook} onSaved={handleSaved} onClose={() => setEditing(false)} />
       )}
 
-      <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl" style={{ aspectRatio: "16 / 10" }}>
+      <div className="flex flex-col gap-3 lg:flex-row">
+      <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl lg:flex-[2.2]" style={{ aspectRatio: "16 / 10" }}>
         <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
 
         <div className="absolute left-3 bottom-3 flex flex-col items-start gap-2">
@@ -1030,6 +1032,11 @@ export function VirtualOfficeClient({
             <span className="rounded-full bg-black/70 px-4 py-1.5 text-xs font-semibold text-white shadow-lg">{toast}</span>
           </div>
         )}
+      </div>
+
+      <div className="lg:flex-[1.3]">
+        <ActivityFeed />
+      </div>
       </div>
 
       <div className="flex items-center justify-center gap-2 sm:hidden">
