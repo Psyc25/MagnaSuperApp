@@ -41,6 +41,25 @@ export function lerpTowards(current: Pos, target: Pos, t: number, teleportDistan
   return { x: current.x + dx * t, y: current.y + dy * t };
 }
 
+/** Durasi animasi "pop" singkat (squash/stretch + lean badan sekilas)
+ * tiap kali avatar ganti ARAH HADAP (dipakai drawStandingBody) -- bukan
+ * animasi belok yang mulus/lambat, tapi aksen cepat ala kartun supaya
+ * ganti arah kerasa ada "oomph"-nya (gap laporan Oktober 2026: "belum
+ * ada squash/stretch atau lean badan saat belok" -- beda dari
+ * currentSpeedRef/walkPhase di VirtualOfficeClient yang menghaluskan
+ * KECEPATAN jalan & animasi kaki, bukan ganti arah hadapnya). */
+export const TURN_POP_MS = 220;
+
+/** Envelope 0->1->0 (pure, testable) utk animasi pop ganti arah -- pola
+ * sama dengan envelope gestur lengan (sin(t*PI)) di drawStandingBody,
+ * supaya konsisten. `elapsedMs` negatif, Infinity (belum pernah ganti
+ * arah), atau >= durationMs (animasi sudah lewat) = 0 (drawStandingBody
+ * jadi no-op transform, bukan dibikin bercabang if/else terpisah). */
+export function turnPopEnvelope(elapsedMs: number, durationMs: number = TURN_POP_MS): number {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0 || elapsedMs >= durationMs) return 0;
+  return Math.sin((elapsedMs / durationMs) * Math.PI);
+}
+
 /** Hash string sederhana (FNV-1a) -- dipakai bikin "seed" idle bob & kedip
  * per avatar dari label namanya, supaya tiap orang punya fase gerak beda
  * (nggak bernapas/kedip bareng-bareng persis) tanpa perlu nyimpen state
@@ -212,7 +231,8 @@ function drawStandingBody(
   moving: boolean,
   seed: number,
   urgent: boolean | undefined,
-  seated: boolean | undefined
+  seated: boolean | undefined,
+  turnAt: number | null | undefined
 ): void {
   // Idle bob (napas halus) -- cuma aktif saat BERDIRI DIAM (termasuk pas
   // lagi duduk/kerja/dll, karena interaksi juga bikin `moving` false),
@@ -224,6 +244,32 @@ function drawStandingBody(
 
   const face = DIR_VECTOR[dir];
   const legLift = Math.sin(walkPhase) * 3;
+
+  // "Pop" singkat tiap kali avatar GANTI ARAH HADAP (bukan tiap mulai
+  // jalan) -- squash/stretch seluruh badan + lean bahu/kepala sekilas ke
+  // arah baru, biar belok nggak kerasa instan muter di tempat (gap
+  // laporan Oktober 2026: "belum ada squash/stretch atau lean badan").
+  // turnEnv 0 di luar jendela TURN_POP_MS (lihat turnPopEnvelope), jadi
+  // transform di bawah otomatis jadi no-op (scale 1:1, lean 0) di luar
+  // momen belok -- tidak perlu cabang if/else terpisah. Dimatikan saat
+  // duduk/kerja (seated) karena badan nggak benar-benar "belok" di situ.
+  const turnElapsed = turnAt != null ? now - turnAt : Infinity;
+  const turnEnv = seated ? 0 : turnPopEnvelope(turnElapsed);
+  ctx.save();
+  // Skala dari titik dekat kaki (bukan tengah badan) -- biar kerasa
+  // "lentur dari tanah" seperti squash/stretch kartun, bukan badan
+  // ngambang membesar/mengecil.
+  const anchorX = x;
+  const anchorY = y + 6;
+  ctx.translate(anchorX, anchorY);
+  ctx.scale(1 + turnEnv * 0.14, 1 - turnEnv * 0.1);
+  ctx.translate(-anchorX, -anchorY);
+  // Titik gambar bahu+kepala ke atas (lx, ly) -- geser sekilas ke arah
+  // hadap baru, beda dari kaki (tetap di x, y / "nempel tanah") supaya
+  // keliatan badan atas yang momentum-nya ketinggalan sesaat dari kaki
+  // yang sudah muter duluan.
+  const lx = x + face.x * turnEnv * 4;
+  const ly = y + face.y * turnEnv * 4;
 
   if (seated) {
     // Kaki ditekuk/duduk -- dua kotak PENDEK & lebih lebar (lutut
@@ -266,12 +312,12 @@ function drawStandingBody(
     }
   }
 
-  chunkyCircle(ctx, x - 10 + leftArm.x, y - 2 + leftArm.y, 4, look.shirt, { shadow: false });
-  chunkyCircle(ctx, x + 10 + rightArm.x, y - 2 + rightArm.y, 4, look.shirt, { shadow: false });
+  chunkyCircle(ctx, lx - 10 + leftArm.x, ly - 2 + leftArm.y, 4, look.shirt, { shadow: false });
+  chunkyCircle(ctx, lx + 10 + rightArm.x, ly - 2 + rightArm.y, 4, look.shirt, { shadow: false });
 
-  chunkyRect(ctx, x - 9, y - 12, 18, 16, look.shirt, { radius: 5, shadow: false });
-  chunkyCircle(ctx, x, y - 20, 9, look.skin, { shadow: false });
-  drawHair(ctx, x, y - 20, look);
+  chunkyRect(ctx, lx - 9, ly - 12, 18, 16, look.shirt, { radius: 5, shadow: false });
+  chunkyCircle(ctx, lx, ly - 20, 9, look.skin, { shadow: false });
+  drawHair(ctx, lx, ly - 20, look);
 
   const fo = FACE_OFFSETS[dir];
   // Kedip sesekali -- durasi tiap siklus & titik mulainya beda per avatar
@@ -284,36 +330,42 @@ function drawStandingBody(
     ctx.strokeStyle = "#1f2937";
     ctx.lineWidth = 1.1;
     ctx.beginPath();
-    ctx.moveTo(x + fo.eyeL[0] - 1.2, y - 20 + fo.eyeL[1]);
-    ctx.lineTo(x + fo.eyeL[0] + 1.2, y - 20 + fo.eyeL[1]);
-    ctx.moveTo(x + fo.eyeR[0] - 1.2, y - 20 + fo.eyeR[1]);
-    ctx.lineTo(x + fo.eyeR[0] + 1.2, y - 20 + fo.eyeR[1]);
+    ctx.moveTo(lx + fo.eyeL[0] - 1.2, ly - 20 + fo.eyeL[1]);
+    ctx.lineTo(lx + fo.eyeL[0] + 1.2, ly - 20 + fo.eyeL[1]);
+    ctx.moveTo(lx + fo.eyeR[0] - 1.2, ly - 20 + fo.eyeR[1]);
+    ctx.lineTo(lx + fo.eyeR[0] + 1.2, ly - 20 + fo.eyeR[1]);
     ctx.stroke();
   } else {
     ctx.beginPath();
-    ctx.arc(x + fo.eyeL[0], y - 20 + fo.eyeL[1], 1.1, 0, Math.PI * 2);
-    ctx.arc(x + fo.eyeR[0], y - 20 + fo.eyeR[1], 1.1, 0, Math.PI * 2);
+    ctx.arc(lx + fo.eyeL[0], ly - 20 + fo.eyeL[1], 1.1, 0, Math.PI * 2);
+    ctx.arc(lx + fo.eyeR[0], ly - 20 + fo.eyeR[1], 1.1, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.fillStyle = "#b91c1c";
   ctx.beginPath();
-  ctx.arc(x + fo.nose[0], y - 20 + fo.nose[1], 1.4, 0, Math.PI * 2);
+  ctx.arc(lx + fo.nose[0], ly - 20 + fo.nose[1], 1.4, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
-  drawAccessory(ctx, x, y - 20, look);
+  drawAccessory(ctx, lx, ly - 20, look);
 
   if (status) {
-    chunkyCircle(ctx, x + 8, y - 27, 2.6, STATUS_COLORS[status], { shadow: false, glow: STATUS_COLORS[status] });
+    chunkyCircle(ctx, lx + 8, ly - 27, 2.6, STATUS_COLORS[status], { shadow: false, glow: STATUS_COLORS[status] });
   }
 
   if (urgent) {
     // Berdenyut pelan biar kerasa "hidup"/butuh perhatian, bukan ikon
     // statis -- sisi KIRI kepala, berlawanan dari dot status di kanan.
     const pulse = 1 + Math.sin(now / 340) * 0.22;
-    chunkyCircle(ctx, x - 8, y - 27, 3.4 * pulse, "#ef4444", { shadow: false, glow: "#ef4444" });
-    outlinedText(ctx, "!", x - 8, y - 27, { size: 6.5, color: "#ffffff", stroke: false });
+    chunkyCircle(ctx, lx - 8, ly - 27, 3.4 * pulse, "#ef4444", { shadow: false, glow: "#ef4444" });
+    outlinedText(ctx, "!", lx - 8, ly - 27, { size: 6.5, color: "#ffffff", stroke: false });
   }
+
+  // Tutup transform squash/stretch yang dibuka di awal fungsi (sebelum
+  // kaki digambar) -- label nama/pose emoji/emote bubble digambar
+  // belakangan di drawAvatar(), SETELAH fungsi ini return, jadi otomatis
+  // tidak ikut ketarik squash/stretch (sengaja -- teks biar tetap tajam).
+  ctx.restore();
 }
 
 export type AvatarDrawInput = {
@@ -354,13 +406,22 @@ export type AvatarDrawInput = {
    * cuma berdiri dipindah ke titik perabotnya. Beda dari `sleeping`
    * (rebahan di kasur, pose terbaring penuh, bukan cuma kaki). */
   seated?: boolean;
+  /** Timestamp (ms, epoch sama dengan `now`) terakhir kali avatar ganti
+   * ARAH HADAP (bukan mulai jalan) -- dipakai trigger animasi "pop"
+   * singkat (squash/stretch + lean badan sekilas) tiap belok, lihat
+   * turnPopEnvelope. Pemanggil (VirtualOfficeClient) yang nyimpen &
+   * update timestamp ini tiap kali `dir` yang dikirim beda dari
+   * sebelumnya -- drawAvatar sendiri tetap murni/stateless, cuma baca
+   * selisih now-turnAt. null/undefined = belum pernah ganti arah
+   * (tidak ada efek). */
+  turnAt?: number | null;
 };
 
 /** Gambar satu avatar chibi top-down -- dipanggil tiap frame dari loop di
  * VirtualOfficeClient utk avatar sendiri, rekan lain, orang yang "online
  * di tempat lain" (diam di meja), dan yang tidur di Kamar Staff. */
 export function drawAvatar(ctx: CanvasRenderingContext2D, input: AvatarDrawInput): void {
-  const { x, y, dir, look, label, isSelf, sleeping, emote, status, action, walkPhase = 0, poseEmoji, now, moving = false, urgent, seated } = input;
+  const { x, y, dir, look, label, isSelf, sleeping, emote, status, action, walkPhase = 0, poseEmoji, now, moving = false, urgent, seated, turnAt } = input;
   const seed = seedFromLabel(label);
 
   ctx.save();
@@ -386,7 +447,7 @@ export function drawAvatar(ctx: CanvasRenderingContext2D, input: AvatarDrawInput
   }
 
   if (sleeping) drawSleepingBody(ctx, x, y, look, now, seed);
-  else drawStandingBody(ctx, x, y, dir, look, action, walkPhase, status, now, moving, seed, urgent, seated);
+  else drawStandingBody(ctx, x, y, dir, look, action, walkPhase, status, now, moving, seed, urgent, seated, turnAt);
 
   if (poseEmoji && !sleeping) {
     outlinedText(ctx, poseEmoji, x, y - 36, { size: 13, stroke: false });

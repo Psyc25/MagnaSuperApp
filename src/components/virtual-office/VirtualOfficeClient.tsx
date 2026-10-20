@@ -185,6 +185,14 @@ export function VirtualOfficeClient({
 
   const posRef = useRef<Pos>({ ...SPAWN });
   const dirRef = useRef<Dir>("up");
+  // Timestamp (Date.now(), sama epoch dgn `now` loop gambar) terakhir
+  // kali `dirRef` BERUBAH -- beda dari dirRef sendiri (cuma simpan arah
+  // SEKARANG) -- dipakai drawAvatar (lihat turnAt/turnPopEnvelope di
+  // Avatars.tsx) memicu animasi "pop" singkat (squash/stretch + lean
+  // badan) tiap belok, bukan tiap mulai jalan (gap laporan Oktober 2026:
+  // "belum ada squash/stretch atau lean badan saat belok"). Diupdate di
+  // step() tiap kali arah baru beda dari dirRef.current sebelum ditimpa.
+  const turnAtRef = useRef(0);
   const keysRef = useRef<Set<string>>(new Set());
 
   const [look, setLook] = useState<AvatarLook>(currentUser.look);
@@ -300,6 +308,12 @@ export function VirtualOfficeClient({
   // myInteractionRef.approachPos tapi versi rekan kerja. Dihapus lagi
   // begitu mereka berhenti interaksi (lihat loop render di bawah).
   const remoteApproachPosRef = useRef<Map<string, Pos>>(new Map());
+  // Timestamp terakhir kali ARAH HADAP rekan lain berubah (per id) --
+  // versi remote dari turnAtRef di atas, dibaca dari `dir` yang mereka
+  // broadcast (bukan dihitung sendiri, beda dari currentSpeedRef yang
+  // cuma ada utk avatar sendiri). Dipakai sama: trigger animasi pop
+  // (squash/stretch + lean) avatar rekan lain pas mereka belok juga.
+  const remoteTurnRef = useRef<Map<string, { dir: Dir; at: number }>>(new Map());
   // Posisi avatar sendiri yang DIGAMBAR (beda dari posRef.current yang
   // dipakai fisik/tabrakan/kamera) -- di-ease tiap frame ke arah target
   // (posisi jalan biasa, atau titik berdiri perabot pas interaksi) supaya
@@ -594,6 +608,7 @@ export function VirtualOfficeClient({
             poseEmoji: myInteract ? POSE_EMOJI[myInteract.kind] : null,
             now,
             moving: movingSelfRef.current,
+            turnAt: turnAtRef.current,
           }),
       });
 
@@ -631,13 +646,28 @@ export function VirtualOfficeClient({
         const a = remoteActionRef.current.get(id);
         const actionObj = a ? { kind: a.action, at: a.at } : null;
 
+        // Sama logikanya dgn turnAtRef avatar sendiri di step(), cuma
+        // sumber arahnya dari broadcast rekan (target?.dir), bukan
+        // tombol yang kita tekan sendiri -- lihat komentar remoteTurnRef.
+        const remoteDir = target?.dir ?? "down";
+        const prevTurn = remoteTurnRef.current.get(id);
+        if (!prevTurn) {
+          // Pertama kali rekan ini muncul di frame -- simpan arahnya tanpa
+          // memicu pop (at: 0, sama seperti turnAtRef avatar sendiri yang
+          // mulai dari 0), supaya orang yang baru kelihatan nggak langsung
+          // "pop" seolah baru belok.
+          remoteTurnRef.current.set(id, { dir: remoteDir, at: 0 });
+        } else if (prevTurn.dir !== remoteDir) {
+          remoteTurnRef.current.set(id, { dir: remoteDir, at: now });
+        }
+
         items.push({
           sortY: drawPos.y,
           render: () =>
             drawAvatar(ctx2, {
               x: drawPos.x,
               y: drawPos.y,
-              dir: target?.dir ?? "down",
+              dir: remoteDir,
               look: resolveLook(entry, live.presenceMeta),
               label: firstName(entry.fullName),
               status: live.presenceMeta.get(id)?.status,
@@ -649,6 +679,7 @@ export function VirtualOfficeClient({
               poseEmoji: interactKind ? POSE_EMOJI[interactKind] : null,
               now,
               moving: movingRemote,
+              turnAt: remoteTurnRef.current.get(id)?.at ?? null,
             }),
         });
       }
@@ -731,7 +762,13 @@ export function VirtualOfficeClient({
       if (trying && canWalk) {
         const len = Math.hypot(vx, vy) || 1;
         lastMoveDirRef.current = { x: vx / len, y: vy / len };
-        dirRef.current = Math.abs(vx) > Math.abs(vy) ? (vx > 0 ? "right" : "left") : vy > 0 ? "down" : "up";
+        const nextDir = Math.abs(vx) > Math.abs(vy) ? (vx > 0 ? "right" : "left") : vy > 0 ? "down" : "up";
+        // Catat timestamp HANYA pas arah hadap benar-benar berubah (bukan
+        // tiap frame tombol ditahan) -- ini yang dibaca drawAvatar lewat
+        // turnAt buat memicu animasi pop sekali per belokan, bukan nonstop
+        // selama jalan ke arah yang sama (lihat komentar turnAtRef di atas).
+        if (nextDir !== dirRef.current) turnAtRef.current = now;
+        dirRef.current = nextDir;
       }
       // Ease kecepatan ke target (0 kalau diam/lagi interaksi, speed
       // penuh/sprint kalau tombol ditahan) -- bukan on/off instan, biar
