@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Bell, Clock, Rocket } from "lucide-react";
 import { listMyNotifications } from "@/lib/notifications/actions";
 import type { AppNotification } from "@/lib/notifications/types";
+import { ROOM_ACTIVITY_COLORS, ROOM_ACTIVITY_LABELS, type RoomHighlight } from "@/lib/virtual-office/house";
 
 const POLL_MS = 60_000;
 const MAX_ITEMS = 12;
@@ -38,7 +39,7 @@ function timeAgo(iso: string): string {
  * sebagai chat bubble/pill biar kerasa "hidup", dipasang di sebelah
  * kanvas Kantor Virtual (lihat VirtualOfficeClient).
  */
-export function ActivityFeed() {
+export function ActivityFeed({ roomHighlights = [] }: { roomHighlights?: RoomHighlight[] }) {
   const [items, setItems] = useState<AppNotification[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -60,11 +61,30 @@ export function ActivityFeed() {
   }, []);
 
   return (
-    <div className="flex h-full min-h-[280px] flex-col rounded-2xl border border-white/10 bg-slate-950 shadow-2xl">
+    <div className="flex h-full min-h-[200px] flex-col rounded-2xl border border-white/10 bg-slate-950 shadow-2xl lg:min-h-[280px]">
       <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
         <Bell className="h-4 w-4 text-violet-400" />
         <span className="text-sm font-bold text-white">Aktivitas Kantor</span>
       </div>
+      {/* Ringkasan ruangan yang lagi "menonjol" sekarang (dikirim live
+       * dari VirtualOfficeClient, lihat computeOfficeSnapshot di sana) --
+       * ini yang bikin feed kerasa nyambung ke kondisi kantor beneran
+       * (permintaan Owner: "feed harus menceritakan keadaan kantor"),
+       * bukan cuma daftar notifikasi lama yang generik. Kosong kalau
+       * semua ruangan sepi -- tidak dipaksa selalu tampil. */}
+      {roomHighlights.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-b border-white/10 px-3 py-2">
+          {roomHighlights.map((r) => (
+            <span
+              key={r.roomId}
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold text-white"
+              style={{ backgroundColor: `${ROOM_ACTIVITY_COLORS[r.activity]}26` }}
+            >
+              {r.icon} {r.label} · {r.occupantCount} · {ROOM_ACTIVITY_LABELS[r.activity]}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
         {!loaded && <p className="px-1 text-xs text-white/40">Memuat...</p>}
         {loaded && items.length === 0 && <p className="px-1 text-xs text-white/40">Belum ada aktivitas.</p>}

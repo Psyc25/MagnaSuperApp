@@ -8,6 +8,7 @@ import {
   blockersFor,
   canEnterOwnerRoom,
   chatRoomFor,
+  describeRoomActivity,
   getRoomAt,
   resolveMove,
   sleepSlot,
@@ -124,5 +125,29 @@ describe("chat ruangan", () => {
   it("Ruang Gabungan mengikuti divisi", () => {
     expect(chatRoomFor("gabungan", "production")).toBe("production");
     expect(chatRoomFor("gabungan", "finance")).toBe("bersama");
+  });
+});
+
+describe("describeRoomActivity (status ruangan, Okt 2026: room identity)", () => {
+  it("kosong atau sendirian = sepi", () => {
+    expect(describeRoomActivity("kerja", 0, false, false)).toBe("sepi");
+    expect(describeRoomActivity("kerja", 1, false, false)).toBe("sepi");
+  });
+
+  it("dua orang atau lebih = aktif", () => {
+    expect(describeRoomActivity("creative", 2, false, false)).toBe("aktif");
+  });
+
+  it("ruang kind meeting + ada status meeting + 2+ orang = meeting", () => {
+    expect(describeRoomActivity("meeting", 2, true, false)).toBe("meeting");
+    // Bukan ruang meeting -> tetap "aktif" walau ada yang status meeting.
+    expect(describeRoomActivity("kerja", 2, true, false)).toBe("aktif");
+    // Ruang meeting tapi sendirian -> belum dianggap "meeting" beneran.
+    expect(describeRoomActivity("meeting", 1, true, false)).toBe("sepi");
+  });
+
+  it("urgent menang dari semua status lain", () => {
+    expect(describeRoomActivity("meeting", 5, true, true)).toBe("urgent");
+    expect(describeRoomActivity("kerja", 1, false, true)).toBe("urgent");
   });
 });

@@ -65,6 +65,40 @@ export type RoomId =
   | "halamandepan"
   | "gudang";
 
+/** Fungsi/peran ruangan (permintaan Owner, Okt 2026: "tiap zona punya
+ * fungsi yang jelas") -- dipakai UI buat kasih ikon+label fungsi di pill
+ * ruangan, dan mempengaruhi `describeRoomActivity` di bawah (cuma room
+ * kind "meeting" yang bisa masuk status "meeting" aktif). Sengaja data
+ * statis per ruangan (bukan dihitung), beda dari RoomActivityState yang
+ * live berdasarkan siapa ada di dalamnya sekarang. */
+export type RoomKind = "kerja" | "meeting" | "creative" | "lounge" | "istirahat" | "private" | "storage" | "sirkulasi";
+
+export const ROOM_KIND_LABELS: Record<RoomKind, string> = {
+  kerja: "Ruang Kerja",
+  meeting: "Ruang Meeting",
+  creative: "Ruang Creative",
+  lounge: "Lounge",
+  istirahat: "Istirahat",
+  private: "Private",
+  storage: "Gudang",
+  sirkulasi: "Area Lalu-Lalang",
+};
+
+/** Emoji kecil per fungsi ruangan -- gaya sama dengan POSE_EMOJI di
+ * interactions.ts, dipakai di pill ruangan (header) & Minimap, BUKAN
+ * ikon gambar supaya tetap 100% teks/kode (konsisten gaya chunky
+ * pixel-art, tanpa aset eksternal). */
+export const ROOM_KIND_ICON: Record<RoomKind, string> = {
+  kerja: "💻",
+  meeting: "🗂️",
+  creative: "🎨",
+  lounge: "☕",
+  istirahat: "🛏️",
+  private: "🔒",
+  storage: "📦",
+  sirkulasi: "🚶",
+};
+
 export type HouseRoom = {
   id: RoomId;
   label: string;
@@ -72,27 +106,76 @@ export type HouseRoom = {
   floor: string;
   /** Ditampilkan tertulis di lantai. */
   showLabel: boolean;
+  kind: RoomKind;
 };
 
 /** Urutan penting untuk getRoomAt: ruangan kecil di dalam ruangan lain
  * (Ruang IT di dalam Ruang Gabungan) harus lebih dulu. */
 export const ROOMS: HouseRoom[] = [
-  { id: "it", label: "Ruang IT", rect: { x: 740, y: 482, w: 100, h: 93 }, floor: "#2c4a66", showLabel: true },
-  { id: "depan", label: "Ruang Depan", rect: { x: 300, y: 750, w: 300, h: 130 }, floor: "#5b5240", showLabel: true },
-  { id: "lorong", label: "Lorong Tengah", rect: { x: 320, y: 575, w: 260, h: 175 }, floor: "#3f4547", showLabel: false },
-  { id: "creative", label: "Ruang Tim Creative", rect: { x: 60, y: 575, w: 260, h: 175 }, floor: "#5a3550", showLabel: true },
-  { id: "owner", label: "Kamar Owner", rect: { x: 580, y: 575, w: 260, h: 175 }, floor: "#6b5523", showLabel: true },
-  { id: "staff", label: "Kamar Staff", rect: { x: 60, y: 360, w: 230, h: 215 }, floor: "#463d63", showLabel: true },
-  { id: "tangga", label: "Tangga", rect: { x: 290, y: 360, w: 60, h: 165 }, floor: "#4a4f52", showLabel: false },
-  { id: "koridor", label: "Ujung Lorong", rect: { x: 290, y: 525, w: 290, h: 50 }, floor: "#3f4547", showLabel: false },
-  { id: "dapur", label: "Dapur", rect: { x: 350, y: 360, w: 230, h: 165 }, floor: "#6b4330", showLabel: true },
-  { id: "gabungan", label: "Ruang Gabungan", rect: { x: 580, y: 360, w: 260, h: 215 }, floor: "#2b4760", showLabel: true },
-  { id: "garasi", label: "Garasi", rect: { x: 70, y: 84, w: 330, h: 210 }, floor: "#4b4a46", showLabel: true },
-  { id: "barangbesar", label: "Tempat Barang Besar", rect: { x: 500, y: 84, w: 330, h: 210 }, floor: "#4b4a46", showLabel: true },
-  { id: "belakang", label: "Halaman Belakang", rect: { x: 40, y: 40, w: 820, h: 320 }, floor: "#2f5a2c", showLabel: false },
-  { id: "halamandepan", label: "Halaman Depan", rect: { x: 40, y: 750, w: 820, h: 240 }, floor: "#2f5a2c", showLabel: false },
-  { id: "gudang", label: "Gudang Alat & Barang (Lt. 2)", rect: FLOOR2_BOUNDS, floor: "#4b4a46", showLabel: true },
+  { id: "it", label: "Ruang IT", rect: { x: 740, y: 482, w: 100, h: 93 }, floor: "#2c4a66", showLabel: true, kind: "kerja" },
+  { id: "depan", label: "Ruang Depan", rect: { x: 300, y: 750, w: 300, h: 130 }, floor: "#5b5240", showLabel: true, kind: "lounge" },
+  { id: "lorong", label: "Lorong Tengah", rect: { x: 320, y: 575, w: 260, h: 175 }, floor: "#3f4547", showLabel: false, kind: "sirkulasi" },
+  { id: "creative", label: "Ruang Tim Creative", rect: { x: 60, y: 575, w: 260, h: 175 }, floor: "#5a3550", showLabel: true, kind: "creative" },
+  { id: "owner", label: "Kamar Owner", rect: { x: 580, y: 575, w: 260, h: 175 }, floor: "#6b5523", showLabel: true, kind: "private" },
+  { id: "staff", label: "Kamar Staff", rect: { x: 60, y: 360, w: 230, h: 215 }, floor: "#463d63", showLabel: true, kind: "istirahat" },
+  { id: "tangga", label: "Tangga", rect: { x: 290, y: 360, w: 60, h: 165 }, floor: "#4a4f52", showLabel: false, kind: "sirkulasi" },
+  { id: "koridor", label: "Ujung Lorong", rect: { x: 290, y: 525, w: 290, h: 50 }, floor: "#3f4547", showLabel: false, kind: "sirkulasi" },
+  { id: "dapur", label: "Dapur", rect: { x: 350, y: 360, w: 230, h: 165 }, floor: "#6b4330", showLabel: true, kind: "lounge" },
+  { id: "gabungan", label: "Ruang Gabungan", rect: { x: 580, y: 360, w: 260, h: 215 }, floor: "#2b4760", showLabel: true, kind: "meeting" },
+  { id: "garasi", label: "Garasi", rect: { x: 70, y: 84, w: 330, h: 210 }, floor: "#4b4a46", showLabel: true, kind: "storage" },
+  { id: "barangbesar", label: "Tempat Barang Besar", rect: { x: 500, y: 84, w: 330, h: 210 }, floor: "#4b4a46", showLabel: true, kind: "storage" },
+  { id: "belakang", label: "Halaman Belakang", rect: { x: 40, y: 40, w: 820, h: 320 }, floor: "#2f5a2c", showLabel: false, kind: "sirkulasi" },
+  { id: "halamandepan", label: "Halaman Depan", rect: { x: 40, y: 750, w: 820, h: 240 }, floor: "#2f5a2c", showLabel: false, kind: "sirkulasi" },
+  { id: "gudang", label: "Gudang Alat & Barang (Lt. 2)", rect: FLOOR2_BOUNDS, floor: "#4b4a46", showLabel: true, kind: "storage" },
 ];
+
+/** Status aktivitas LIVE suatu ruangan -- beda dari `kind` di atas (yang
+ * statis/data), ini dihitung tiap kali dari siapa yang ADA di dalamnya
+ * sekarang (lihat computeOfficeSnapshot di VirtualOfficeClient). Urutan
+ * prioritas: urgent > meeting > aktif > sepi -- satu orang dengan
+ * notifikasi penting membuat ruangan "urgent" walau isinya cuma dia
+ * sendirian, karena itu yang paling butuh perhatian rekan lain. */
+export type RoomActivityState = "sepi" | "aktif" | "meeting" | "urgent";
+
+export const ROOM_ACTIVITY_LABELS: Record<RoomActivityState, string> = {
+  sepi: "Sepi",
+  aktif: "Aktif",
+  meeting: "Meeting",
+  urgent: "Perlu Perhatian",
+};
+
+export const ROOM_ACTIVITY_COLORS: Record<RoomActivityState, string> = {
+  sepi: "#64748b",
+  aktif: "#22c55e",
+  meeting: "#f59e0b",
+  urgent: "#ef4444",
+};
+
+/** Murni fungsi dari jumlah orang + status mereka di satu ruangan --
+ * tidak menyentuh React/presence langsung supaya mudah dites (sama
+ * seperti fungsi lain di file ini). `hasMeetingStatus` = true kalau ADA
+ * penghuni ruangan yang status presence-nya "meeting" (lihat
+ * presence.ts) -- room kind "meeting" + status itu = lagi dipakai rapat
+ * beneran, bukan cuma ditebak dari banyaknya orang. */
+export function describeRoomActivity(kind: RoomKind, occupantCount: number, hasMeetingStatus: boolean, hasUrgent: boolean): RoomActivityState {
+  if (hasUrgent) return "urgent";
+  if (kind === "meeting" && hasMeetingStatus && occupantCount >= 2) return "meeting";
+  if (occupantCount >= 2) return "aktif";
+  return "sepi";
+}
+
+/** Satu ruangan "menonjol" sekarang (ada orangnya + statusnya bukan
+ * "sepi") -- dipakai VirtualOfficeClient (hitung dari posisi live) dan
+ * ActivityFeed (cuma menampilkan apa yang dikirim, tidak menghitung
+ * ulang) supaya bentuk datanya konsisten di dua tempat tanpa import
+ * silang di antara komponennya sendiri. */
+export type RoomHighlight = {
+  roomId: RoomId;
+  label: string;
+  icon: string;
+  occupantCount: number;
+  activity: RoomActivityState;
+};
 
 const ROOM_BY_ID = new Map(ROOMS.map((r) => [r.id, r]));
 export function getRoom(id: RoomId): HouseRoom {

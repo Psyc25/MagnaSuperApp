@@ -19,18 +19,24 @@ import type { AvatarLook } from "./avatar-look";
 
 export const VIRTUAL_OFFICE_CHANNEL = "kantor-virtual";
 
-export type PresenceStatus = "available" | "meeting" | "fokus";
+export type PresenceStatus = "available" | "meeting" | "fokus" | "away";
 
 export const STATUS_LABELS: Record<PresenceStatus, string> = {
   available: "Available",
   meeting: "Lagi Meeting",
   fokus: "Fokus",
+  away: "Away",
 };
-/** Warna dot status (dipakai di avatar & UI pemilih status). */
+/** Warna dot status (dipakai di avatar & UI pemilih status). Merah
+ * ("fokus") dibikin beda dari badge urgent (lihat hasUrgentNotification)
+ * walau warnanya kebetulan sama -- satu status pilihan sendiri, satu lagi
+ * data notifikasi asli, ditaruh di sisi kepala yang berbeda saat digambar
+ * (lihat Avatars.tsx) supaya tidak tertukar. */
 export const STATUS_COLORS: Record<PresenceStatus, string> = {
   available: "#22c55e",
   meeting: "#f59e0b",
   fokus: "#ef4444",
+  away: "#64748b",
 };
 
 export type PresenceMeta = {

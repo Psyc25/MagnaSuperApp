@@ -38,6 +38,9 @@ import {
   OWNER_DOOR_CENTER,
   OWNER_ROOM_USER_IDS,
   PLAYER_SPEED,
+  ROOM_ACTIVITY_COLORS,
+  ROOM_ACTIVITY_LABELS,
+  ROOM_KIND_ICON,
   ROOMS,
   SPAWN,
   SPRINT_MULTIPLIER,
@@ -45,6 +48,7 @@ import {
   canEnterOwnerRoom,
   chatRoomFor,
   deskForDivision,
+  describeRoomActivity,
   getRoom,
   getRoomAt,
   isUpstairs,
@@ -53,6 +57,8 @@ import {
   stairsTeleport,
   type Furniture,
   type Pos,
+  type RoomActivityState,
+  type RoomHighlight,
   type RoomId,
 } from "@/lib/virtual-office/house";
 import { getAgentById, type AIAgent } from "@/lib/ai/agents";
@@ -99,6 +105,15 @@ import { useVirtualOfficePresence } from "./PresenceProvider";
 
 const BROADCAST_INTERVAL_MS = 70;
 const INTERACTION_RADIUS = 55;
+// Seberapa sering status "aktivitas kantor" per ruangan dihitung ulang
+// (siapa ada di mana + status mereka) -- jauh lebih jarang dari posisi
+// (BROADCAST_INTERVAL_MS) karena ini cuma buat ringkasan di pill
+// ruangan & Activity Feed, bukan animasi, jadi tidak perlu presisi
+// frame-rate (permintaan Owner, Okt 2026: "room punya state yang jelas").
+const OFFICE_SNAPSHOT_INTERVAL_MS = 2000;
+/** Prioritas tampil kalau ada beberapa ruangan ramai bersamaan -- yang
+ * paling butuh perhatian ditaruh paling atas (lihat computeOfficeSnapshot). */
+const ROOM_ACTIVITY_PRIORITY: Record<RoomActivityState, number> = { sepi: 0, aktif: 1, meeting: 2, urgent: 3 };
 
 /** Emoji kecil di atas kepala avatar saat memakai perabot -- lihat
  * InteractionKind di interactions.ts. */
@@ -195,8 +210,28 @@ export function VirtualOfficeClient({
   const actionCooldownTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [statusPickerOpen, setStatusPickerOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // Ringkasan "keadaan kantor" (siapa ramai di mana, ruangan mana sedang
+  // meeting/perlu perhatian) -- dihitung periodik (lihat
+  // OFFICE_SNAPSHOT_INTERVAL_MS), dibaca pill ruangan di header DAN
+  // diteruskan ke ActivityFeed biar feed-nya nyambung ke kondisi kantor
+  // beneran, bukan cuma daftar notifikasi generik (permintaan Owner,
+  // Okt 2026: "activity feed harus menceritakan keadaan kantor").
+  const [myRoomActivity, setMyRoomActivity] = useState<RoomActivityState>("sepi");
+  const [roomHighlights, setRoomHighlights] = useState<RoomHighlight[]>([]);
+  const lastSnapshotAtRef = useRef(0);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevNearbyIdRef = useRef<string | null>(null);
+
+  // Helper toast umum (permintaan Owner: "setelah user klik/melakukan
+  // aksi, user harus tahu hasilnya") -- dipakai di beberapa tempat
+  // (dekat rekan, ganti status, mulai/berhenti interaksi) supaya semua
+  // aksi dapat feedback singkat yang konsisten, bukan cuma yang
+  // "mendekat" yang sudah ada sebelumnya.
+  const showToast = useCallback((message: string, ms = 2200) => {
+    setToast(message);
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    toastTimeoutRef.current = setTimeout(() => setToast(null), ms);
+  }, []);
 
   // Interaksi perabot (Opsi B, laporan gap Oktober 2026: "semua perabot
   // bisa dipakai, bukan cuma dekorasi"). myInteractionRef = sumber
@@ -224,11 +259,19 @@ export function VirtualOfficeClient({
       setMyInteraction(next);
       broadcastInteract(item.id);
       playInteractToggle(true);
+      showToast(config.verb(item.label ?? ""));
     },
-    [broadcastInteract]
+    [broadcastInteract, showToast]
   );
 
   const stopInteraction = useCallback(() => {
+    // Sengaja TANPA toast di sini (beda dari startInteraction) --
+    // stopInteraction juga otomatis terpanggil tiap kali pemain mulai
+    // jalan (lihat step() di bawah: "trying && myInteractionRef.current
+    // -> stopInteraction()"), jadi toast di sini bakal muncul tiap
+    // langkah pertama setelah duduk/kerja -- berisik, bukan feedback
+    // yang berguna. Berhentinya sudah kelihatan sendiri dari pose avatar
+    // & ikon interaksi yang hilang.
     myInteractionRef.current = null;
     setMyInteraction(null);
     broadcastInteract(null);
@@ -243,6 +286,14 @@ export function VirtualOfficeClient({
   const cssSizeRef = useRef({ w: 0, h: 0 });
   const dprRef = useRef(1);
   const walkPhaseRef = useRef(0);
+  // Kecepatan jalan avatar SENDIRI, di-ease menuju target (0 saat diam,
+  // PLAYER_SPEED/sprint saat tombol ditahan) -- bukan langsung full speed
+  // (keluhan Owner: "kaku", mulai/berhenti jalan kerasa kayak robot).
+  // `lastMoveDirRef` nyimpen arah normalized TERAKHIR yang ditekan,
+  // dipakai buat tetap "meluncur" dikit ke arah itu sesaat setelah tombol
+  // dilepas (selama currentSpeedRef belum habis), bukan berhenti seketika.
+  const currentSpeedRef = useRef(0);
+  const lastMoveDirRef = useRef({ x: 0, y: 1 });
   const smoothPosRef = useRef<Map<string, Pos>>(new Map());
   // Posisi rekan lain PAS mereka mulai interaksi -- snapshot sekali per
   // sesi interaksi (bukan dihitung ulang tiap frame), sama kayak
@@ -381,15 +432,13 @@ export function VirtualOfficeClient({
     if (nearby) {
       if (nearby.id !== prevNearbyIdRef.current) {
         prevNearbyIdRef.current = nearby.id;
-        setToast(`${firstName(nearby.fullName)} mendekat`);
+        showToast(`${firstName(nearby.fullName)} mendekat`, 3000);
         playNotify();
-        if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-        toastTimeoutRef.current = setTimeout(() => setToast(null), 3000);
       }
     } else {
       prevNearbyIdRef.current = null;
     }
-  }, [nearby]);
+  }, [nearby, showToast]);
 
   useEffect(() => {
     return () => {
@@ -678,18 +727,36 @@ export function VirtualOfficeClient({
 
       let teleported = false;
       let moving = false;
-      if (trying && !myInteractionRef.current) {
+      const canWalk = !myInteractionRef.current;
+      if (trying && canWalk) {
         const len = Math.hypot(vx, vy) || 1;
-        const speed = keys.has("shift") ? PLAYER_SPEED * SPRINT_MULTIPLIER : PLAYER_SPEED;
-        const next = resolveMove(posRef.current, (vx / len) * speed * dt, (vy / len) * speed * dt, live.blockers);
+        lastMoveDirRef.current = { x: vx / len, y: vy / len };
+        dirRef.current = Math.abs(vx) > Math.abs(vy) ? (vx > 0 ? "right" : "left") : vy > 0 ? "down" : "up";
+      }
+      // Ease kecepatan ke target (0 kalau diam/lagi interaksi, speed
+      // penuh/sprint kalau tombol ditahan) -- bukan on/off instan, biar
+      // mulai-jalan & berhenti kerasa akselerasi/deselerasi halus, bukan
+      // "nempel-lepas" (lihat komentar currentSpeedRef di atas). Faktor
+      // ease dibikin dari dt (bukan konstanta per-frame) supaya konsisten
+      // di refresh rate berapa pun -- pola sama dengan smoothing kamera
+      // di bawah, cuma time-constant-nya lebih singkat (~80ms) biar tetap
+      // kerasa responsif buat gerakan sendiri, bukan lamban.
+      const targetSpeed = trying && canWalk ? (keys.has("shift") ? PLAYER_SPEED * SPRINT_MULTIPLIER : PLAYER_SPEED) : 0;
+      const speedEase = 1 - Math.exp(-dt / 0.08);
+      currentSpeedRef.current += (targetSpeed - currentSpeedRef.current) * speedEase;
+      if (currentSpeedRef.current < 2) currentSpeedRef.current = 0;
+      if (canWalk && currentSpeedRef.current > 0) {
+        const dir = lastMoveDirRef.current;
+        const next = resolveMove(posRef.current, dir.x * currentSpeedRef.current * dt, dir.y * currentSpeedRef.current * dt, live.blockers);
         moving = next.x !== posRef.current.x || next.y !== posRef.current.y;
         posRef.current = next;
-        dirRef.current = Math.abs(vx) > Math.abs(vy) ? (vx > 0 ? "right" : "left") : vy > 0 ? "down" : "up";
         const tp = stairsTeleport(posRef.current);
         if (tp) {
           posRef.current = tp;
           teleported = true;
         }
+      } else if (!canWalk) {
+        currentSpeedRef.current = 0;
       }
       walkPhaseRef.current = moving ? walkPhaseRef.current + dt * 12 : 0;
       movingSelfRef.current = moving;
@@ -714,6 +781,39 @@ export function VirtualOfficeClient({
       if (rid !== lastRoomRef.current) {
         lastRoomRef.current = rid;
         setRoomId(rid);
+      }
+
+      if (now - lastSnapshotAtRef.current > OFFICE_SNAPSHOT_INTERVAL_MS) {
+        lastSnapshotAtRef.current = now;
+        const counts = new Map<RoomId, number>();
+        const meetingFlags = new Map<RoomId, boolean>();
+        const urgentFlags = new Map<RoomId, boolean>();
+        const tally = (p: Pos, status: string | null | undefined, urgent: boolean | undefined) => {
+          const roomId2 = getRoomAt(p.x, p.y)?.id;
+          if (!roomId2) return;
+          counts.set(roomId2, (counts.get(roomId2) ?? 0) + 1);
+          if (status === "meeting") meetingFlags.set(roomId2, true);
+          if (urgent) urgentFlags.set(roomId2, true);
+        };
+        tally({ x, y }, live.myStatus, live.myUrgent);
+        for (const id of live.othersInOffice) {
+          const rp = remoteRef.current.get(id);
+          if (!rp) continue;
+          const meta = live.presenceMeta.get(id);
+          tally(rp, meta?.status, meta?.hasUrgentNotification);
+        }
+        const highlights: RoomHighlight[] = [];
+        for (const r of ROOMS) {
+          const count = counts.get(r.id) ?? 0;
+          if (count === 0) continue;
+          const activity = describeRoomActivity(r.kind, count, meetingFlags.get(r.id) ?? false, urgentFlags.get(r.id) ?? false);
+          highlights.push({ roomId: r.id, label: r.label, icon: ROOM_KIND_ICON[r.kind], occupantCount: count, activity });
+        }
+        highlights.sort((a, b) => ROOM_ACTIVITY_PRIORITY[b.activity] - ROOM_ACTIVITY_PRIORITY[a.activity] || b.occupantCount - a.occupantCount);
+        setRoomHighlights(highlights.slice(0, 4));
+        setMyRoomActivity(
+          rid ? describeRoomActivity(getRoom(rid).kind, counts.get(rid) ?? 0, meetingFlags.get(rid) ?? false, urgentFlags.get(rid) ?? false) : "sepi"
+        );
       }
 
       let closestId: string | null = null;
@@ -813,8 +913,18 @@ export function VirtualOfficeClient({
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-800/80 px-3.5 py-1.5 text-sm font-medium text-white">
             <MapPin className="h-4 w-4 text-violet-400" />
-            <span className="font-bold">{room?.label ?? "Halaman"}</span>
+            <span className="font-bold">{room ? `${ROOM_KIND_ICON[room.kind]} ${room.label}` : "Halaman"}</span>
           </span>
+          {room && (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs font-bold text-white"
+              style={{ backgroundColor: `${ROOM_ACTIVITY_COLORS[myRoomActivity]}26` }}
+              title="Keadaan ruangan ini sekarang"
+            >
+              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: ROOM_ACTIVITY_COLORS[myRoomActivity] }} />
+              {ROOM_ACTIVITY_LABELS[myRoomActivity]}
+            </span>
+          )}
           <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-800/80 px-3.5 py-1.5 text-sm text-white">
             <Users className="h-4 w-4 text-emerald-400" />
             <span className="font-bold text-emerald-400">{Math.max(onlineIds.length, 1)}</span>
@@ -854,6 +964,7 @@ export function VirtualOfficeClient({
                     onClick={() => {
                       updatePresence({ status: s });
                       setStatusPickerOpen(false);
+                      showToast(`Status: ${STATUS_LABELS[s]}`);
                     }}
                     className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-white hover:bg-slate-800"
                   >
@@ -1035,7 +1146,7 @@ export function VirtualOfficeClient({
       </div>
 
       <div className="lg:flex-[1.3]">
-        <ActivityFeed />
+        <ActivityFeed roomHighlights={roomHighlights} />
       </div>
       </div>
 
