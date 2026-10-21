@@ -50,3 +50,4 @@ push_*.log
 
 .vercel
 .env*
+Claude outputs/
